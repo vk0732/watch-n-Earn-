@@ -32,7 +32,7 @@ app.listen(port, () => {
   console.log(`[TeleEarn Server] Running on http://0.0.0.0:${port}`);
   const appUrl =
     process.env.APP_URL ||
-    'https://ais-dev-zve67xotyi6i3w6zawha3s-504198372090.asia-southeast1.run.app';
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `http://localhost:${port}`);
   if (process.env.TELEGRAM_BOT_TOKEN) {
     startBotPolling(appUrl).catch((err) => {
       console.error('[Telegram Bot Auto-Polling]:', err.message);

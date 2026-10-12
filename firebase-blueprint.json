@@ -1,0 +1,304 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered Telegram Mini App user account",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Telegram user ID string" },
+        "telegramId": { "type": "number", "description": "Numeric Telegram ID" },
+        "username": { "type": "string", "description": "Telegram username without @" },
+        "firstName": { "type": "string", "description": "First name of user" },
+        "balance": { "type": "number", "description": "Current redeemable balance" },
+        "lifetimeEarnings": { "type": "number", "description": "Total earned from all sources" },
+        "referralEarnings": { "type": "number", "description": "Total earned through referrals" },
+        "referralCode": { "type": "string", "description": "Unique referral code" },
+        "referredBy": { "type": "string", "description": "Telegram ID of inviter or null" },
+        "lastDailyCheckIn": { "type": "string", "description": "Date of last checkin YYYY-MM-DD" },
+        "dailyStreak": { "type": "number", "description": "Consecutive days check-in streak" },
+        "isBanned": { "type": "boolean", "description": "Account suspension flag" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of registration" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of last update" }
+      },
+      "required": ["id", "telegramId", "balance", "referralCode", "createdAt"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Watch & Earn task configured by admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Task identifier" },
+        "title": { "type": "string", "description": "Display title" },
+        "description": { "type": "string", "description": "Instructions for user" },
+        "destinationUrl": { "type": "string", "description": "URL to watch or visit" },
+        "rewardAmount": { "type": "number", "description": "Coins rewarded upon completion" },
+        "taskType": { "type": "string", "description": "Task type: video, channel, website, social" },
+        "timerSeconds": { "type": "number", "description": "Required watch/visit time in seconds" },
+        "channelId": { "type": "string", "description": "Telegram channel username or numeric chat ID" },
+        "socialPlatform": { "type": "string", "description": "Social platform: youtube, twitter, instagram, telegram, discord, facebook, other" },
+        "verificationMethod": { "type": "string", "description": "Verification method: telegram_membership, timer, manual_review, code_confirmation" },
+        "verificationCode": { "type": "string", "description": "Secret verification code if applicable" },
+        "isActive": { "type": "boolean", "description": "Whether task is visible to users" },
+        "sortOrder": { "type": "number", "description": "Ordering priority in task list" },
+        "createdAt": { "type": "string", "description": "ISO creation timestamp" }
+      },
+      "required": ["id", "title", "rewardAmount", "taskType", "isActive"]
+    },
+    "TaskCompletion": {
+      "title": "TaskCompletion",
+      "description": "Record of a user completing a task",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Compound ID: userId_taskId" },
+        "userId": { "type": "string", "description": "Telegram user ID" },
+        "taskId": { "type": "string", "description": "Task ID" },
+        "rewardAmount": { "type": "number", "description": "Reward credited" },
+        "completedAt": { "type": "string", "description": "ISO timestamp of completion" }
+      },
+      "required": ["id", "userId", "taskId", "rewardAmount", "completedAt"]
+    },
+    "Referral": {
+      "title": "Referral",
+      "description": "Referral relationship and payout ledger",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Compound ID: referrerId_refereeId" },
+        "referrerId": { "type": "string", "description": "Telegram ID of inviter" },
+        "refereeId": { "type": "string", "description": "Telegram ID of invited user" },
+        "refereeUsername": { "type": "string", "description": "Invited user's username" },
+        "rewardAmount": { "type": "number", "description": "Reward coins credited to referrer" },
+        "status": { "type": "string", "description": "Referral status: credited or pending" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of referral" }
+      },
+      "required": ["id", "referrerId", "refereeId", "rewardAmount", "status", "createdAt"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial ledger record of every balance change",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique transaction ID" },
+        "userId": { "type": "string", "description": "Telegram user ID" },
+        "type": { "type": "string", "description": "signup_bonus, daily_checkin, task_reward, referral_reward, withdrawal_deduct, withdrawal_refund, admin_adjustment" },
+        "amount": { "type": "number", "description": "Signed change amount" },
+        "description": { "type": "string", "description": "Human readable reason" },
+        "balanceAfter": { "type": "number", "description": "User balance after transaction" },
+        "referenceId": { "type": "string", "description": "External reference order or task ID" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of transaction" }
+      },
+      "required": ["id", "userId", "type", "amount", "balanceAfter", "createdAt"]
+    },
+    "Withdrawal": {
+      "title": "Withdrawal",
+      "description": "Payout request via UPI with state tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique order ID (e.g. WTH-1738...)" },
+        "userId": { "type": "string", "description": "Telegram user ID" },
+        "userTelegramId": { "type": "number", "description": "Telegram numeric ID" },
+        "username": { "type": "string", "description": "Telegram username" },
+        "amount": { "type": "number", "description": "Coins/INR requested to withdraw" },
+        "upiId": { "type": "string", "description": "Recipient UPI ID (Virtual Payment Address)" },
+        "status": { "type": "string", "description": "pending, processing, success, rejected, failed" },
+        "providerResponse": { "type": "string", "description": "Safe provider response details" },
+        "failureReason": { "type": "string", "description": "Reason if rejected or failed" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of request" },
+        "processedAt": { "type": "string", "description": "ISO timestamp of processing" }
+      },
+      "required": ["id", "userId", "amount", "upiId", "status", "createdAt"]
+    },
+    "ForceJoinChannel": {
+      "title": "ForceJoinChannel",
+      "description": "Mandatory Telegram channel or group users must join",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Channel identifier" },
+        "title": { "type": "string", "description": "Display name of channel" },
+        "username": { "type": "string", "description": "Public channel @handle or chat_id" },
+        "channelId": { "type": "string", "description": "Telegram chat ID (e.g. -100... or @channel)" },
+        "inviteLink": { "type": "string", "description": "Telegram join link" },
+        "isPrivate": { "type": "boolean", "description": "True if channel is private" },
+        "isEnabled": { "type": "boolean", "description": "Whether check is enforced" },
+        "order": { "type": "number", "description": "Display sorting order" }
+      },
+      "required": ["id", "title", "channelId", "inviteLink", "isEnabled"]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "Global application and rewards configuration",
+      "type": "object",
+      "properties": {
+        "signupBonus": { "type": "number", "description": "Coins given on initial registration" },
+        "referralReward": { "type": "number", "description": "Coins awarded to inviter per qualified referee" },
+        "dailyCheckinBaseReward": { "type": "number", "description": "Base coins for daily check-in" },
+        "minWithdrawalAmount": { "type": "number", "description": "Minimum balance required to withdraw" },
+        "maxWithdrawalAmount": { "type": "number", "description": "Maximum allowed amount per single withdrawal request" },
+        "dailyWithdrawalLimitEnabled": { "type": "boolean", "description": "Whether 24-hour rolling withdrawal limits are enforced" },
+        "maxWithdrawalRequestsPer24h": { "type": "number", "description": "Max withdrawal requests per user in rolling 24 hours" },
+        "maxWithdrawalAmountPer24h": { "type": "number", "description": "Max total withdrawal amount per user in rolling 24 hours" },
+        "supportTelegramUsername": { "type": "string", "description": "Admin or support bot handle" },
+        "maintenanceMode": { "type": "boolean", "description": "Whether app is in maintenance" },
+        "payoutLiveEnabled": { "type": "boolean", "description": "Safe flag: live payouts enabled" }
+      },
+      "required": ["signupBonus", "referralReward", "minWithdrawalAmount"]
+    },
+    "AdminAuditLog": {
+      "title": "AdminAuditLog",
+      "description": "Audit record of privileged actions taken by administrators",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Log ID" },
+        "adminId": { "type": "string", "description": "Telegram ID of acting admin" },
+        "action": { "type": "string", "description": "Action performed" },
+        "targetUserId": { "type": "string", "description": "Affected user ID if applicable" },
+        "details": { "type": "string", "description": "JSON or text describing changes" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of admin action" }
+      },
+      "required": ["id", "adminId", "action", "createdAt"]
+    },
+    "TaskBot": {
+      "title": "TaskBot",
+      "description": "External campaign or partner Task Bot managed by admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Task bot identifier" },
+        "botName": { "type": "string", "description": "Display name of bot" },
+        "botUsername": { "type": "string", "description": "Telegram bot @username" },
+        "description": { "type": "string", "description": "Instructions for user" },
+        "startParameter": { "type": "string", "description": "Deep link param or tracking code" },
+        "botUrl": { "type": "string", "description": "Direct Telegram bot link" },
+        "rewardAmount": { "type": "number", "description": "Coins rewarded upon starting/using bot" },
+        "verificationType": { "type": "string", "description": "deep_link, membership, manual_review" },
+        "isEnabled": { "type": "boolean", "description": "Active status" },
+        "sortOrder": { "type": "number", "description": "Display order" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["id", "botName", "botUsername", "rewardAmount", "isEnabled"]
+    },
+    "BonusClaim": {
+      "title": "BonusClaim",
+      "description": "Server-side anti-fraud claim record for one-device signup bonus and referral tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique claim identifier" },
+        "claimType": { "type": "string", "description": "signup_bonus or referral_reward" },
+        "userId": { "type": "string", "description": "Claiming Telegram user ID" },
+        "deviceId": { "type": "string", "description": "Server-issued signed device ID" },
+        "deviceFingerprintHash": { "type": "string", "description": "Client hardware fingerprint hash" },
+        "amount": { "type": "number", "description": "Bonus coins awarded" },
+        "status": { "type": "string", "description": "claimed, rejected, or flagged" },
+        "createdAt": { "type": "string", "description": "ISO creation timestamp" }
+      },
+      "required": ["id", "claimType", "userId", "amount", "status", "createdAt"]
+    },
+    "PaymentGatewayConfig": {
+      "title": "PaymentGatewayConfig",
+      "description": "Server-side encrypted payment gateway configuration",
+      "type": "object",
+      "properties": {
+        "provider": { "type": "string", "description": "cashfree, razorpayx, paytm, or custom" },
+        "environment": { "type": "string", "description": "test or live" },
+        "payoutsEnabled": { "type": "boolean", "description": "Whether automated payouts are enabled" },
+        "apiBaseUrl": { "type": "string", "description": "Provider API endpoint URL" },
+        "maskedApiKey": { "type": "string", "description": "Masked API key for display" },
+        "maskedApiSecret": { "type": "string", "description": "Masked secret indicator" },
+        "hasApiKey": { "type": "boolean", "description": "Whether encrypted API key exists" },
+        "hasApiSecret": { "type": "boolean", "description": "Whether encrypted API secret exists" },
+        "lastTestStatus": { "type": "string", "description": "connected, failed, or integration_required" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of last update" },
+        "updatedBy": { "type": "string", "description": "Admin ID who updated config" }
+      },
+      "required": ["provider", "environment", "payoutsEnabled", "updatedAt"]
+    },
+    "SpinRecord": {
+      "title": "SpinRecord",
+      "description": "User spin wheel consumption and reward ledger",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Spin record identifier" },
+        "userId": { "type": "string", "description": "Telegram user ID" },
+        "segmentId": { "type": "string", "description": "Chosen reward segment ID" },
+        "label": { "type": "string", "description": "Segment display label" },
+        "rewardType": { "type": "string", "description": "coins, bonus, or no_reward" },
+        "rewardAmount": { "type": "number", "description": "Reward amount credited" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of spin" }
+      },
+      "required": ["id", "userId", "segmentId", "rewardType", "rewardAmount", "createdAt"]
+    },
+    "ScratchCard": {
+      "title": "ScratchCard",
+      "description": "Referral reward scratch card entitlement",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique card identifier" },
+        "userId": { "type": "string", "description": "Referrer user ID who owns the card" },
+        "referralId": { "type": "string", "description": "Associated referral record ID" },
+        "refereeUsername": { "type": "string", "description": "Invited friend's username" },
+        "isRevealed": { "type": "boolean", "description": "Whether scratch card has been scratched" },
+        "rewardType": { "type": "string", "description": "coins, bonus, or no_reward" },
+        "rewardAmount": { "type": "number", "description": "Revealed reward value" },
+        "createdAt": { "type": "string", "description": "ISO creation timestamp" },
+        "revealedAt": { "type": "string", "description": "ISO scratch reveal timestamp" }
+      },
+      "required": ["id", "userId", "referralId", "isRevealed", "rewardType", "rewardAmount", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of user account records"
+    },
+    "/bonus_claims/{claimId}": {
+      "schema": "BonusClaim",
+      "description": "Anti-fraud bonus and referral claims registry"
+    },
+    "/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "Available Watch & Earn tasks"
+    },
+    "/task_bots/{botId}": {
+      "schema": "TaskBot",
+      "description": "Managed campaign and partner Task Bots"
+    },
+    "/task_completions/{completionId}": {
+      "schema": "TaskCompletion",
+      "description": "Log of completed tasks per user"
+    },
+    "/referrals/{referralId}": {
+      "schema": "Referral",
+      "description": "Referral ledger records"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Financial ledger of credits and debits"
+    },
+    "/withdrawals/{withdrawalId}": {
+      "schema": "Withdrawal",
+      "description": "Withdrawal requests and status tracking"
+    },
+    "/force_join_channels/{channelId}": {
+      "schema": "ForceJoinChannel",
+      "description": "Configured force join channels"
+    },
+    "/app_settings/{settingsId}": {
+      "schema": "AppSettings",
+      "description": "Global application configuration"
+    },
+    "/admin_audit_logs/{logId}": {
+      "schema": "AdminAuditLog",
+      "description": "Immutable administrator audit trail"
+    },
+    "/payment_gateway_config/{configId}": {
+      "schema": "PaymentGatewayConfig",
+      "description": "Encrypted payment gateway settings with AES-256-GCM"
+    },
+    "/spin_records/{spinId}": {
+      "schema": "SpinRecord",
+      "description": "Ledger of spin wheel plays and rewards"
+    },
+    "/scratch_cards/{cardId}": {
+      "schema": "ScratchCard",
+      "description": "Referral scratch card entitlements and reveal status"
+    }
+  }
+}

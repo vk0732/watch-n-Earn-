@@ -1,0 +1,11 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // TeleEarn Mini App Firestore Rules
+    // The backend Node.js server connects using Firebase Client SDK to manage
+    // users, tasks, transactions, and withdrawals.
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

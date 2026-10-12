@@ -1,0 +1,482 @@
+import crypto from 'node:crypto';
+import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { db, cleanDocData, memStore } from './db.ts';
+
+export type GatewayProvider = 'cashfree' | 'razorpayx' | 'paytm' | 'custom';
+export type GatewayEnvironment = 'test' | 'live';
+export type ConnectionStatus = 'not_configured' | 'connected' | 'failed' | 'integration_required';
+
+export interface EncryptedField {
+  iv: string; // hex
+  data: string; // hex
+  tag: string; // hex
+}
+
+export interface StoredGatewayConfig {
+  provider: GatewayProvider | '';
+  environment: GatewayEnvironment;
+  payoutsEnabled: boolean;
+  apiBaseUrl: string;
+  merchantId?: string; // encrypted or masked
+  encryptedApiKey?: EncryptedField;
+  encryptedApiSecret?: EncryptedField;
+  encryptedWebhookSecret?: EncryptedField;
+  encryptedMerchantId?: EncryptedField;
+  maskedApiKey?: string;
+  maskedApiSecret?: string;
+  maskedMerchantId?: string;
+  maskedWebhookSecret?: string;
+  hasApiKey: boolean;
+  hasApiSecret: boolean;
+  hasMerchantId: boolean;
+  hasWebhookSecret: boolean;
+  lastTestedAt?: string;
+  lastTestStatus?: ConnectionStatus;
+  lastTestMessage?: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export interface PaymentGatewayPublicConfig {
+  provider: GatewayProvider | '';
+  environment: GatewayEnvironment;
+  payoutsEnabled: boolean;
+  apiBaseUrl: string;
+  maskedApiKey: string;
+  maskedApiSecret: string;
+  maskedMerchantId: string;
+  maskedWebhookSecret: string;
+  hasApiKey: boolean;
+  hasApiSecret: boolean;
+  hasMerchantId: boolean;
+  hasWebhookSecret: boolean;
+  status: {
+    connectionStatus: ConnectionStatus;
+    message: string;
+    lastTestedAt?: string;
+    environment: GatewayEnvironment;
+  };
+  supportedProviders: Array<{
+    id: GatewayProvider;
+    name: string;
+    description: string;
+    requiresMerchantId: boolean;
+    merchantIdLabel: string;
+    defaultTestUrl: string;
+    defaultLiveUrl: string;
+    docsUrl: string;
+    isIntegrated: boolean;
+  }>;
+  webhookUrl: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface DecryptedGatewayCredentials {
+  provider: GatewayProvider | '';
+  environment: GatewayEnvironment;
+  payoutsEnabled: boolean;
+  apiBaseUrl: string;
+  apiKey: string;
+  apiSecret: string;
+  merchantId: string;
+  webhookSecret: string;
+}
+
+// Master Key for AES-256-GCM encryption at rest
+// Derived using SHA-256 of server environment secret
+function getEncryptionKey(): Buffer {
+  const masterSecret =
+    process.env.PAYMENT_ENCRYPTION_KEY ||
+    process.env.DEVICE_SIGNING_SECRET ||
+    process.env.FIREBASE_PROJECT_ID ||
+    'teleearn_payment_gateway_master_key_v1';
+  return crypto.createHash('sha256').update(masterSecret).digest();
+}
+
+/**
+ * Encrypt a sensitive credential using AES-256-GCM
+ */
+export function encryptSecret(plainText: string): EncryptedField {
+  if (!plainText) {
+    return { iv: '', data: '', tag: '' };
+  }
+  const key = getEncryptionKey();
+  const iv = crypto.randomBytes(12); // 96-bit IV recommended for GCM
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(plainText, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+
+  return {
+    iv: iv.toString('hex'),
+    data: encrypted.toString('hex'),
+    tag: tag.toString('hex'),
+  };
+}
+
+/**
+ * Decrypt a sensitive credential with AES-256-GCM authentication verification
+ */
+export function decryptSecret(encrypted: EncryptedField | undefined): string {
+  if (!encrypted || !encrypted.iv || !encrypted.data || !encrypted.tag) {
+    return '';
+  }
+  try {
+    const key = getEncryptionKey();
+    const iv = Buffer.from(encrypted.iv, 'hex');
+    const authTag = Buffer.from(encrypted.tag, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(encrypted.data, 'hex')),
+      decipher.final(),
+    ]);
+    return decrypted.toString('utf8');
+  } catch (err) {
+    console.error('[PaymentSecurity] Decryption failed or tag mismatch:', err);
+    return '';
+  }
+}
+
+/**
+ * Mask credential for safe display in UI (e.g. ****abcd or ********)
+ */
+export function maskSecret(value: string | undefined, visibleTrailingChars = 4): string {
+  if (!value || typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (trimmed.length <= visibleTrailingChars) {
+    return '********';
+  }
+  const maskedPrefix = '****';
+  const suffix = trimmed.slice(-visibleTrailingChars);
+  return `${maskedPrefix}${suffix}`;
+}
+
+// In-memory cache of stored gateway settings
+let inMemoryGatewayConfig: StoredGatewayConfig | null = null;
+
+// Supported providers metadata
+export const SUPPORTED_PROVIDERS = [
+  {
+    id: 'cashfree' as GatewayProvider,
+    name: 'Cashfree Payments (Cashfree Payouts)',
+    description: 'Direct Instant UPI Transfers via Cashfree Payouts API v1.2 / v1. Supports Sandbox & Live.',
+    requiresMerchantId: false,
+    merchantIdLabel: 'App ID (Optional)',
+    defaultTestUrl: 'https://sandbox.cashfree.com/payout/v1',
+    defaultLiveUrl: 'https://payout-api.cashfree.com/payout/v1',
+    docsUrl: 'https://docs.cashfree.com/reference/payouts-api',
+    isIntegrated: true,
+  },
+  {
+    id: 'razorpayx' as GatewayProvider,
+    name: 'RazorpayX (Razorpay Payouts)',
+    description: 'Business Banking & Automated UPI Payouts via RazorpayX Payouts API. Supports Test & Live modes.',
+    requiresMerchantId: true,
+    merchantIdLabel: 'RazorpayX Account Number (e.g. 7878780080387615)',
+    defaultTestUrl: 'https://api.razorpay.com/v1',
+    defaultLiveUrl: 'https://api.razorpay.com/v1',
+    docsUrl: 'https://razorpay.com/docs/api/razorpayx/payouts/',
+    isIntegrated: true,
+  },
+  {
+    id: 'paytm' as GatewayProvider,
+    name: 'Paytm Payouts (Paytm Disburse)',
+    description: 'Corporate wallet and bank disbursements via Paytm Bpay Gateway.',
+    requiresMerchantId: true,
+    merchantIdLabel: 'Merchant ID (MID)',
+    defaultTestUrl: 'https://staging-dashboard.paytm.com/bpay/api/v1',
+    defaultLiveUrl: 'https://dashboard.paytm.com/bpay/api/v1',
+    docsUrl: 'https://developer.paytm.com/docs/payouts-api/',
+    isIntegrated: true,
+  },
+  {
+    id: 'custom' as GatewayProvider,
+    name: 'Custom / Other Provider',
+    description: 'Select this to integrate an enterprise or custom banking aggregator.',
+    requiresMerchantId: false,
+    merchantIdLabel: 'Merchant Reference ID',
+    defaultTestUrl: '',
+    defaultLiveUrl: '',
+    docsUrl: '',
+    isIntegrated: false,
+  },
+];
+
+/**
+ * Load stored configuration from Firestore or memory
+ */
+export async function getStoredGatewayConfig(): Promise<StoredGatewayConfig> {
+  if (inMemoryGatewayConfig) {
+    return inMemoryGatewayConfig;
+  }
+
+  try {
+    const docRef = doc(db, 'payment_gateway_config', 'settings');
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      inMemoryGatewayConfig = snap.data() as StoredGatewayConfig;
+      return inMemoryGatewayConfig;
+    }
+  } catch (err) {
+    console.warn('[PaymentSecurity] Firestore config read fallback:', err);
+  }
+
+  // Fallback defaults if not yet configured
+  const defaultConfig: StoredGatewayConfig = {
+    provider: (process.env.PAYOUT_PROVIDER as GatewayProvider) || 'cashfree',
+    environment: (process.env.PAYOUT_LIVE_ENABLED === 'true' ? 'live' : 'test') as GatewayEnvironment,
+    payoutsEnabled: process.env.PAYOUT_LIVE_ENABLED === 'true',
+    apiBaseUrl: process.env.PAYOUT_BASE_URL || 'https://sandbox.cashfree.com/payout/v1',
+    hasApiKey: Boolean(process.env.PAYOUT_API_KEY && !process.env.PAYOUT_API_KEY.includes('your_')),
+    hasApiSecret: Boolean(process.env.PAYOUT_API_SECRET && !process.env.PAYOUT_API_SECRET.includes('your_')),
+    hasMerchantId: false,
+    hasWebhookSecret: false,
+    maskedApiKey: process.env.PAYOUT_API_KEY ? maskSecret(process.env.PAYOUT_API_KEY) : '',
+    maskedApiSecret: process.env.PAYOUT_API_SECRET ? '********' : '',
+    lastTestStatus: 'not_configured',
+    lastTestMessage: 'Credentials have not been tested with the provider yet.',
+    updatedAt: new Date().toISOString(),
+    updatedBy: 'system',
+  };
+
+  // If environment variables provided initial keys, encrypt them
+  if (process.env.PAYOUT_API_KEY && !process.env.PAYOUT_API_KEY.includes('your_')) {
+    defaultConfig.encryptedApiKey = encryptSecret(process.env.PAYOUT_API_KEY);
+  }
+  if (process.env.PAYOUT_API_SECRET && !process.env.PAYOUT_API_SECRET.includes('your_')) {
+    defaultConfig.encryptedApiSecret = encryptSecret(process.env.PAYOUT_API_SECRET);
+  }
+
+  inMemoryGatewayConfig = defaultConfig;
+  return inMemoryGatewayConfig;
+}
+
+/**
+ * Get public masked configuration for the Admin UI (never exposes raw secrets)
+ */
+export async function getPublicGatewayConfig(reqHost?: string): Promise<PaymentGatewayPublicConfig> {
+  const stored = await getStoredGatewayConfig();
+  const host = reqHost || process.env.VITE_APP_URL || 'https://your-domain.com';
+  const webhookUrl = `${host.replace(/\/$/, '')}/api/payouts/webhook`;
+
+  return {
+    provider: stored.provider,
+    environment: stored.environment,
+    payoutsEnabled: stored.payoutsEnabled,
+    apiBaseUrl: stored.apiBaseUrl,
+    maskedApiKey: stored.maskedApiKey || (stored.hasApiKey ? '****••••' : ''),
+    maskedApiSecret: stored.maskedApiSecret || (stored.hasApiSecret ? '••••••••' : ''),
+    maskedMerchantId: stored.maskedMerchantId || '',
+    maskedWebhookSecret: stored.maskedWebhookSecret || (stored.hasWebhookSecret ? '••••••••' : ''),
+    hasApiKey: stored.hasApiKey,
+    hasApiSecret: stored.hasApiSecret,
+    hasMerchantId: stored.hasMerchantId,
+    hasWebhookSecret: stored.hasWebhookSecret,
+    status: {
+      connectionStatus: stored.lastTestStatus || 'not_configured',
+      message: stored.lastTestMessage || 'No connection test performed yet.',
+      lastTestedAt: stored.lastTestedAt,
+      environment: stored.environment,
+    },
+    supportedProviders: SUPPORTED_PROVIDERS,
+    webhookUrl,
+    updatedAt: stored.updatedAt,
+    updatedBy: stored.updatedBy,
+  };
+}
+
+/**
+ * Save updated configuration securely (encrypts secrets before writing)
+ */
+export async function saveGatewayConfig(
+  input: {
+    provider: GatewayProvider | '';
+    environment: GatewayEnvironment;
+    payoutsEnabled: boolean;
+    apiBaseUrl: string;
+    apiKey?: string;
+    apiSecret?: string;
+    merchantId?: string;
+    webhookSecret?: string;
+  },
+  adminId: string
+): Promise<StoredGatewayConfig> {
+  const current = await getStoredGatewayConfig();
+
+  // Validate API base URL format if provided
+  if (input.apiBaseUrl) {
+    try {
+      const parsed = new URL(input.apiBaseUrl);
+      if (!['https:', 'http:'].includes(parsed.protocol)) {
+        throw new Error('API Base URL must start with https://');
+      }
+    } catch (e: any) {
+      throw new Error(`Invalid API Base URL: ${e.message}`);
+    }
+  }
+
+  const updated: StoredGatewayConfig = {
+    ...current,
+    provider: input.provider,
+    environment: input.environment,
+    payoutsEnabled: input.payoutsEnabled,
+    apiBaseUrl: input.apiBaseUrl?.trim() || '',
+    updatedAt: new Date().toISOString(),
+    updatedBy: adminId,
+  };
+
+  // API Key update: if input provided and not a masked placeholder
+  if (input.apiKey !== undefined) {
+    const trimmed = input.apiKey.trim();
+    if (trimmed && !trimmed.startsWith('****')) {
+      updated.encryptedApiKey = encryptSecret(trimmed);
+      updated.maskedApiKey = maskSecret(trimmed);
+      updated.hasApiKey = true;
+    } else if (trimmed === '') {
+      delete updated.encryptedApiKey;
+      updated.maskedApiKey = '';
+      updated.hasApiKey = false;
+    }
+  }
+
+  // API Secret update
+  if (input.apiSecret !== undefined) {
+    const trimmed = input.apiSecret.trim();
+    if (trimmed && !trimmed.startsWith('****') && !trimmed.startsWith('••••')) {
+      updated.encryptedApiSecret = encryptSecret(trimmed);
+      updated.maskedApiSecret = maskSecret(trimmed);
+      updated.hasApiSecret = true;
+    } else if (trimmed === '') {
+      delete updated.encryptedApiSecret;
+      updated.maskedApiSecret = '';
+      updated.hasApiSecret = false;
+    }
+  }
+
+  // Merchant ID update
+  if (input.merchantId !== undefined) {
+    const trimmed = input.merchantId.trim();
+    if (trimmed && !trimmed.startsWith('****')) {
+      updated.encryptedMerchantId = encryptSecret(trimmed);
+      updated.maskedMerchantId = maskSecret(trimmed);
+      updated.hasMerchantId = true;
+    } else if (trimmed === '') {
+      delete updated.encryptedMerchantId;
+      updated.maskedMerchantId = '';
+      updated.hasMerchantId = false;
+    }
+  }
+
+  // Webhook Secret update
+  if (input.webhookSecret !== undefined) {
+    const trimmed = input.webhookSecret.trim();
+    if (trimmed && !trimmed.startsWith('****') && !trimmed.startsWith('••••')) {
+      updated.encryptedWebhookSecret = encryptSecret(trimmed);
+      updated.maskedWebhookSecret = maskSecret(trimmed);
+      updated.hasWebhookSecret = true;
+    } else if (trimmed === '') {
+      delete updated.encryptedWebhookSecret;
+      updated.maskedWebhookSecret = '';
+      updated.hasWebhookSecret = false;
+    }
+  }
+
+  // Reset test status if provider or keys were changed
+  if (current.provider !== updated.provider || current.environment !== updated.environment) {
+    updated.lastTestStatus = 'not_configured';
+    updated.lastTestMessage = 'Settings changed. Please test connection to verify.';
+  }
+
+  // Persist to Firestore and memory cache
+  inMemoryGatewayConfig = updated;
+  try {
+    const docRef = doc(db, 'payment_gateway_config', 'settings');
+    await setDoc(docRef, cleanDocData(updated), { merge: true });
+  } catch (err) {
+    console.warn('[PaymentSecurity] Firestore saveGatewayConfig fallback:', err);
+  }
+
+  return updated;
+}
+
+/**
+ * Remove / wipe stored credentials securely
+ */
+export async function removeGatewayCredentials(adminId: string): Promise<StoredGatewayConfig> {
+  const updated: StoredGatewayConfig = {
+    provider: '',
+    environment: 'test',
+    payoutsEnabled: false,
+    apiBaseUrl: '',
+    hasApiKey: false,
+    hasApiSecret: false,
+    hasMerchantId: false,
+    hasWebhookSecret: false,
+    maskedApiKey: '',
+    maskedApiSecret: '',
+    maskedMerchantId: '',
+    maskedWebhookSecret: '',
+    lastTestStatus: 'not_configured',
+    lastTestMessage: 'Credentials have been completely removed by administrator.',
+    lastTestedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    updatedBy: adminId,
+  };
+
+  inMemoryGatewayConfig = updated;
+  try {
+    const docRef = doc(db, 'payment_gateway_config', 'settings');
+    await deleteDoc(docRef);
+  } catch (err) {
+    console.warn('[PaymentSecurity] Firestore delete fallback:', err);
+  }
+
+  return updated;
+}
+
+/**
+ * Update test connection outcome in stored config
+ */
+export async function recordConnectionTestResult(
+  status: ConnectionStatus,
+  message: string
+): Promise<void> {
+  const current = await getStoredGatewayConfig();
+  current.lastTestStatus = status;
+  current.lastTestMessage = message;
+  current.lastTestedAt = new Date().toISOString();
+
+  inMemoryGatewayConfig = current;
+  try {
+    const docRef = doc(db, 'payment_gateway_config', 'settings');
+    await setDoc(
+      docRef,
+      {
+        lastTestStatus: status,
+        lastTestMessage: message,
+        lastTestedAt: current.lastTestedAt,
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn('[PaymentSecurity] Firestore test result record fallback:', err);
+  }
+}
+
+/**
+ * Decrypt credentials for server-side API execution ONLY
+ */
+export async function getDecryptedCredentials(): Promise<DecryptedGatewayCredentials> {
+  const stored = await getStoredGatewayConfig();
+  return {
+    provider: stored.provider,
+    environment: stored.environment,
+    payoutsEnabled: stored.payoutsEnabled,
+    apiBaseUrl: stored.apiBaseUrl,
+    apiKey: decryptSecret(stored.encryptedApiKey),
+    apiSecret: decryptSecret(stored.encryptedApiSecret),
+    merchantId: decryptSecret(stored.encryptedMerchantId),
+    webhookSecret: decryptSecret(stored.encryptedWebhookSecret),
+  };
+}

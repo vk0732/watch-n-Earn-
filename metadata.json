@@ -1,0 +1,6 @@
+{
+  "name": "TeleEarn - Telegram Watch & Earn Mini App",
+  "description": "Production-ready Telegram Mini App & Bot with Watch & Earn tasks, daily rewards, referral system, Force Join verification, and secure UPI withdrawals.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

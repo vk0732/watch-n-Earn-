@@ -416,11 +416,24 @@ export async function getUserTransactions(userId: string, limit = 50): Promise<T
    TASKS REPOSITORY
    ======================================================== */
 export async function getAllTasks(onlyActive = false): Promise<Task[]> {
+  try {
+    const snap = await getDocs(collection(db, 'tasks'));
+    if (!snap.empty) {
+      memStore.tasks.clear();
+      snap.forEach((d) => {
+        const item = d.data() as Task;
+        memStore.tasks.set(item.id || d.id, { ...item, id: item.id || d.id });
+      });
+    }
+  } catch (err) {
+    // Keep memStore fallback
+  }
+
   let list = Array.from(memStore.tasks.values());
   if (onlyActive) {
     list = list.filter((t) => t.isActive);
   }
-  return list.sort((a, b) => a.sortOrder - b.sortOrder);
+  return list.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
 }
 
 export async function getTaskById(taskId: string): Promise<Task | null> {
@@ -463,9 +476,22 @@ export async function deleteTask(taskId: string): Promise<boolean> {
    TASK BOTS REPOSITORY (PRD Task Bot Management)
    ======================================================== */
 export async function getAllTaskBots(onlyEnabled = false): Promise<TaskBot[]> {
+  try {
+    const snap = await getDocs(collection(db, 'task_bots'));
+    if (!snap.empty) {
+      memStore.taskBots.clear();
+      snap.forEach((d) => {
+        const item = d.data() as TaskBot;
+        memStore.taskBots.set(item.id || d.id, { ...item, id: item.id || d.id });
+      });
+    }
+  } catch (err) {
+    // Keep memStore fallback
+  }
+
   let list = Array.from(memStore.taskBots.values());
   if (onlyEnabled) list = list.filter((b) => b.isEnabled);
-  return list.sort((a, b) => a.sortOrder - b.sortOrder);
+  return list.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
 }
 
 export async function getTaskBotById(id: string): Promise<TaskBot | null> {

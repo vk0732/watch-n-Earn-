@@ -13,6 +13,11 @@ import {
   getTaskCompletion,
   saveTask,
   getTaskById,
+  getAllTasks,
+  deleteTask,
+  saveForceJoinChannel,
+  getForceJoinChannels,
+  deleteForceJoinChannel,
 } from '../server/db.ts';
 import {
   verifyTelegramInitData,
@@ -26,7 +31,12 @@ import {
   setMockChannelMembership,
   clearMockChannelMemberships,
 } from '../server/telegram.ts';
-import { verifyChannelTask } from '../server/taskVerification.ts';
+import {
+  verifyChannelTask,
+  verifyVideoTask,
+  verifyWebsiteTask,
+  verifySocialTask,
+} from '../server/taskVerification.ts';
 import { validateUpiId, payoutGateway } from '../server/payoutAdapter.ts';
 import type { UserProfile, Task, ForceJoinChannel } from '../src/types/index.ts';
 
@@ -198,42 +208,203 @@ async function runTests() {
      ------------------------------------------------------------------ */
   console.log('\nTest Suite 5: Watch & Earn Tasks & Double Claiming Prevention');
   {
+    // A. Task Creation and Retrieval
     const taskId = `task_test_${Date.now()}`;
     const userId = `task_user_${Date.now()}`;
+    const dummyUser: UserProfile = {
+      id: userId,
+      telegramId: 998877,
+      firstName: 'TestUser',
+      balance: 100,
+      lifetimeEarnings: 100,
+      referralEarnings: 0,
+      referralCode: 'ref_dummy',
+      dailyStreak: 0,
+      isBanned: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
 
-    await saveTask({
+    const taskVideo: Task = {
       id: taskId,
-      title: 'Automated Test Task',
-      description: 'Test description',
-      destinationUrl: 'https://example.com',
+      title: 'Automated Test Video Task',
+      description: 'Watch video for 10 seconds',
+      destinationUrl: 'https://youtube.com/watch?v=123',
       rewardAmount: 30,
       taskType: 'video',
       timerSeconds: 10,
       isActive: true,
       sortOrder: 1,
       createdAt: new Date().toISOString(),
-    });
+    };
 
-    const task = await getTaskById(taskId);
-    assert(task !== null && task.rewardAmount === 30, 'Task created and retrievable');
+    await saveTask(taskVideo);
+    const retrievedTask = await getTaskById(taskId);
+    assert(retrievedTask !== null && retrievedTask.rewardAmount === 30, 'Task created and retrievable');
 
-    // Initial check: not completed
-    const comp1 = await getTaskCompletion(userId, taskId);
+    // B. Video Task Verification
+    const vidNoStart = await verifyVideoTask(dummyUser, taskVideo, undefined);
+    assert(vidNoStart.success === false && vidNoStart.error!.includes('start watching'), 'Video Task: Rejects when timer not started');
+
+    const vidTooEarly = await verifyVideoTask(dummyUser, taskVideo, Date.now() - 3000);
+    assert(vidTooEarly.success === false && vidTooEarly.error!.includes('remaining'), 'Video Task: Rejects when elapsed time is insufficient');
+
+    const vidComplete = await verifyVideoTask(dummyUser, taskVideo, Date.now() - 11000);
+    assert(vidComplete.success === true, 'Video Task: Verifies successfully after timer completion');
+
+    // C. Website Task Verification
+    const taskWeb: Task = {
+      id: `task_web_${Date.now()}`,
+      title: 'Visit Sponsor Site',
+      description: 'Visit site for 8 seconds',
+      destinationUrl: 'https://example.com',
+      rewardAmount: 15,
+      taskType: 'website',
+      timerSeconds: 8,
+      isActive: true,
+      sortOrder: 2,
+      createdAt: new Date().toISOString(),
+    };
+    const webNoStart = await verifyWebsiteTask(dummyUser, taskWeb, undefined);
+    assert(webNoStart.success === false && webNoStart.error!.includes('visit the website'), 'Website Task: Rejects when timer not started');
+
+    const webComplete = await verifyWebsiteTask(dummyUser, taskWeb, Date.now() - 9000);
+    assert(webComplete.success === true, 'Website Task: Verifies successfully after visit timer completes');
+
+    // D. Social Task Verification (All 4 Options)
+    // Option 1: Code Confirmation
+    const taskCode: Task = {
+      id: `task_code_${Date.now()}`,
+      title: 'Instagram Follow & Secret Code',
+      description: 'Find secret code in bio',
+      destinationUrl: 'https://instagram.com/test',
+      rewardAmount: 25,
+      taskType: 'social',
+      socialPlatform: 'instagram',
+      verificationMethod: 'code_confirmation',
+      verificationCode: 'SECRET99',
+      timerSeconds: 0,
+      isActive: true,
+      sortOrder: 3,
+      createdAt: new Date().toISOString(),
+    };
+    const codeWrong = await verifySocialTask(dummyUser, taskCode, { verificationCode: 'WRONG' });
+    assert(codeWrong.success === false && codeWrong.error!.includes('Incorrect verification code'), 'Social Task: Rejects incorrect secret code');
+
+    const codeCorrect = await verifySocialTask(dummyUser, taskCode, { verificationCode: 'secret99' });
+    assert(codeCorrect.success === true, 'Social Task: Accepts correct secret code (case-insensitive)');
+
+    // Option 2: Manual Review
+    const taskManual: Task = {
+      id: `task_manual_${Date.now()}`,
+      title: 'X / Twitter Follow',
+      description: 'Follow and submit username',
+      destinationUrl: 'https://x.com/test',
+      rewardAmount: 20,
+      taskType: 'social',
+      socialPlatform: 'twitter',
+      verificationMethod: 'manual_review',
+      timerSeconds: 0,
+      isActive: true,
+      sortOrder: 4,
+      createdAt: new Date().toISOString(),
+    };
+    const manualNoHandle = await verifySocialTask(dummyUser, taskManual, {});
+    assert(manualNoHandle.success === false && manualNoHandle.error!.includes('social handle'), 'Social Task: Rejects manual review without user handle');
+
+    const manualSubmitted = await verifySocialTask(dummyUser, taskManual, { socialHandle: '@myhandle' });
+    assert(manualSubmitted.success === true && manualSubmitted.pendingReview === true, 'Social Task: Accepts manual review submission and sets pendingReview');
+
+    // Option 3: Engagement Timer
+    const taskTimer: Task = {
+      id: `task_timer_${Date.now()}`,
+      title: 'YouTube Watch & Engage',
+      description: 'Watch video for 5 seconds',
+      destinationUrl: 'https://youtube.com/test',
+      rewardAmount: 18,
+      taskType: 'social',
+      socialPlatform: 'youtube',
+      verificationMethod: 'timer',
+      timerSeconds: 5,
+      isActive: true,
+      sortOrder: 5,
+      createdAt: new Date().toISOString(),
+    };
+    const timerTooEarly = await verifySocialTask(dummyUser, taskTimer, {}, Date.now() - 1000);
+    assert(timerTooEarly.success === false && timerTooEarly.error!.includes('remaining'), 'Social Task: Rejects engagement timer when time insufficient');
+
+    const timerDone = await verifySocialTask(dummyUser, taskTimer, {}, Date.now() - 6000);
+    assert(timerDone.success === true, 'Social Task: Accepts engagement timer after required time');
+
+    // Option 4: Direct Action Confirmation
+    const taskDirect: Task = {
+      id: `task_direct_${Date.now()}`,
+      title: 'Discord Join',
+      description: 'Join server and confirm',
+      destinationUrl: 'https://discord.gg/test',
+      rewardAmount: 15,
+      taskType: 'social',
+      socialPlatform: 'discord',
+      timerSeconds: 0,
+      isActive: true,
+      sortOrder: 6,
+      createdAt: new Date().toISOString(),
+    };
+    const directNoConfirm = await verifySocialTask(dummyUser, taskDirect, { confirmedAction: false });
+    assert(directNoConfirm.success === false && directNoConfirm.error!.includes('confirm your action'), 'Social Task: Direct confirmation rejects unconfirmed action');
+
+    const directConfirmed = await verifySocialTask(dummyUser, taskDirect, { confirmedAction: true });
+    assert(directConfirmed.success === true, 'Social Task: Direct confirmation accepts confirmed action');
+
+    // E. Task Editing and Persistence
+    await saveTask({ ...taskVideo, title: 'Updated Video Task Title', rewardAmount: 50 });
+    const updatedTask = await getTaskById(taskId);
+    assert(updatedTask !== null && updatedTask.title === 'Updated Video Task Title' && updatedTask.rewardAmount === 50, 'Task Editing: Task updated and persisted in DB');
+
+    // F. Task Listing and Deletion
+    const allTasks = await getAllTasks(false);
+    assert(allTasks.some((t) => t.id === taskId), 'Task Listing: getAllTasks returns created task');
+
+    await deleteTask(taskId);
+    const deletedTask = await getTaskById(taskId);
+    assert(deletedTask === null, 'Task Deletion: deleteTask successfully removes task');
+
+    // G. Force Join Channel CRUD
+    const testChanId = `chan_crud_${Date.now()}`;
+    const testChan: ForceJoinChannel = {
+      id: testChanId,
+      title: 'CRUD Test Channel',
+      channelId: '@crudtestchannel',
+      inviteLink: 'https://t.me/crudtestchannel',
+      isPrivate: false,
+      isEnabled: true,
+      order: 10,
+    };
+    await saveForceJoinChannel(testChan);
+    const allChans = await getForceJoinChannels(false);
+    assert(allChans.some((c) => c.id === testChanId), 'Channel CRUD: saveForceJoinChannel persists channel');
+
+    await deleteForceJoinChannel(testChanId);
+    const afterDeleteChans = await getForceJoinChannels(false);
+    assert(!afterDeleteChans.some((c) => c.id === testChanId), 'Channel CRUD: deleteForceJoinChannel removes channel');
+
+    // H. Task Completion Recording & Double Claim Prevention
+    const testTaskId2 = `task_comp_${Date.now()}`;
+    await saveTask({ ...taskVideo, id: testTaskId2 });
+
+    const comp1 = await getTaskCompletion(userId, testTaskId2);
     assert(comp1 === null, 'Task initially not completed for user');
 
-    // Record completion
     await recordTaskCompletion({
-      id: `${userId}_${taskId}`,
+      id: `${userId}_${testTaskId2}`,
       userId,
-      taskId,
-      rewardAmount: 30,
+      taskId: testTaskId2,
+      rewardAmount: 50,
       completedAt: new Date().toISOString(),
     });
 
-    const comp2 = await getTaskCompletion(userId, taskId);
-    assert(comp2 !== null, 'Task completion recorded');
-
-    // Second claim: blocked
+    const comp2 = await getTaskCompletion(userId, testTaskId2);
+    assert(comp2 !== null && comp2.rewardAmount === 50, 'Task completion recorded');
     assert(comp2 !== null, 'Duplicate completion request is identified and blocked');
   }
 

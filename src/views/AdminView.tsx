@@ -285,13 +285,32 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     }
 
     let formattedId = rawId;
-    if (/^-?\d+$/.test(rawId) || /^100\d+$/.test(rawId)) {
+    const cMatch = rawId.match(/(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/c\/(\d+)(?:\/\d+)?/i);
+    if (cMatch) {
+      formattedId = `-100${cMatch[1]}`;
+    } else if (/^-?\d+$/.test(rawId) || /^100\d+$/.test(rawId)) {
       if (rawId.startsWith('-100')) formattedId = rawId;
       else if (rawId.startsWith('-')) formattedId = `-100${rawId.slice(1)}`;
       else if (rawId.startsWith('100')) formattedId = `-${rawId}`;
       else formattedId = `-100${rawId}`;
-    } else if (!rawId.startsWith('@') && !rawId.startsWith('https://')) {
+    } else if (rawId.startsWith('https://') || rawId.startsWith('http://') || rawId.startsWith('t.me/')) {
+      const clean = rawId.replace(/^https?:\/\//i, '').replace(/^(?:www\.)?(?:t\.me|telegram\.me)\//i, '');
+      const slug = clean.split('/')[0]?.split('?')[0]?.replace('@', '');
+      if (slug) formattedId = `@${slug}`;
+    } else if (!rawId.startsWith('@')) {
       formattedId = `@${rawId}`;
+    }
+
+    const inviteLink = (editingChannel.inviteLink || '').trim();
+    if (
+      formattedId.startsWith('-100') &&
+      (!inviteLink || inviteLink === 'https://' || (!inviteLink.includes('t.me/+') && !inviteLink.includes('t.me/joinchat/')))
+    ) {
+      showNotify(
+        'Private channels require a valid Telegram invite URL (https://t.me/+...) in Invite Link.',
+        'error'
+      );
+      return;
     }
 
     try {
@@ -403,21 +422,33 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       }
 
       let formattedId = rawId;
-      if (/^-?\d+$/.test(rawId) || /^100\d+$/.test(rawId)) {
+      const cMatch = rawId.match(/(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/c\/(\d+)(?:\/\d+)?/i);
+      if (cMatch) {
+        formattedId = `-100${cMatch[1]}`;
+      } else if (/^-?\d+$/.test(rawId) || /^100\d+$/.test(rawId)) {
         if (rawId.startsWith('-100')) formattedId = rawId;
         else if (rawId.startsWith('-')) formattedId = `-100${rawId.slice(1)}`;
         else if (rawId.startsWith('100')) formattedId = `-${rawId}`;
         else formattedId = `-100${rawId}`;
-      } else if (rawId && !rawId.startsWith('@') && !rawId.startsWith('https://')) {
+      } else if (rawId.startsWith('https://') || rawId.startsWith('http://') || rawId.startsWith('t.me/')) {
+        const clean = rawId.replace(/^https?:\/\//i, '').replace(/^(?:www\.)?(?:t\.me|telegram\.me)\//i, '');
+        const slug = clean.split('/')[0]?.split('?')[0]?.replace('@', '');
+        if (slug) formattedId = `@${slug}`;
+      } else if (rawId && !rawId.startsWith('@')) {
         formattedId = `@${rawId}`;
       }
 
       let finalJoinUrl = rawUrl;
-      if (!finalJoinUrl && formattedId.startsWith('@')) {
+      if ((!finalJoinUrl || finalJoinUrl === 'https://') && formattedId.startsWith('@')) {
         finalJoinUrl = `https://t.me/${formattedId.replace('@', '')}`;
-      } else if (!finalJoinUrl && formattedId.startsWith('-100')) {
+      } else if (
+        formattedId.startsWith('-100') &&
+        (!finalJoinUrl ||
+          finalJoinUrl === 'https://' ||
+          (!finalJoinUrl.includes('t.me/+') && !finalJoinUrl.includes('t.me/joinchat/')))
+      ) {
         showNotify(
-          'Private channels require a private invite URL (https://t.me/+...) in Join URL so users can join.',
+          'Private channels require a valid private invite URL (https://t.me/+...) in Join URL so users can join.',
           'error'
         );
         return;
@@ -2551,10 +2582,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                       <div>
                         <label className="block text-xs font-semibold text-slate-300 mb-1">Verification Method</label>
                         <select
-                          value={editingTask.verificationMethod || 'manual_review'}
+                          value={editingTask.verificationMethod || ''}
                           onChange={(e) => setEditingTask({ ...editingTask, verificationMethod: e.target.value as any })}
                           className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
                         >
+                          <option value="">Direct Action Confirmation (Instant)</option>
                           <option value="manual_review">Manual Review (User Handle)</option>
                           <option value="code_confirmation">Secret Verification Code</option>
                           <option value="timer">Engagement Timer</option>

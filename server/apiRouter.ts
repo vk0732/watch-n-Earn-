@@ -620,6 +620,9 @@ apiRouter.post('/tasks/complete', extractTelegramUser, requireLiveChannelMembers
       case 'social':
         verifyRes = await verifySocialTask(user, task, req.body, startedAt);
         break;
+      case 'bot':
+        verifyRes = { success: true };
+        break;
       default:
         verifyRes = { success: false, error: `Unsupported task type: ${task.taskType}` };
     }

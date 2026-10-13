@@ -46,6 +46,7 @@ import {
   verifyTelegramInitData,
   checkTelegramChannelMembership,
   checkBotChannelAccess,
+  formatChannelIdentifier,
   isTelegramAdmin,
   setTelegramWebhook,
   deleteTelegramWebhook,
@@ -963,6 +964,29 @@ apiRouter.post('/admin/tasks', extractTelegramUser, requireAdmin, async (req, re
       taskData.createdAt = new Date().toISOString();
     }
 
+    if (taskData.taskType === 'channel') {
+      const rawId = (taskData.channelId || '').trim();
+      const rawUrl = (taskData.destinationUrl || '').trim();
+
+      const parsed = formatChannelIdentifier(rawId);
+      if (!parsed.ok) {
+        return res.status(400).json({ error: parsed.error });
+      }
+
+      taskData.channelId = parsed.formatted;
+
+      if (parsed.isPrivate && (!rawUrl || rawUrl === 'https://')) {
+        return res.status(400).json({
+          error:
+            'Private channel tasks require a valid Telegram invite URL (https://t.me/+...) in Join URL so users can join.',
+        });
+      }
+
+      if (!rawUrl && parsed.formatted?.startsWith('@')) {
+        taskData.destinationUrl = `https://t.me/${parsed.formatted.replace('@', '')}`;
+      }
+    }
+
     const saved = await saveTask(taskData);
     await recordAdminAudit(admin.id, 'SAVE_TASK', `Saved task: ${saved.title} (Reward: ${saved.rewardAmount})`);
 
@@ -1000,6 +1024,29 @@ apiRouter.post('/admin/channels', extractTelegramUser, requireAdmin, async (req,
     if (!chData.id) {
       chData.id = `chan_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     }
+
+    const rawId = (chData.channelId || '').trim();
+    const rawUrl = (chData.inviteLink || '').trim();
+
+    const parsed = formatChannelIdentifier(rawId);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
+
+    chData.channelId = parsed.formatted!;
+    chData.isPrivate = Boolean(parsed.isPrivate);
+
+    if (parsed.isPrivate && (!rawUrl || rawUrl === 'https://')) {
+      return res.status(400).json({
+        error:
+          'Private force join channels require a valid Telegram invite URL (https://t.me/+...) in Invite Link so users can join.',
+      });
+    }
+
+    if (!rawUrl && parsed.formatted?.startsWith('@')) {
+      chData.inviteLink = `https://t.me/${parsed.formatted.replace('@', '')}`;
+    }
+
     const saved = await saveForceJoinChannel(chData);
     await recordAdminAudit(admin.id, 'SAVE_CHANNEL', `Saved channel: ${saved.title} (${saved.channelId})`);
     res.json({ success: true, channel: saved });

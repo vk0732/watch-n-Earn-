@@ -18,13 +18,14 @@ import {
   verifyTelegramInitData,
   isTelegramAdmin,
   checkTelegramChannelMembership,
+  checkBotChannelAccess,
   formatChannelIdentifier,
   setMockChannelMembership,
   clearMockChannelMemberships,
 } from '../server/telegram.ts';
 import { verifyChannelTask } from '../server/taskVerification.ts';
 import { validateUpiId, payoutGateway } from '../server/payoutAdapter.ts';
-import type { UserProfile, Task } from '../src/types/index.ts';
+import type { UserProfile, Task, ForceJoinChannel } from '../src/types/index.ts';
 
 // Simple lightweight test runner
 let passed = 0;
@@ -394,7 +395,7 @@ async function runTests() {
     const badInvite2 = formatChannelIdentifier('https://t.me/joinchat/AbCdEfGh123');
     assert(Boolean(badInvite2.error), 'Private joinchat link rejected as channel ID');
 
-    // B. verifyChannelTask behavior with private channels
+    // B. Bot Startup / Force Join Flow Verification for Private Channel (-10020877627202664)
     const testPrivateChannelId = '-10020877627202664';
     const privateInviteLink = 'https://t.me/+PrivateInviteCode123';
     const testTgUser = 998877;
@@ -412,6 +413,41 @@ async function runTests() {
       updatedAt: new Date().toISOString(),
     };
 
+    // Flow 1 - Case A: Bot is NOT in the private channel
+    clearMockChannelMemberships();
+    setMockChannelMembership(testPrivateChannelId, {
+      isMember: false,
+      status: 'chat_not_found',
+      error: `Bot @WatchXEarnBot is not a member of channel ${testPrivateChannelId}. Please add @WatchXEarnBot to the channel as an Administrator with 'View members' permissions.`,
+    });
+    const startupBotMissing = await checkTelegramChannelMembership(testPrivateChannelId, testTgUser);
+    assert(startupBotMissing.isMember === false, 'Bot Startup Flow: Channel check blocked when bot missing');
+    assert(
+      startupBotMissing.status === 'chat_not_found' && Boolean(startupBotMissing.error?.includes('@WatchXEarnBot')),
+      'Bot Startup Flow: Clear error naming @WatchXEarnBot when bot is not in private channel'
+    );
+
+    // Flow 1 - Case B: Bot IS in private channel, but user has NOT joined
+    clearMockChannelMemberships();
+    setMockChannelMembership(`${testPrivateChannelId}_${testTgUser}`, {
+      isMember: false,
+      status: 'user_not_found',
+      error: 'Please join the channel and try again.',
+    });
+    const startupUserUnjoined = await checkTelegramChannelMembership(testPrivateChannelId, testTgUser);
+    assert(startupUserUnjoined.isMember === false && startupUserUnjoined.status === 'user_not_found', 'Bot Startup Flow: Unjoined user correctly identified');
+    assert(Boolean(startupUserUnjoined.error?.includes('Please join')), 'Bot Startup Flow: Prompts user to join');
+
+    // Flow 1 - Case C: User has joined private channel -> verified!
+    clearMockChannelMemberships();
+    setMockChannelMembership(`${testPrivateChannelId}_${testTgUser}`, {
+      isMember: true,
+      status: 'member',
+    });
+    const startupUserJoined = await checkTelegramChannelMembership(testPrivateChannelId, testTgUser);
+    assert(startupUserJoined.isMember === true && startupUserJoined.status === 'member', 'Bot Startup Flow: Verified member successfully unlocks startup check');
+
+    // C. Admin Panel Tasks Flow Verification for Private Channel (-10020877627202664)
     // 1. Task configured with invalid channelId (invite link instead of numeric ID)
     const misconfiguredTask: Task = {
       id: 'task_bad_channel',
@@ -427,9 +463,9 @@ async function runTests() {
       createdAt: new Date().toISOString(),
     };
     const resBad = await verifyChannelTask(testUserProfile, misconfiguredTask);
-    assert(resBad.success === false && resBad.error!.includes('numeric Channel ID'), 'Task with invite link as channelId rejected with guidance');
+    assert(resBad.success === false && resBad.error!.includes('numeric Channel ID'), 'Task Flow: Task with invite link as channelId rejected with guidance');
 
-    // 2. Properly configured private channel task with mock membership
+    // 2. Properly configured private channel task
     const properPrivateTask: Task = {
       id: 'task_proper_private',
       title: 'Join VIP Channel',
@@ -444,16 +480,55 @@ async function runTests() {
       createdAt: new Date().toISOString(),
     };
 
-    // User is NOT member yet
+    // Flow 2 - Case A: Bot missing in private channel
     clearMockChannelMemberships();
-    setMockChannelMembership(`${testPrivateChannelId}_${testTgUser}`, { isMember: false, status: 'left' });
-    const resNotMember = await verifyChannelTask(testUserProfile, properPrivateTask);
-    assert(resNotMember.success === false, 'Non-member correctly denied reward');
+    setMockChannelMembership(testPrivateChannelId, {
+      isMember: false,
+      status: 'chat_not_found',
+      error: `Bot @WatchXEarnBot is not a member of channel ${testPrivateChannelId}. Please add @WatchXEarnBot to the channel as an Administrator with 'View members' permissions.`,
+    });
+    const taskBotMissing = await verifyChannelTask(testUserProfile, properPrivateTask);
+    assert(taskBotMissing.success === false && Boolean(taskBotMissing.error?.includes('@WatchXEarnBot')), 'Task Flow: Task blocked with clear warning when bot is not an admin');
 
-    // User joins -> membership confirmed
+    // Flow 2 - Case B: Bot is admin, but user is NOT member
+    clearMockChannelMemberships();
+    setMockChannelMembership(`${testPrivateChannelId}_${testTgUser}`, {
+      isMember: false,
+      status: 'left',
+      error: 'Please join the channel and try again.',
+    });
+    const taskNotMember = await verifyChannelTask(testUserProfile, properPrivateTask);
+    assert(taskNotMember.success === false && Boolean(taskNotMember.error?.includes('Please join')), 'Task Flow: Non-member correctly denied reward');
+
+    // Flow 2 - Case C: User is member of private channel
+    clearMockChannelMemberships();
     setMockChannelMembership(`${testPrivateChannelId}_${testTgUser}`, { isMember: true, status: 'member' });
-    const resMember = await verifyChannelTask(testUserProfile, properPrivateTask);
-    assert(resMember.success === true, 'Member of private channel verified successfully');
+    const taskMember = await verifyChannelTask(testUserProfile, properPrivateTask);
+    assert(taskMember.success === true, 'Task Flow: Member of private channel verified successfully');
+
+    // D. checkBotChannelAccess direct detection
+    clearMockChannelMemberships();
+    setMockChannelMembership(`access_${testPrivateChannelId}`, {
+      isMember: false,
+      status: 'bot_not_in_channel',
+      error: `Bot @WatchXEarnBot is not a member of private channel ${testPrivateChannelId}.`,
+    });
+    const accessDenied = await checkBotChannelAccess(testPrivateChannelId);
+    assert(accessDenied.ok === false && accessDenied.status === 'bot_not_in_channel', 'Bot Access Diagnostic: Correctly detects bot missing from private channel');
+
+    setMockChannelMembership(`access_${testPrivateChannelId}`, {
+      isMember: true,
+      status: 'verified',
+    });
+    const accessGranted = await checkBotChannelAccess(testPrivateChannelId);
+    assert(accessGranted.ok === true && accessGranted.status === 'verified', 'Bot Access Diagnostic: Correctly detects bot verified in private channel');
+
+    // E. Edge case identifier handling
+    const urlWithNumeric = formatChannelIdentifier('https://t.me/-10020877627202664');
+    assert(urlWithNumeric.formatted === '-10020877627202664' && urlWithNumeric.isPrivate === true, 'Numeric ID pasted in t.me URL cleanly parsed as numeric ID without @');
+
+    const tgMeInvite = formatChannelIdentifier('https://telegram.me/+AnotherCode456');
+    assert(Boolean(tgMeInvite.error), 'telegram.me/+ invite link correctly rejected as chat ID');
 
     clearMockChannelMemberships();
   }

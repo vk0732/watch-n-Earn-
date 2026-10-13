@@ -188,10 +188,7 @@ export function formatChannelIdentifier(channelId: string): {
 
   // Reject private invite links passed as chat IDs
   if (
-    trimmed.startsWith('https://t.me/+') ||
-    trimmed.startsWith('https://t.me/joinchat/') ||
-    trimmed.startsWith('t.me/+') ||
-    trimmed.startsWith('t.me/joinchat/') ||
+    /(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/(?:\+|joinchat\/)/i.test(trimmed) ||
     (trimmed.startsWith('+') && !/^\+\d{10,}$/.test(trimmed))
   ) {
     return {
@@ -219,12 +216,23 @@ export function formatChannelIdentifier(channelId: string): {
     return { ok: true, formatted: `-100${trimmed}`, isPrivate: true };
   }
 
-  // Handle public username or public t.me/ URL
-  if (trimmed.startsWith('https://t.me/') || trimmed.startsWith('t.me/')) {
-    const cleanUrl = trimmed.replace(/^https?:\/\//i, '').replace(/^t\.me\//i, '');
+  // Handle public username or t.me/ URL (and handle numeric ID inside t.me URL cleanly)
+  if (
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('t.me/') ||
+    trimmed.startsWith('telegram.me/')
+  ) {
+    const cleanUrl = trimmed
+      .replace(/^https?:\/\//i, '')
+      .replace(/^(?:www\.)?(?:t\.me|telegram\.me)\//i, '');
     const slug = cleanUrl.split('/')[0].split('?')[0].replace('@', '');
     if (!slug) {
       return { ok: false, error: 'Invalid channel URL' };
+    }
+    // If numeric chat ID was pasted inside a URL (e.g. t.me/-10020877627202664)
+    if (/^-?\d+$/.test(slug) || /^100\d+$/.test(slug)) {
+      return formatChannelIdentifier(slug);
     }
     return { ok: true, formatted: `@${slug}`, isPrivate: false };
   }
@@ -505,7 +513,11 @@ export async function checkTelegramChannelMembership(
         };
       }
 
-      if (desc.includes('user not found')) {
+      if (
+        desc.includes('user not found') ||
+        desc.includes('participant_id_invalid') ||
+        desc.includes('USER_ID_INVALID')
+      ) {
         return {
           isMember: false,
           status: 'user_not_found',

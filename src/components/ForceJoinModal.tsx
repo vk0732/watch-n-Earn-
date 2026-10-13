@@ -22,6 +22,15 @@ export const ForceJoinModal: React.FC<ForceJoinModalProps> = ({
 
   if (!isOpen) return null;
 
+  const handleOpenChannel = (url: string) => {
+    const tg = (window as any).Telegram?.WebApp;
+    if (tg?.openTelegramLink && (url.includes('t.me/') || url.includes('telegram.me/'))) {
+      tg.openTelegramLink(url);
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  };
+
   const handleVerify = async () => {
     setLoading(true);
     setError(null);
@@ -101,14 +110,13 @@ export const ForceJoinModal: React.FC<ForceJoinModalProps> = ({
                         <CheckCircle2 className="w-3.5 h-3.5" /> Joined
                       </span>
                     ) : (
-                      <a
-                        href={ch.inviteLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => handleOpenChannel(ch.inviteLink)}
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg shadow-sm transition"
                       >
                         Join <ExternalLink className="w-3 h-3" />
-                      </a>
+                      </button>
                     )}
                   </div>
                 </div>

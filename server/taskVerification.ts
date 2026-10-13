@@ -30,8 +30,7 @@ export async function verifyChannelTask(
 
   // If channelId was accidentally filled with a private invite link:
   if (
-    channelIdentifier.includes('t.me/+') ||
-    channelIdentifier.includes('t.me/joinchat/') ||
+    /(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/(?:\+|joinchat\/)/i.test(channelIdentifier) ||
     (channelIdentifier.startsWith('+') && !/^\+\d{10,}$/.test(channelIdentifier))
   ) {
     return {
@@ -44,17 +43,18 @@ export async function verifyChannelTask(
   // Fallback to destinationUrl only if channelId is not set
   if (!channelIdentifier && task.destinationUrl) {
     const rawUrl = task.destinationUrl.trim();
-    if (rawUrl.includes('t.me/+') || rawUrl.includes('t.me/joinchat/')) {
+    if (/(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/(?:\+|joinchat\/)/i.test(rawUrl)) {
       return {
         success: false,
         error:
           'This private channel task is missing its numeric Channel ID (e.g. -10020877627202664). Please configure the numeric Channel ID in the task settings.',
       };
     }
-    if (rawUrl.includes('t.me/')) {
-      const parts = rawUrl.split('t.me/')[1]?.split('/')[0]?.split('?')[0]?.replace('+', '');
+    if (rawUrl.includes('t.me/') || rawUrl.includes('telegram.me/')) {
+      const clean = rawUrl.replace(/^https?:\/\//i, '').replace(/^(?:www\.)?(?:t\.me|telegram\.me)\//i, '');
+      const parts = clean.split('/')[0]?.split('?')[0]?.replace('@', '');
       if (parts) {
-        channelIdentifier = parts.startsWith('@') ? parts : `@${parts}`;
+        channelIdentifier = parts;
       }
     }
   }

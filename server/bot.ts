@@ -334,12 +334,13 @@ async function handleStartCommand(
 
   // 2. Check Force Join Channels
   const channels = await getForceJoinChannels(true);
-  const unjoinedChannels: typeof channels = [];
+  const unjoinedChannels: Array<{ channel: (typeof channels)[0]; error?: string; status?: string }> = [];
 
   for (const ch of channels) {
-    const check = await checkTelegramChannelMembership(ch.channelId, from.id);
+    const rawId = (ch.channelId || ch.username || '').trim();
+    const check = await checkTelegramChannelMembership(rawId, from.id);
     if (!check.isMember) {
-      unjoinedChannels.push(ch);
+      unjoinedChannels.push({ channel: ch, error: check.error, status: check.status });
     }
   }
 
@@ -352,13 +353,19 @@ async function handleStartCommand(
 
     const inlineKeyboard: any[][] = [];
 
-    unjoinedChannels.forEach((ch) => {
-      inlineKeyboard.push([
-        {
-          text: `📢 Join ${ch.title}`,
-          url: ch.inviteLink,
-        },
-      ]);
+    unjoinedChannels.forEach((item) => {
+      const ch = item.channel;
+      const joinUrl =
+        (ch.inviteLink || '').trim() ||
+        (ch.channelId?.startsWith('@') ? `https://t.me/${ch.channelId.replace('@', '')}` : '');
+      if (joinUrl) {
+        inlineKeyboard.push([
+          {
+            text: `📢 Join ${ch.title}`,
+            url: joinUrl,
+          },
+        ]);
+      }
     });
 
     inlineKeyboard.push([
@@ -378,7 +385,16 @@ async function handleStartCommand(
       settings.templates?.welcomeMessage?.trim() ||
       `🎁 <b>Welcome to TeleEarn!</b>\n\n💰 <b>Complete Tasks & Earn Rewards</b>\n⚡ Simple Tasks • Exciting Rewards\n\n🚀 Start your earning journey today!`;
 
-    const sent = await sendTelegramMessage(chatId, startWelcomeText, { inline_keyboard: inlineKeyboard });
+    let forceJoinText = startWelcomeText;
+    const botErrors = unjoinedChannels.filter(
+      (item) => item.status === 'chat_not_found' || item.status === 'bot_not_admin'
+    );
+    if (botErrors.length > 0) {
+      const errList = botErrors.map((i) => `• <b>${i.channel.title}</b>: ${i.error}`).join('\n');
+      forceJoinText += `\n\n⚠️ <b>Channel Bot Access Notice:</b>\n${errList}`;
+    }
+
+    const sent = await sendTelegramMessage(chatId, forceJoinText, { inline_keyboard: inlineKeyboard });
 
     let session = activeVerificationSessions.get(chatId);
     if (!session) {
@@ -452,13 +468,14 @@ async function handleCallbackQuery(
     try {
       const channels = await getForceJoinChannels(true);
       let allJoined = true;
-      const stillUnjoined: Array<{ channel: typeof channels[0]; error?: string }> = [];
+      const stillUnjoined: Array<{ channel: typeof channels[0]; error?: string; status?: string }> = [];
 
       for (const ch of channels) {
-        const check = await checkTelegramChannelMembership(ch.channelId, userId);
+        const rawId = (ch.channelId || ch.username || '').trim();
+        const check = await checkTelegramChannelMembership(rawId, userId);
         if (!check.isMember) {
           allJoined = false;
-          stillUnjoined.push({ channel: ch, error: check.error });
+          stillUnjoined.push({ channel: ch, error: check.error, status: check.status });
         }
       }
 
@@ -470,10 +487,22 @@ async function handleCallbackQuery(
           await saveUser(user);
         }
 
-        await answerTelegramCallback(
-          cb.id,
-          '❌ Verification Incomplete! Please join the required channels.'
+        const botErrors = stillUnjoined.filter(
+          (item) => item.status === 'chat_not_found' || item.status === 'bot_not_admin'
         );
+
+        if (botErrors.length > 0) {
+          const firstErr = botErrors[0];
+          await answerTelegramCallback(
+            cb.id,
+            `⚠️ Bot Access Issue: @WatchXEarnBot is not an Admin in ${firstErr.channel.channelId || firstErr.channel.title}`
+          );
+        } else {
+          await answerTelegramCallback(
+            cb.id,
+            '❌ Verification Incomplete! Please join the required channels.'
+          );
+        }
 
         // Remove previous incomplete messages from the same verification flow where possible
         const session = activeVerificationSessions.get(chatId);
@@ -488,19 +517,33 @@ async function handleCallbackQuery(
 
         const inlineKeyboard: any[][] = [];
         stillUnjoined.forEach((item) => {
-          inlineKeyboard.push([{ text: `📢 Join ${item.channel.title}`, url: item.channel.inviteLink }]);
+          const ch = item.channel;
+          const joinUrl =
+            (ch.inviteLink || '').trim() ||
+            (ch.channelId?.startsWith('@') ? `https://t.me/${ch.channelId.replace('@', '')}` : '');
+          if (joinUrl) {
+            inlineKeyboard.push([{ text: `📢 Join ${ch.title}`, url: joinUrl }]);
+          }
         });
         inlineKeyboard.push([{ text: '✅ I Have Joined (Verify Now)', callback_data: 'verify_channels' }]);
 
-        const channelNotes = stillUnjoined
-          .map((item, i) => `${i + 1}. <b>${item.channel.title}</b>${item.error ? `\n   <i>(${item.error})</i>` : ''}`)
-          .join('\n');
+        let messageText = '';
+        if (botErrors.length > 0) {
+          const botErrorNotes = botErrors
+            .map(
+              (item, i) =>
+                `${i + 1}. <b>${item.channel.title}</b> (<code>${item.channel.channelId}</code>)\n   <i>${item.error}</i>`
+            )
+            .join('\n\n');
+          messageText = `⚠️ <b>Bot Permission Notice</b>\n\n@WatchXEarnBot cannot check members in the following channel(s):\n\n${botErrorNotes}\n\n👉 <b>If you are the admin:</b> Please add @WatchXEarnBot to the channel as an Administrator with 'View members' permissions.\n👉 <b>If you are a user:</b> Please contact support to resolve this issue.`;
+        } else {
+          const channelNotes = stillUnjoined
+            .map((item, i) => `${i + 1}. <b>${item.channel.title}</b>${item.error ? `\n   <i>(${item.error})</i>` : ''}`)
+            .join('\n');
+          messageText = `⚠️ <b>Verification Incomplete!</b>\n\nYou still haven't joined all required channels:\n\n${channelNotes}\n\nPlease join them and try again.`;
+        }
 
-        const sentIncomplete = await sendTelegramMessage(
-          chatId,
-          `⚠️ <b>Verification Incomplete!</b>\n\nYou still haven't joined all required channels:\n\n${channelNotes}\n\nPlease join them and try again.`,
-          { inline_keyboard: inlineKeyboard }
-        );
+        const sentIncomplete = await sendTelegramMessage(chatId, messageText, { inline_keyboard: inlineKeyboard });
 
         if (sentIncomplete.messageId) {
           let curSession = activeVerificationSessions.get(chatId);

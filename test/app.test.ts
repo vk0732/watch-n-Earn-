@@ -320,6 +320,38 @@ async function runTests() {
     assert(status.statusMessage.includes('DISABLED'), 'Safe status message explains sandbox review mode');
   }
 
+  /* ------------------------------------------------------------------
+     TEST 9: Admin Settings Persistence & Validation
+     ------------------------------------------------------------------ */
+  console.log('\nTest Suite 9: Admin Settings Operations & Persistence');
+  {
+    const settings = await getAppSettings();
+    assert(typeof settings.signupBonus === 'number', 'Settings has valid numeric signupBonus');
+    assert(typeof settings.referralReward === 'number', 'Settings has valid numeric referralReward');
+    assert(typeof settings.minWithdrawalAmount === 'number' && settings.minWithdrawalAmount > 0, 'Settings has valid minWithdrawalAmount');
+    assert(typeof settings.dailyCheckinBaseReward === 'number', 'Settings has valid dailyCheckinBaseReward');
+    assert(settings.templates !== undefined, 'Settings includes templates object');
+
+    // Test updateAppSettings
+    const updated = await updateAppSettings({
+      signupBonus: 25,
+      referralReward: 15,
+      minWithdrawalAmount: 10,
+      botUsername: 'WatchXEarnBot',
+    });
+    assert(updated.signupBonus === 25, 'updateAppSettings successfully updated signupBonus to 25');
+    assert(updated.referralReward === 15, 'updateAppSettings successfully updated referralReward to 15');
+    assert(updated.botUsername === 'WatchXEarnBot', 'updateAppSettings formatted and stored botUsername');
+
+    // Restore standard defaults
+    await updateAppSettings({
+      signupBonus: 20,
+      referralReward: 10,
+    });
+    const restored = await getAppSettings();
+    assert(restored.signupBonus === 20, 'Restored settings safely');
+  }
+
   console.log('\n==================================================');
   console.log(`  TEST RESULTS: ${passed} PASSED, ${failed} FAILED`);
   console.log('==================================================\n');

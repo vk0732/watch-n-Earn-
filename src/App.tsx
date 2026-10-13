@@ -19,6 +19,7 @@ import { WithdrawalModal } from './components/WithdrawalModal.tsx';
 import { ForceJoinModal } from './components/ForceJoinModal.tsx';
 import { SpinWheelModal } from './components/SpinWheelModal.tsx';
 import { ScratchCardModal } from './components/ScratchCardModal.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 
 declare global {
   interface Window {
@@ -360,7 +361,9 @@ export default function App() {
         )}
 
         {activeTab === 'admin' && isAdmin && (
-          <AdminView currentUser={user} />
+          <ErrorBoundary fallbackTitle="Admin Panel Error">
+            <AdminView currentUser={user} />
+          </ErrorBoundary>
         )}
       </main>
 

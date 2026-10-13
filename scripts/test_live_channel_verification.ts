@@ -12,7 +12,8 @@ import {
   checkTelegramChannelMembership,
 } from '../server/telegram.ts';
 import { handleTelegramBotUpdate } from '../server/bot.ts';
-import type { UserProfile, TelegramUpdate } from '../server/bot.ts';
+import type { TelegramUpdate } from '../server/bot.ts';
+import type { UserProfile } from '../src/types/index.ts';
 
 console.log('====================================================');
 console.log('🧪 RUNNING TELEGRAM LIVE CHANNEL MEMBERSHIP VERIFICATION TEST SUITE');

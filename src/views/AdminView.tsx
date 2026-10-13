@@ -9,6 +9,7 @@ import {
   Radio,
   Settings,
   CreditCard,
+  Wallet,
   UserCheck,
   Search,
   Plus,
@@ -33,6 +34,7 @@ import {
   Disc,
 } from 'lucide-react';
 import { api } from '../services/api.ts';
+import { ErrorBoundary } from '../components/ErrorBoundary.tsx';
 import type {
   DashboardStats,
   Task,
@@ -528,7 +530,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     }
 
     try {
-      await api.updateAdminSettings(settings);
+      const res = await api.updateAdminSettings(settings);
+      if (res && res.settings) {
+        setSettings(res.settings);
+      }
       showNotify('Settings updated successfully!');
     } catch (err: any) {
       showNotify(err.message, 'error');
@@ -2756,238 +2761,258 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       )}
 
       {/* TAB 6: SETTINGS */}
-      {activeTab === 'settings' && settings && (
-        <form onSubmit={handleSaveSettings} className="space-y-4">
-          <div className="p-5 bg-slate-900 border border-slate-800 rounded-2xl space-y-4">
-            <h3 className="text-sm font-bold text-white">Global Rewards & Operations Settings</h3>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Welcome Signup Bonus (₹)</label>
-                <input
-                  type="number"
-                  value={settings.signupBonus}
-                  onChange={(e) => setSettings({ ...settings, signupBonus: Number(e.target.value) })}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Referral Reward (₹)</label>
-                <input
-                  type="number"
-                  value={settings.referralReward}
-                  onChange={(e) => setSettings({ ...settings, referralReward: Number(e.target.value) })}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                />
-              </div>
+      {activeTab === 'settings' && (
+        <ErrorBoundary fallbackTitle="Settings View Error" onReset={loadTabContent}>
+          {loading && !settings ? (
+            <div className="flex flex-col items-center justify-center p-12 space-y-3 bg-slate-900 border border-slate-800 rounded-2xl">
+              <RefreshCw className="w-7 h-7 text-emerald-400 animate-spin" />
+              <p className="text-xs text-slate-400">Loading system settings...</p>
             </div>
+          ) : !settings ? (
+            <div className="p-6 text-center bg-slate-900 border border-slate-800 rounded-2xl space-y-3">
+              <p className="text-xs text-slate-400">Settings could not be loaded from server.</p>
+              <button
+                type="button"
+                onClick={loadTabContent}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition"
+              >
+                Retry Loading Settings
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleSaveSettings} className="space-y-4">
+              <div className="p-4 sm:p-5 bg-slate-900 border border-slate-800 rounded-2xl space-y-4">
+                <h3 className="text-sm font-bold text-white">Global Rewards & Operations Settings</h3>
 
-            <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-xl space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                    <Wallet className="w-3.5 h-3.5 text-emerald-400" />
-                    UPI Withdrawal Limits & Daily Controls
-                  </h4>
-                  <p className="text-[11px] text-slate-400">Configure minimum/maximum caps and rolling 24-hour limits</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Welcome Signup Bonus (₹)</label>
+                    <input
+                      type="number"
+                      value={settings.signupBonus ?? 20}
+                      onChange={(e) => setSettings({ ...settings, signupBonus: Number(e.target.value) })}
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Referral Reward (₹)</label>
+                    <input
+                      type="number"
+                      value={settings.referralReward ?? 10}
+                      onChange={(e) => setSettings({ ...settings, referralReward: Number(e.target.value) })}
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                    />
+                  </div>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Minimum Withdrawal Amount (₹)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={settings.minWithdrawalAmount}
-                    onChange={(e) => setSettings({ ...settings, minWithdrawalAmount: Number(e.target.value) })}
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-semibold"
-                  />
-                  <p className="text-[10px] text-slate-500 mt-1">Lower threshold per request</p>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Maximum Withdrawal Amount (₹)</label>
-                  <input
-                    type="number"
-                    min={settings.minWithdrawalAmount || 1}
-                    value={settings.maxWithdrawalAmount ?? 5000}
-                    onChange={(e) => setSettings({ ...settings, maxWithdrawalAmount: Number(e.target.value) })}
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-semibold"
-                  />
-                  <p className="text-[10px] text-slate-500 mt-1">Upper limit per request (≥ min amount)</p>
-                </div>
-              </div>
-
-              <div className="pt-2 border-t border-slate-800/80 space-y-3">
-                <label className="flex items-center gap-2 text-xs font-semibold text-slate-200 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(settings.dailyWithdrawalLimitEnabled)}
-                    onChange={(e) => setSettings({ ...settings, dailyWithdrawalLimitEnabled: e.target.checked })}
-                    className="rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-emerald-500/20"
-                  />
-                  <span>Enable 24-Hour Rolling Withdrawal Limit</span>
-                </label>
-
-                {settings.dailyWithdrawalLimitEnabled && (
-                  <div className="grid grid-cols-2 gap-3 pl-5 border-l-2 border-emerald-500/30 animate-in fade-in duration-200">
+                <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">
-                        Max Requests per 24 Hours
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={settings.maxWithdrawalRequestsPer24h ?? 3}
-                        onChange={(e) => setSettings({ ...settings, maxWithdrawalRequestsPer24h: Number(e.target.value) })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                      />
-                      <p className="text-[10px] text-slate-400 mt-0.5">Maximum payout requests in rolling 24h</p>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">
-                        Max Total Amount per 24 Hours (₹)
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={settings.maxWithdrawalAmountPer24h ?? 5000}
-                        onChange={(e) => setSettings({ ...settings, maxWithdrawalAmountPer24h: Number(e.target.value) })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                      />
-                      <p className="text-[10px] text-slate-400 mt-0.5">Maximum cumulative amount in rolling 24h</p>
+                      <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                        <Wallet className="w-3.5 h-3.5 text-emerald-400" />
+                        UPI Withdrawal Limits & Daily Controls
+                      </h4>
+                      <p className="text-[11px] text-slate-400">Configure minimum/maximum caps and rolling 24-hour limits</p>
                     </div>
                   </div>
-                )}
-              </div>
-            </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Daily Check-In Base (₹)</label>
-                <input
-                  type="number"
-                  value={settings.dailyCheckinBaseReward}
-                  onChange={(e) => setSettings({ ...settings, dailyCheckinBaseReward: Number(e.target.value) })}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                />
-              </div>
-            </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Minimum Withdrawal Amount (₹)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={settings.minWithdrawalAmount ?? 10}
+                        onChange={(e) => setSettings({ ...settings, minWithdrawalAmount: Number(e.target.value) })}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-semibold"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1">Lower threshold per request</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Maximum Withdrawal Amount (₹)</label>
+                      <input
+                        type="number"
+                        min={settings.minWithdrawalAmount || 1}
+                        value={settings.maxWithdrawalAmount ?? 5000}
+                        onChange={(e) => setSettings({ ...settings, maxWithdrawalAmount: Number(e.target.value) })}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-semibold"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1">Upper limit per request (≥ min amount)</p>
+                    </div>
+                  </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Telegram Bot Username (for Referral Links)
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-2 text-xs text-slate-500 font-mono">https://t.me/</span>
-                  <input
-                    type="text"
-                    value={(settings.botUsername || '').replace(/^@+/, '')}
-                    onChange={(e) => {
-                      const cleaned = e.target.value.replace(/^https?:\/\/t\.me\//i, '').replace(/^@+/, '').trim();
-                      setSettings({ ...settings, botUsername: cleaned });
-                    }}
-                    placeholder="WatchXEarnBot"
-                    className="w-full pl-28 pr-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
-                  />
+                  <div className="pt-2 border-t border-slate-800/80 space-y-3">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-200 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(settings.dailyWithdrawalLimitEnabled)}
+                        onChange={(e) => setSettings({ ...settings, dailyWithdrawalLimitEnabled: e.target.checked })}
+                        className="rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-emerald-500/20"
+                      />
+                      <span>Enable 24-Hour Rolling Withdrawal Limit</span>
+                    </label>
+
+                    {settings.dailyWithdrawalLimitEnabled && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-5 border-l-2 border-emerald-500/30 animate-in fade-in duration-200">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">
+                            Max Requests per 24 Hours
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={settings.maxWithdrawalRequestsPer24h ?? 3}
+                            onChange={(e) => setSettings({ ...settings, maxWithdrawalRequestsPer24h: Number(e.target.value) })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                          />
+                          <p className="text-[10px] text-slate-400 mt-0.5">Maximum payout requests in rolling 24h</p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">
+                            Max Total Amount per 24 Hours (₹)
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={settings.maxWithdrawalAmountPer24h ?? 5000}
+                            onChange={(e) => setSettings({ ...settings, maxWithdrawalAmountPer24h: Number(e.target.value) })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                          />
+                          <p className="text-[10px] text-slate-400 mt-0.5">Maximum cumulative amount in rolling 24h</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1">Must be without '@' (e.g. WatchXEarnBot)</p>
-              </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Support Telegram Username</label>
-                <input
-                  type="text"
-                  value={settings.supportTelegramUsername || ''}
-                  onChange={(e) => setSettings({ ...settings, supportTelegramUsername: e.target.value })}
-                  placeholder="TeleEarnSupport"
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                />
-              </div>
-            </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Daily Check-In Base (₹)</label>
+                    <input
+                      type="number"
+                      value={settings.dailyCheckinBaseReward ?? 5}
+                      onChange={(e) => setSettings({ ...settings, dailyCheckinBaseReward: Number(e.target.value) })}
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                    />
+                  </div>
+                </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Telegram Bot Welcome Message (/start)
-              </label>
-              <textarea
-                rows={4}
-                value={settings.templates?.welcomeMessage || ''}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    templates: {
-                      ...settings.templates,
-                      welcomeMessage: e.target.value,
-                    },
-                  })
-                }
-                placeholder="🎁 Welcome to TeleEarn!..."
-                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
-              />
-              <p className="text-[11px] text-slate-500 mt-1">
-                Displayed when joining channels is required. Supports Telegram HTML formatting.
-              </p>
-            </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                      Telegram Bot Username (for Referral Links)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2 text-xs text-slate-500 font-mono">https://t.me/</span>
+                      <input
+                        type="text"
+                        value={(settings.botUsername || '').replace(/^@+/, '')}
+                        onChange={(e) => {
+                          const cleaned = e.target.value.replace(/^https?:\/\/t\.me\//i, '').replace(/^@+/, '').trim();
+                          setSettings({ ...settings, botUsername: cleaned });
+                        }}
+                        placeholder="WatchXEarnBot"
+                        className="w-full pl-28 pr-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">Must be without '@' (e.g. WatchXEarnBot)</p>
+                  </div>
 
-            <div className="space-y-2 pt-2 border-t border-slate-800">
-              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={Boolean(settings.maintenanceMode)}
-                  onChange={(e) => setSettings({ ...settings, maintenanceMode: e.target.checked })}
-                />
-                <span>Maintenance Mode (Temporarily lock Mini App for users)</span>
-              </label>
-              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={Boolean(settings.payoutLiveEnabled)}
-                  onChange={(e) => setSettings({ ...settings, payoutLiveEnabled: e.target.checked })}
-                />
-                <span className="text-amber-400 font-bold">
-                  Enable Live UPI Gateway Payouts (Requires verified provider credentials)
-                </span>
-              </label>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Support Telegram Username</label>
+                    <input
+                      type="text"
+                      value={settings.supportTelegramUsername || ''}
+                      onChange={(e) => setSettings({ ...settings, supportTelegramUsername: e.target.value })}
+                      placeholder="TeleEarnSupport"
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                    />
+                  </div>
+                </div>
 
-              <div className="pt-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    Telegram Bot Welcome Message (/start)
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={settings.templates?.welcomeMessage || ''}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        templates: {
+                          ...(settings.templates || {}),
+                          welcomeMessage: e.target.value,
+                        },
+                      })
+                    }
+                    placeholder="🎁 Welcome to TeleEarn!..."
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Displayed when joining channels is required. Supports Telegram HTML formatting.
+                  </p>
+                </div>
+
+                <div className="space-y-2 pt-2 border-t border-slate-800">
+                  <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(settings.maintenanceMode)}
+                      onChange={(e) => setSettings({ ...settings, maintenanceMode: e.target.checked })}
+                    />
+                    <span>Maintenance Mode (Temporarily lock Mini App for users)</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(settings.payoutLiveEnabled)}
+                      onChange={(e) => setSettings({ ...settings, payoutLiveEnabled: e.target.checked })}
+                    />
+                    <span className="text-amber-400 font-bold">
+                      Enable Live UPI Gateway Payouts (Requires verified provider credentials)
+                    </span>
+                  </label>
+
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('gateway')}
+                      className="w-full py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition"
+                    >
+                      <CreditCard className="w-3.5 h-3.5" />
+                      Configure Payment Gateway Settings
+                    </button>
+                  </div>
+                </div>
+
                 <button
-                  type="button"
-                  onClick={() => setActiveTab('gateway')}
-                  className="w-full py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition"
+                  type="submit"
+                  className="w-full py-3 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl shadow-lg transition"
                 >
-                  <CreditCard className="w-3.5 h-3.5" />
-                  Configure Payment Gateway Settings
+                  Save Configuration Settings
                 </button>
               </div>
-            </div>
 
-            <button
-              type="submit"
-              className="w-full py-3 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl shadow-lg transition"
-            >
-              Save Configuration Settings
-            </button>
-          </div>
-
-          {/* Telegram Webhook trigger */}
-          <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-between">
-            <div>
-              <h4 className="text-xs font-bold text-white">Telegram Bot Webhook Setup</h4>
-              <p className="text-[11px] text-slate-400">
-                Register this server's endpoint as your Telegram Bot webhook URL
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleSetupWebhook}
-              className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-lg transition"
-            >
-              Sync Webhook
-            </button>
-          </div>
-        </form>
+              {/* Telegram Webhook trigger */}
+              <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-bold text-white">Telegram Bot Webhook Setup</h4>
+                  <p className="text-[11px] text-slate-400">
+                    Register this server's endpoint as your Telegram Bot webhook URL
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSetupWebhook}
+                  className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-lg transition"
+                >
+                  Sync Webhook
+                </button>
+              </div>
+            </form>
+          )}
+        </ErrorBoundary>
       )}
 
       {/* TAB 7: AUDIT LOGS */}

@@ -18,7 +18,11 @@ import {
   verifyTelegramInitData,
   isTelegramAdmin,
   checkTelegramChannelMembership,
+  formatChannelIdentifier,
+  setMockChannelMembership,
+  clearMockChannelMemberships,
 } from '../server/telegram.ts';
+import { verifyChannelTask } from '../server/taskVerification.ts';
 import { validateUpiId, payoutGateway } from '../server/payoutAdapter.ts';
 import type { UserProfile, Task } from '../src/types/index.ts';
 
@@ -265,10 +269,18 @@ async function runTests() {
     }
     assert(failedInsufficient, 'Withdrawal request exceeding available balance rejected');
 
-    // Valid withdrawal of ₹100
-    const wthRes = await createWithdrawalRequest(wthUserId, 100, 'charlie@upi');
-    assert(wthRes.withdrawal.amount === 100, 'Withdrawal order created for ₹100');
-    assert(wthRes.user.balance === 50, 'Balance atomically decremented from ₹150 to ₹50');
+    // Valid withdrawal adhering to limits
+    const currentSettings = await getAppSettings();
+    const testAmount = Math.min(
+      100,
+      currentSettings.maxWithdrawalAmount && currentSettings.maxWithdrawalAmount > 0
+        ? currentSettings.maxWithdrawalAmount
+        : 100
+    );
+    const expectedRemaining = 150 - testAmount;
+    const wthRes = await createWithdrawalRequest(wthUserId, testAmount, 'charlie@upi');
+    assert(wthRes.withdrawal.amount === testAmount, `Withdrawal order created for ₹${testAmount}`);
+    assert(wthRes.user.balance === expectedRemaining, `Balance atomically decremented from ₹150 to ₹${expectedRemaining}`);
     assert(wthRes.withdrawal.status === 'pending', 'Order status initialized to Pending');
 
     // Withdrawal below minimum threshold (e.g. ₹5 when min is ₹10)
@@ -289,7 +301,7 @@ async function runTests() {
 
     // Verify user balance was restored atomically
     const refundedUser = await getUser(wthUserId);
-    assert(refundedUser?.balance === 150, 'User balance restored atomically upon rejection (₹50 + ₹100 = ₹150)');
+    assert(refundedUser?.balance === 150, `User balance restored atomically upon rejection (₹${expectedRemaining} + ₹${testAmount} = ₹150)`);
   }
 
   /* ------------------------------------------------------------------
@@ -350,6 +362,100 @@ async function runTests() {
     });
     const restored = await getAppSettings();
     assert(restored.signupBonus === 20, 'Restored settings safely');
+  }
+
+  /* ------------------------------------------------------------------
+     TEST 10: Private Channel Verification & Identifier Formatting
+     ------------------------------------------------------------------ */
+  console.log('\nTest Suite 10: Private Channel & Telegram Bot Verification');
+  {
+    // A. Identifier formatting
+    const pub1 = formatChannelIdentifier('@teleearn');
+    assert(pub1.formatted === '@teleearn' && pub1.isPrivate === false, 'Public @teleearn kept as @teleearn');
+
+    const pub2 = formatChannelIdentifier('teleearn');
+    assert(pub2.formatted === '@teleearn' && pub2.isPrivate === false, 'Plain handle prefixed with @');
+
+    const pub3 = formatChannelIdentifier('https://t.me/teleearnofficial');
+    assert(pub3.formatted === '@teleearnofficial' && pub3.isPrivate === false, 'Public t.me URL converted to handle @teleearnofficial');
+
+    const priv1 = formatChannelIdentifier('-10020877627202664');
+    assert(priv1.formatted === '-10020877627202664' && priv1.isPrivate === true, 'Private channel -10020877627202664 formatted cleanly without corruption');
+
+    const priv2 = formatChannelIdentifier('10020877627202664');
+    assert(priv2.formatted === '-10020877627202664' && priv2.isPrivate === true, 'Channel ID starting with 100 prefixed with - instead of duplicate -100');
+
+    const priv3 = formatChannelIdentifier('20877627202664');
+    assert(priv3.formatted === '-10020877627202664' && priv3.isPrivate === true, 'Raw numeric ID prefixed with -100');
+
+    const badInvite1 = formatChannelIdentifier('https://t.me/+AbCdEfGh123');
+    assert(Boolean(badInvite1.error) && badInvite1.error!.includes('cannot be used as chat IDs'), 'Private invite link https://t.me/+ rejected as channel ID');
+
+    const badInvite2 = formatChannelIdentifier('https://t.me/joinchat/AbCdEfGh123');
+    assert(Boolean(badInvite2.error), 'Private joinchat link rejected as channel ID');
+
+    // B. verifyChannelTask behavior with private channels
+    const testPrivateChannelId = '-10020877627202664';
+    const privateInviteLink = 'https://t.me/+PrivateInviteCode123';
+    const testTgUser = 998877;
+    const testUserProfile: UserProfile = {
+      id: 'test_tg_user_998877',
+      telegramId: testTgUser,
+      firstName: 'TestUser',
+      balance: 0,
+      lifetimeEarnings: 0,
+      referralEarnings: 0,
+      referralCode: 'ref_998877',
+      dailyStreak: 0,
+      isBanned: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // 1. Task configured with invalid channelId (invite link instead of numeric ID)
+    const misconfiguredTask: Task = {
+      id: 'task_bad_channel',
+      title: 'Join Private Channel',
+      description: 'Join our private group',
+      destinationUrl: privateInviteLink,
+      rewardAmount: 25,
+      taskType: 'channel',
+      channelId: privateInviteLink, // Wrongly using invite link as channelId
+      timerSeconds: 0,
+      isActive: true,
+      sortOrder: 1,
+      createdAt: new Date().toISOString(),
+    };
+    const resBad = await verifyChannelTask(testUserProfile, misconfiguredTask);
+    assert(resBad.success === false && resBad.error!.includes('numeric Channel ID'), 'Task with invite link as channelId rejected with guidance');
+
+    // 2. Properly configured private channel task with mock membership
+    const properPrivateTask: Task = {
+      id: 'task_proper_private',
+      title: 'Join VIP Channel',
+      description: 'Join VIP channel',
+      destinationUrl: privateInviteLink, // Separate private invite link
+      rewardAmount: 30,
+      taskType: 'channel',
+      channelId: testPrivateChannelId, // Separate numeric channel ID
+      timerSeconds: 0,
+      isActive: true,
+      sortOrder: 2,
+      createdAt: new Date().toISOString(),
+    };
+
+    // User is NOT member yet
+    clearMockChannelMemberships();
+    setMockChannelMembership(`${testPrivateChannelId}_${testTgUser}`, { isMember: false, status: 'left' });
+    const resNotMember = await verifyChannelTask(testUserProfile, properPrivateTask);
+    assert(resNotMember.success === false, 'Non-member correctly denied reward');
+
+    // User joins -> membership confirmed
+    setMockChannelMembership(`${testPrivateChannelId}_${testTgUser}`, { isMember: true, status: 'member' });
+    const resMember = await verifyChannelTask(testUserProfile, properPrivateTask);
+    assert(resMember.success === true, 'Member of private channel verified successfully');
+
+    clearMockChannelMemberships();
   }
 
   console.log('\n==================================================');

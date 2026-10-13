@@ -110,6 +110,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   const [editingChannel, setEditingChannel] = useState<Partial<ForceJoinChannel> | null>(null);
   // Task Edit/Add modal
   const [editingTask, setEditingTask] = useState<Partial<Task> | null>(null);
+  const [testingAccess, setTestingAccess] = useState(false);
   // User Search
   const [userSearchQuery, setUserSearchQuery] = useState('');
   // User Balance Adjust modal
@@ -269,8 +270,35 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       showNotify('Please fill in Title, Channel ID, and Invite Link', 'error');
       return;
     }
+
+    const rawId = (editingChannel.channelId || '').trim();
+    if (
+      rawId.includes('t.me/+') ||
+      rawId.includes('t.me/joinchat/') ||
+      (rawId.startsWith('+') && !/^\+\d{10,}$/.test(rawId))
+    ) {
+      showNotify(
+        'Channel ID cannot be a private invite link. Use the numeric Channel ID (e.g. -10020877627202664) or @username.',
+        'error'
+      );
+      return;
+    }
+
+    let formattedId = rawId;
+    if (/^-?\d+$/.test(rawId) || /^100\d+$/.test(rawId)) {
+      if (rawId.startsWith('-100')) formattedId = rawId;
+      else if (rawId.startsWith('-')) formattedId = `-100${rawId.slice(1)}`;
+      else if (rawId.startsWith('100')) formattedId = `-${rawId}`;
+      else formattedId = `-100${rawId}`;
+    } else if (!rawId.startsWith('@') && !rawId.startsWith('https://')) {
+      formattedId = `@${rawId}`;
+    }
+
     try {
-      await api.saveAdminChannel(editingChannel as ForceJoinChannel);
+      await api.saveAdminChannel({
+        ...editingChannel,
+        channelId: formattedId,
+      } as ForceJoinChannel);
       showNotify('Channel saved successfully!');
       setEditingChannel(null);
       loadTabContent();
@@ -290,12 +318,54 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     }
   };
 
+  const handleTestChannelAccess = async (channelIdInput: string) => {
+    if (!channelIdInput.trim()) {
+      showNotify('Please enter a Channel ID or username first', 'error');
+      return;
+    }
+    setTestingAccess(true);
+    try {
+      const res = await api.testChannelAccess(channelIdInput.trim());
+      if (res.ok) {
+        alert(
+          `✅ Channel Verification Successful!\n\nChannel: ${res.channelTitle || channelIdInput}\nType: ${res.isPrivate ? 'Private Channel (-100)' : 'Public Channel'}\nBot Status: Administrator (@${res.botUsername || 'WatchXEarnBot'})\n\nBot has full access to verify subscribers.`
+        );
+      } else {
+        alert(
+          `❌ Channel Verification Issue:\n\n${res.error || 'Bot cannot verify members in this channel.'}\n\n👉 Ensure the bot (@${res.botUsername || 'WatchXEarnBot'}) is added to the channel as an Administrator with 'View members' permissions.`
+        );
+      }
+    } catch (err: any) {
+      showNotify(err.message || 'Failed to test channel access', 'error');
+    } finally {
+      setTestingAccess(false);
+    }
+  };
+
   const handleTestChannelDiagnostic = async (id: string) => {
     try {
       const res = await api.testChannelDiagnostic(id);
+      const isOk = res.botAccess ? res.botAccess.ok : res.diagnostic?.isMember;
       alert(
-        `Telegram Bot Channel Diagnostic:\n\nChannel: ${res.channel.title}\nStatus: ${res.diagnostic.status}\nIs Bot Connected: ${res.botTokenPresent ? 'YES' : 'NO (Using preview simulation)'}\n${res.diagnostic.error ? `Error: ${res.diagnostic.error}` : 'Bot permissions verified!'}`
+        `Telegram Bot Channel Diagnostic:\n\nChannel: ${res.channel.title} (${res.channel.channelId})\nBot Access: ${res.botAccess?.ok ? 'VERIFIED ADMIN' : res.botAccess?.status || 'Check below'}\n${res.botAccess?.error ? `Error: ${res.botAccess.error}\n\n` : ''}${res.diagnostic?.error ? `Membership Check: ${res.diagnostic.error}` : 'Bot permissions verified!'}`
       );
+    } catch (err: any) {
+      showNotify(err.message, 'error');
+    }
+  };
+
+  const handleTestTaskDiagnostic = async (taskId: string) => {
+    try {
+      const res = await api.testTaskChannelDiagnostic(taskId);
+      if (res.botAccess?.ok) {
+        alert(
+          `✅ Task Channel Diagnostic: PASS\n\nTask: ${res.task.title}\nChannel: ${res.botAccess.channelTitle} (${res.task.channelId})\nBot Status: Administrator (@${res.botAccess.botUsername})\nAdmin Membership: ${res.membershipCheck?.isMember ? 'Joined' : 'Not Joined'}\n\nMembership verification is operational!`
+        );
+      } else {
+        alert(
+          `❌ Task Channel Diagnostic: ISSUE FOUND\n\nTask: ${res.task.title}\nChannel ID: ${res.task.channelId}\n\nError: ${res.botAccess?.error || res.membershipCheck?.error || 'Bot access failed'}\n\n👉 Add the bot as an Administrator in your Telegram channel to resolve.`
+        );
+      }
     } catch (err: any) {
       showNotify(err.message, 'error');
     }
@@ -312,17 +382,49 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     const payload = { ...editingTask } as Task;
 
     if (payload.taskType === 'channel') {
-      if (!payload.channelId && !payload.destinationUrl) {
+      const rawId = (payload.channelId || '').trim();
+      const rawUrl = (payload.destinationUrl || '').trim();
+
+      if (!rawId && !rawUrl) {
         showNotify('Please provide Channel Username/ID and Join URL', 'error');
         return;
       }
-      if (!payload.destinationUrl && payload.channelId) {
-        payload.destinationUrl = `https://t.me/${payload.channelId.replace('@', '')}`;
+
+      if (
+        rawId.includes('t.me/+') ||
+        rawId.includes('t.me/joinchat/') ||
+        (rawId.startsWith('+') && !/^\+\d{10,}$/.test(rawId))
+      ) {
+        showNotify(
+          'Channel ID cannot be a private invite link. Please enter the numeric Channel ID (e.g. -10020877627202664) in Channel ID, and the invite link in Join URL.',
+          'error'
+        );
+        return;
       }
-      if (!payload.channelId && payload.destinationUrl?.includes('t.me/')) {
-        const slug = payload.destinationUrl.split('t.me/')[1]?.split('/')[0]?.replace('+', '');
-        if (slug) payload.channelId = slug.startsWith('@') ? slug : `@${slug}`;
+
+      let formattedId = rawId;
+      if (/^-?\d+$/.test(rawId) || /^100\d+$/.test(rawId)) {
+        if (rawId.startsWith('-100')) formattedId = rawId;
+        else if (rawId.startsWith('-')) formattedId = `-100${rawId.slice(1)}`;
+        else if (rawId.startsWith('100')) formattedId = `-${rawId}`;
+        else formattedId = `-100${rawId}`;
+      } else if (rawId && !rawId.startsWith('@') && !rawId.startsWith('https://')) {
+        formattedId = `@${rawId}`;
       }
+
+      let finalJoinUrl = rawUrl;
+      if (!finalJoinUrl && formattedId.startsWith('@')) {
+        finalJoinUrl = `https://t.me/${formattedId.replace('@', '')}`;
+      } else if (!finalJoinUrl && formattedId.startsWith('-100')) {
+        showNotify(
+          'Private channels require a private invite URL (https://t.me/+...) in Join URL so users can join.',
+          'error'
+        );
+        return;
+      }
+
+      payload.channelId = formattedId;
+      payload.destinationUrl = finalJoinUrl;
     } else {
       if (!payload.destinationUrl || payload.destinationUrl === 'https://') {
         showNotify('Please provide a valid destination URL', 'error');
@@ -2077,9 +2179,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Channel ID / Username (e.g. @teleearn or -100123456789)
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-slate-300">
+                      Channel ID / Username
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => handleTestChannelAccess(editingChannel.channelId || '')}
+                      disabled={testingAccess || !editingChannel.channelId}
+                      className="text-[11px] font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-2 py-0.5 rounded border border-blue-500/30 transition disabled:opacity-50"
+                    >
+                      {testingAccess ? 'Testing...' : 'Test Bot Access'}
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={editingChannel.channelId || ''}
@@ -2088,6 +2200,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
                     required
                   />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    For private channels: Enter numeric ID starting with <code className="text-amber-400 font-mono">-100...</code>
+                  </p>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">
@@ -2098,9 +2213,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     value={editingChannel.inviteLink || ''}
                     onChange={(e) => setEditingChannel({ ...editingChannel, inviteLink: e.target.value })}
                     placeholder="https://t.me/..."
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
                     required
                   />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    For private channels, paste invite link (e.g. <code className="text-slate-300 font-mono">https://t.me/+...</code>)
+                  </p>
                 </div>
                 <div className="flex items-center gap-4 text-xs text-slate-300">
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -2192,6 +2310,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
+                  {t.taskType === 'channel' && (
+                    <button
+                      type="button"
+                      onClick={() => handleTestTaskDiagnostic(t.id)}
+                      className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-blue-400 rounded-lg text-xs font-semibold"
+                      title="Test Bot API Membership Verification for this Task"
+                    >
+                      Test Diagnostic
+                    </button>
+                  )}
                   <button
                     onClick={() => setEditingTask(t)}
                     className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg"
@@ -2291,9 +2419,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 {editingTask.taskType === 'channel' && (
                   <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-700/80 rounded-xl">
                     <div>
-                      <label className="block text-xs font-semibold text-emerald-400 mb-1">
-                        Channel Username or Numeric Chat ID
-                      </label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-emerald-400">
+                          Channel Username or Numeric Chat ID
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => handleTestChannelAccess(editingTask.channelId || '')}
+                          disabled={testingAccess || !editingTask.channelId}
+                          className="text-[11px] font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-2 py-0.5 rounded border border-blue-500/30 transition disabled:opacity-50"
+                        >
+                          {testingAccess ? 'Testing...' : 'Test Bot Access'}
+                        </button>
+                      </div>
                       <input
                         type="text"
                         placeholder="e.g. @teleearnofficial or -1001234567890"
@@ -2302,22 +2440,28 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
                         required
                       />
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        For private channels: Enter numeric ID starting with <code className="text-amber-400 font-mono">-100...</code>
+                      </p>
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-slate-300 mb-1">
-                        Telegram Join URL
+                        Telegram Join URL (Public link or Private Invite Link)
                       </label>
                       <input
                         type="url"
-                        placeholder="https://t.me/teleearnofficial"
+                        placeholder="https://t.me/teleearnofficial or https://t.me/+inviteCode"
                         value={editingTask.destinationUrl || ''}
                         onChange={(e) => setEditingTask({ ...editingTask, destinationUrl: e.target.value })}
                         className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
                         required
                       />
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        For private channels, paste the full invite link (e.g. <code className="text-slate-300 font-mono">https://t.me/+...</code>)
+                      </p>
                     </div>
                     <div className="text-[11px] text-amber-400/90 bg-amber-500/10 p-2.5 rounded-lg border border-amber-500/20 leading-relaxed">
-                      💡 <strong>Telegram Bot API Requirement:</strong> The bot checks membership using <code>getChatMember</code>. Ensure your bot is an Administrator in this channel with &quot;View members&quot; permissions.
+                      💡 <strong>Telegram Bot API Requirement:</strong> The bot checks membership using <code>getChatMember</code> with the numeric Channel ID. Ensure your bot is an Administrator in this channel with &quot;View members&quot; permissions.
                     </div>
                   </div>
                 )}

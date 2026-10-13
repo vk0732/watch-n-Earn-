@@ -172,35 +172,248 @@ export function clearMockChannelMemberships() {
 }
 
 /**
+ * Normalizes and formats a channel identifier for Telegram Bot API calls.
+ * Returns { ok: true, formatted: string, isPrivate: boolean } or { ok: false, error: string }
+ */
+export function formatChannelIdentifier(channelId: string): {
+  ok: boolean;
+  formatted?: string;
+  isPrivate?: boolean;
+  error?: string;
+} {
+  const trimmed = (channelId || '').trim();
+  if (!trimmed) {
+    return { ok: false, error: 'Channel identifier is empty' };
+  }
+
+  // Reject private invite links passed as chat IDs
+  if (
+    trimmed.startsWith('https://t.me/+') ||
+    trimmed.startsWith('https://t.me/joinchat/') ||
+    trimmed.startsWith('t.me/+') ||
+    trimmed.startsWith('t.me/joinchat/') ||
+    (trimmed.startsWith('+') && !/^\+\d{10,}$/.test(trimmed))
+  ) {
+    return {
+      ok: false,
+      error:
+        'Private invite links cannot be used as chat IDs. For private channels, please provide the numeric Channel ID (starting with -100).',
+    };
+  }
+
+  // Handle numeric channel/supergroup IDs (-100...)
+  if (/^-100\d+$/.test(trimmed)) {
+    return { ok: true, formatted: trimmed, isPrivate: true };
+  }
+
+  if (/^-?\d+$/.test(trimmed) || /^100\d+$/.test(trimmed)) {
+    if (trimmed.startsWith('-100')) {
+      return { ok: true, formatted: trimmed, isPrivate: true };
+    }
+    if (trimmed.startsWith('-')) {
+      return { ok: true, formatted: `-100${trimmed.slice(1)}`, isPrivate: true };
+    }
+    if (trimmed.startsWith('100')) {
+      return { ok: true, formatted: `-${trimmed}`, isPrivate: true };
+    }
+    return { ok: true, formatted: `-100${trimmed}`, isPrivate: true };
+  }
+
+  // Handle public username or public t.me/ URL
+  if (trimmed.startsWith('https://t.me/') || trimmed.startsWith('t.me/')) {
+    const cleanUrl = trimmed.replace(/^https?:\/\//i, '').replace(/^t\.me\//i, '');
+    const slug = cleanUrl.split('/')[0].split('?')[0].replace('@', '');
+    if (!slug) {
+      return { ok: false, error: 'Invalid channel URL' };
+    }
+    return { ok: true, formatted: `@${slug}`, isPrivate: false };
+  }
+
+  if (trimmed.startsWith('@')) {
+    return { ok: true, formatted: trimmed, isPrivate: false };
+  }
+
+  return { ok: true, formatted: `@${trimmed}`, isPrivate: false };
+}
+
+export interface BotChannelAccessResult {
+  ok: boolean;
+  status:
+    | 'verified'
+    | 'bot_not_in_channel'
+    | 'bot_not_admin'
+    | 'bot_token_missing'
+    | 'invalid_channel'
+    | 'api_error';
+  error?: string;
+  channelTitle?: string;
+  botUsername?: string;
+  isPrivate?: boolean;
+  canCheckMembers?: boolean;
+}
+
+/**
+ * Checks if the bot is a member/admin in the target channel and has sufficient rights.
+ */
+export async function checkBotChannelAccess(channelId: string): Promise<BotChannelAccessResult> {
+  const parsed = formatChannelIdentifier(channelId);
+  if (!parsed.ok || !parsed.formatted) {
+    return {
+      ok: false,
+      status: 'invalid_channel',
+      error: parsed.error || 'Invalid channel identifier',
+    };
+  }
+
+  const formattedChannel = parsed.formatted;
+
+  // Check mock overrides for automated testing
+  if (mockChannelOverrides.has(`access_${formattedChannel}`)) {
+    const mock = mockChannelOverrides.get(`access_${formattedChannel}`)!;
+    return {
+      ok: mock.isMember,
+      status: mock.status as any,
+      error: mock.error,
+      channelTitle: 'Test Mock Channel',
+      botUsername: 'WatchXEarnBot',
+      isPrivate: parsed.isPrivate,
+    };
+  }
+
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || token.includes('ABCdefGHIjklMNOpqrSTUvwxYZ')) {
+    return {
+      ok: false,
+      status: 'bot_token_missing',
+      error: 'Telegram Bot Token is not configured. Real Telegram channel check requires a valid TELEGRAM_BOT_TOKEN.',
+    };
+  }
+
+  try {
+    // 1. Fetch bot identity via getMe
+    const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`, { signal: AbortSignal.timeout(4000) });
+    const meData = (await meRes.json()) as any;
+    if (!meData.ok) {
+      return {
+        ok: false,
+        status: 'api_error',
+        error: meData.description || 'Failed to authenticate with Telegram getMe',
+      };
+    }
+
+    const botId = meData.result?.id;
+    const botUsername = meData.result?.username || process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot';
+
+    // 2. Fetch Chat info via getChat
+    const chatRes = await fetch(
+      `https://api.telegram.org/bot${token}/getChat?chat_id=${encodeURIComponent(formattedChannel)}`,
+      { signal: AbortSignal.timeout(4000) }
+    );
+    const chatData = (await chatRes.json()) as any;
+
+    if (!chatData.ok) {
+      const desc = chatData.description || '';
+      console.warn(`[getChat Warning] Chat: ${formattedChannel}, Desc: ${desc}`);
+
+      if (desc.includes('chat not found')) {
+        const errorMsg = parsed.isPrivate
+          ? `Bot @${botUsername} is not a member of private channel ${formattedChannel}. Please add @${botUsername} to the channel as an Administrator with 'View members' permissions.`
+          : `Channel ${formattedChannel} was not found. Please verify the username or ensure @${botUsername} is added as an Administrator.`;
+        return {
+          ok: false,
+          status: 'bot_not_in_channel',
+          error: errorMsg,
+          botUsername,
+          isPrivate: parsed.isPrivate,
+        };
+      }
+
+      if (desc.includes('member list is inaccessible') || desc.includes('need administrator rights')) {
+        return {
+          ok: false,
+          status: 'bot_not_admin',
+          error: `Bot @${botUsername} must be promoted to Administrator with 'View members' permissions in ${formattedChannel}.`,
+          botUsername,
+          isPrivate: parsed.isPrivate,
+        };
+      }
+
+      return {
+        ok: false,
+        status: 'api_error',
+        error: `Telegram API error: ${desc}`,
+        botUsername,
+      };
+    }
+
+    const channelTitle = chatData.result?.title || formattedChannel;
+
+    // 3. Verify Bot status inside channel via getChatMember
+    const memberRes = await fetch(
+      `https://api.telegram.org/bot${token}/getChatMember?chat_id=${encodeURIComponent(
+        formattedChannel
+      )}&user_id=${botId}`,
+      { signal: AbortSignal.timeout(4000) }
+    );
+    const memberData = (await memberRes.json()) as any;
+
+    if (!memberData.ok) {
+      return {
+        ok: false,
+        status: 'bot_not_admin',
+        error: `Bot @${botUsername} cannot access member list in ${channelTitle}. Please promote @${botUsername} to Administrator.`,
+        channelTitle,
+        botUsername,
+        isPrivate: parsed.isPrivate,
+      };
+    }
+
+    const botMemberStatus = memberData.result?.status;
+    if (botMemberStatus !== 'administrator' && botMemberStatus !== 'creator') {
+      return {
+        ok: false,
+        status: 'bot_not_admin',
+        error: `Bot @${botUsername} is currently a '${botMemberStatus}' in ${channelTitle}. To verify subscriber membership, Telegram requires the bot to be an Administrator with 'View members' permissions.`,
+        channelTitle,
+        botUsername,
+        isPrivate: parsed.isPrivate,
+      };
+    }
+
+    return {
+      ok: true,
+      status: 'verified',
+      channelTitle,
+      botUsername,
+      isPrivate: parsed.isPrivate,
+      canCheckMembers: true,
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      status: 'api_error',
+      error: `Network error verifying bot permissions: ${err.message}`,
+    };
+  }
+}
+
+/**
  * Checks if a user is a member of a Telegram channel using the Bot API
  */
 export async function checkTelegramChannelMembership(
   channelId: string,
   userId: number
 ): Promise<ChannelMembershipResult> {
-  const trimmed = (channelId || '').trim();
-  if (!trimmed) {
+  const parsed = formatChannelIdentifier(channelId);
+  if (!parsed.ok || !parsed.formatted) {
     return {
       isMember: false,
       status: 'invalid_channel',
-      error: 'Channel identifier is empty',
+      error: parsed.error || 'Channel identifier is invalid',
     };
   }
 
-  // Format chat_id properly:
-  let formattedChannel = trimmed;
-  if (trimmed.startsWith('https://t.me/')) {
-    const parts = trimmed.replace('https://t.me/', '').split('/')[0].split('?')[0].replace('+', '');
-    formattedChannel = parts.startsWith('@') ? parts : `@${parts}`;
-  } else if (trimmed.startsWith('-100') || trimmed.startsWith('-')) {
-    formattedChannel = trimmed;
-  } else if (/^\d+$/.test(trimmed)) {
-    formattedChannel = `-100${trimmed}`;
-  } else if (trimmed.startsWith('@')) {
-    formattedChannel = trimmed;
-  } else {
-    formattedChannel = `@${trimmed}`;
-  }
+  const formattedChannel = parsed.formatted;
 
   // 1. Check if mock override is active for this channel + user or channel
   const compositeKey = `${formattedChannel}_${userId}`;
@@ -210,6 +423,7 @@ export async function checkTelegramChannelMembership(
   if (mockChannelOverrides.has(formattedChannel)) {
     return mockChannelOverrides.get(formattedChannel)!;
   }
+  const trimmed = (channelId || '').trim();
   if (mockChannelOverrides.has(trimmed)) {
     return mockChannelOverrides.get(trimmed)!;
   }
@@ -267,19 +481,26 @@ export async function checkTelegramChannelMembership(
       console.warn(`[Telegram Verify Warning] Channel: ${formattedChannel}, User: ${userId}, Code: ${data.error_code}, Desc: ${desc}`);
 
       if (desc.includes('member list is inaccessible') || desc.includes('need administrator rights')) {
+        const botName = process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot';
         return {
           isMember: false,
           status: 'bot_not_admin',
-          error: `Bot must be added as an Administrator with 'View members' permissions in ${formattedChannel} to check user membership.`,
+          error: `Bot @${botName} must be added as an Administrator with 'View members' permissions in ${formattedChannel} to check user membership.`,
           diagnostic: 'member_list_inaccessible',
         };
       }
 
       if (desc.includes('chat not found')) {
+        const botName = process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot';
+        const isNumeric = formattedChannel.startsWith('-100') || formattedChannel.startsWith('-');
+        const errorMsg = isNumeric
+          ? `Bot @${botName} is not a member of channel ${formattedChannel}. Please add @${botName} to the channel as an Administrator with 'View members' permissions.`
+          : `Channel ${formattedChannel} was not found. Please verify the channel username or ensure @${botName} is added as an Administrator.`;
+
         return {
           isMember: false,
           status: 'chat_not_found',
-          error: `Channel ${formattedChannel} was not found or is a private invite link without bot membership. Ensure channel username or -100 ID is correct.`,
+          error: errorMsg,
           diagnostic: 'chat_not_found',
         };
       }
@@ -302,13 +523,6 @@ export async function checkTelegramChannelMembership(
 
     const memberStatus = data.result?.status;
 
-    // Telegram Bot API member status values:
-    // 'creator': Channel owner
-    // 'administrator': Channel admin
-    // 'member': Regular member
-    // 'restricted': Restricted member (is_member will be true if still inside channel)
-    // 'left': Left the channel
-    // 'kicked': Banned from channel
     let isMember = false;
     if (memberStatus === 'creator' || memberStatus === 'administrator' || memberStatus === 'member') {
       isMember = true;

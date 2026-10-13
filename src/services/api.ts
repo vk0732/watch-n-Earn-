@@ -236,6 +236,23 @@ export const api = {
   testChannelDiagnostic: (channelId: string) =>
     request<any>(`/admin/channels/${channelId}/test-diagnostic`, { method: 'POST' }),
 
+  testChannelAccess: (channelId: string) =>
+    request<{
+      success: boolean;
+      ok: boolean;
+      status: string;
+      error?: string;
+      channelTitle?: string;
+      botUsername?: string;
+      isPrivate?: boolean;
+    }>('/admin/channels/test-access', {
+      method: 'POST',
+      body: JSON.stringify({ channelId }),
+    }),
+
+  testTaskChannelDiagnostic: (taskId: string) =>
+    request<any>(`/admin/tasks/${taskId}/test-diagnostic`, { method: 'POST' }),
+
   getAdminSettings: () => request<{ settings: AppSettings }>('/admin/settings'),
 
   updateAdminSettings: (settings: Partial<AppSettings>) =>

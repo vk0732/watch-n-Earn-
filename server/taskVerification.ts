@@ -27,8 +27,30 @@ export async function verifyChannelTask(
 
   // 1. Resolve channel identifier
   let channelIdentifier = (task.channelId || '').trim();
+
+  // If channelId was accidentally filled with a private invite link:
+  if (
+    channelIdentifier.includes('t.me/+') ||
+    channelIdentifier.includes('t.me/joinchat/') ||
+    (channelIdentifier.startsWith('+') && !/^\+\d{10,}$/.test(channelIdentifier))
+  ) {
+    return {
+      success: false,
+      error:
+        'The configured Channel ID is a private invite link. Private channels require a numeric Channel ID (starting with -100) for server verification.',
+    };
+  }
+
+  // Fallback to destinationUrl only if channelId is not set
   if (!channelIdentifier && task.destinationUrl) {
     const rawUrl = task.destinationUrl.trim();
+    if (rawUrl.includes('t.me/+') || rawUrl.includes('t.me/joinchat/')) {
+      return {
+        success: false,
+        error:
+          'This private channel task is missing its numeric Channel ID (e.g. -10020877627202664). Please configure the numeric Channel ID in the task settings.',
+      };
+    }
     if (rawUrl.includes('t.me/')) {
       const parts = rawUrl.split('t.me/')[1]?.split('/')[0]?.split('?')[0]?.replace('+', '');
       if (parts) {

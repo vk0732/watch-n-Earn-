@@ -94,7 +94,13 @@ export const TaskModal: React.FC<TaskModalProps> = ({ task, onClose, onSuccess }
   const handleOpenChannel = () => {
     setChannelOpened(true);
     setError(null);
-    window.open(task.destinationUrl, '_blank', 'noopener,noreferrer');
+    const targetUrl = (task.destinationUrl || '').trim();
+    const tg = (window as any).Telegram?.WebApp;
+    if (tg?.openTelegramLink && (targetUrl.includes('t.me/') || targetUrl.includes('telegram.me/'))) {
+      tg.openTelegramLink(targetUrl);
+    } else {
+      window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    }
   };
 
   // 3. SOCIAL OPEN CLICK

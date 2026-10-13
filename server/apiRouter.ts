@@ -45,6 +45,7 @@ import {
 import {
   verifyTelegramInitData,
   checkTelegramChannelMembership,
+  checkBotChannelAccess,
   isTelegramAdmin,
   setTelegramWebhook,
   deleteTelegramWebhook,
@@ -1018,6 +1019,22 @@ apiRouter.delete('/admin/channels/:id', extractTelegramUser, requireAdmin, async
   }
 });
 
+apiRouter.post('/admin/channels/test-access', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const { channelId } = req.body;
+    if (!channelId) {
+      return res.status(400).json({ error: 'channelId is required' });
+    }
+    const access = await checkBotChannelAccess(channelId);
+    res.json({
+      success: access.ok,
+      ...access,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 apiRouter.post('/admin/channels/:id/test-diagnostic', extractTelegramUser, requireAdmin, async (req, res) => {
   try {
     const admin = (req as any).user as UserProfile;
@@ -1026,13 +1043,47 @@ apiRouter.post('/admin/channels/:id/test-diagnostic', extractTelegramUser, requi
 
     if (!target) return res.status(404).json({ error: 'Channel not found' });
 
-    // Test querying membership for admin
-    const check = await checkTelegramChannelMembership(target.channelId, admin.telegramId);
+    const botAccess = await checkBotChannelAccess(target.channelId);
+    const membershipCheck = await checkTelegramChannelMembership(target.channelId, admin.telegramId);
 
     res.json({
       channel: target,
-      diagnostic: check,
-      botTokenPresent: Boolean(process.env.TELEGRAM_BOT_TOKEN && !process.env.TELEGRAM_BOT_TOKEN.includes('ABCdefGHIjklMNOpqrSTUvwxYZ')),
+      diagnostic: membershipCheck,
+      botAccess,
+      botTokenPresent: Boolean(
+        process.env.TELEGRAM_BOT_TOKEN && !process.env.TELEGRAM_BOT_TOKEN.includes('ABCdefGHIjklMNOpqrSTUvwxYZ')
+      ),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+apiRouter.post('/admin/tasks/:id/test-diagnostic', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const admin = (req as any).user as UserProfile;
+    const task = await getTaskById(req.params.id);
+
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+    if (task.taskType !== 'channel') {
+      return res.status(400).json({ error: 'Task is not a channel task' });
+    }
+
+    const channelIdentifier = task.channelId || '';
+    if (!channelIdentifier) {
+      return res.status(400).json({ error: 'Task has no channel identifier configured' });
+    }
+
+    const botAccess = await checkBotChannelAccess(channelIdentifier);
+    const membershipCheck = await checkTelegramChannelMembership(channelIdentifier, admin.telegramId);
+
+    res.json({
+      task,
+      botAccess,
+      membershipCheck,
+      botTokenPresent: Boolean(
+        process.env.TELEGRAM_BOT_TOKEN && !process.env.TELEGRAM_BOT_TOKEN.includes('ABCdefGHIjklMNOpqrSTUvwxYZ')
+      ),
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

@@ -303,7 +303,7 @@ export interface DashboardStats {
   totalTaskBots: number;
 }
 
-export type GatewayProvider = 'cashfree' | 'razorpayx' | 'paytm' | 'custom';
+export type GatewayProvider = 'cashfree' | 'razorpayx' | 'paytm' | 'paynit' | 'custom';
 export type GatewayEnvironment = 'test' | 'live';
 export type ConnectionStatus = 'not_configured' | 'connected' | 'failed' | 'integration_required';
 

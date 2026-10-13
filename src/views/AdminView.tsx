@@ -1536,6 +1536,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     ? 'RazorpayX Key ID (e.g. rzp_test_... or rzp_live_...)'
                     : gwProvider === 'paytm'
                     ? 'Paytm Subwallet GUID / Sales Wallet'
+                    : gwProvider === 'paynit'
+                    ? 'Paynit Client ID (X-Client-Id)'
                     : 'API Key / Client ID'}{' '}
                   <span className="text-red-400">*</span>
                 </label>
@@ -1552,6 +1554,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 placeholder={
                   gatewayConfig?.hasApiKey
                     ? `Leave blank to keep saved (${gatewayConfig.maskedApiKey})`
+                    : gwProvider === 'paynit'
+                    ? 'Enter Paynit Client ID'
                     : 'e.g. CF1234567890 or rzp_test_123456'
                 }
                 className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono focus:outline-none focus:border-red-500 transition"
@@ -1568,6 +1572,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     ? 'RazorpayX Key Secret'
                     : gwProvider === 'paytm'
                     ? 'Paytm Merchant Key / Secret'
+                    : gwProvider === 'paynit'
+                    ? 'Paynit Client Secret (X-Client-Secret)'
                     : 'API Secret / Client Secret'}{' '}
                   <span className="text-red-400">*</span>
                 </label>

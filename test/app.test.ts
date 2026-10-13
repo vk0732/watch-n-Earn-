@@ -38,7 +38,13 @@ import {
   verifySocialTask,
 } from '../server/taskVerification.ts';
 import { validateUpiId, payoutGateway } from '../server/payoutAdapter.ts';
-import type { UserProfile, Task, ForceJoinChannel } from '../src/types/index.ts';
+import {
+  getPublicGatewayConfig,
+  getDecryptedCredentials,
+  saveGatewayConfig,
+  removeGatewayCredentials,
+} from '../server/paymentSecurity.ts';
+import type { UserProfile, Task, ForceJoinChannel, Withdrawal } from '../src/types/index.ts';
 
 // Simple lightweight test runner
 let passed = 0;
@@ -497,14 +503,133 @@ async function runTests() {
   }
 
   /* ------------------------------------------------------------------
-     TEST 8: Safe UPI Payout Provider Adapter
+     TEST 8: Safe UPI Payout Provider Adapter & Paynit Integration
      ------------------------------------------------------------------ */
-  console.log('\nTest Suite 8: Payout Gateway Safety Rules');
+  console.log('\nTest Suite 8: Payout Gateway Safety Rules & Paynit Integration');
   {
     process.env.PAYOUT_LIVE_ENABLED = 'false';
     const status = await payoutGateway.getStatus();
     assert(status.isLiveEnabled === false, 'Live payouts are disabled by default');
     assert(status.statusMessage.includes('DISABLED'), 'Safe status message explains sandbox review mode');
+
+    // 1. Paynit Gateway Provider Registration
+    const publicConfig = await getPublicGatewayConfig();
+    const paynitProvider = publicConfig.supportedProviders.find((p) => p.id === 'paynit');
+    assert(paynitProvider !== undefined, 'Paynit provider is registered in supportedProviders');
+    assert(paynitProvider?.isIntegrated === true, 'Paynit is marked as an integrated provider');
+    assert(Boolean(paynitProvider?.defaultTestUrl.includes('supabase.co')), 'Paynit default API URL points to Supabase Edge functions');
+
+    // 2. Encryption and Environment Fallback
+    await removeGatewayCredentials('test_admin');
+    process.env.PAYNIT_CLIENT_ID = 'test_paynit_client_id_123';
+    process.env.PAYNIT_CLIENT_SECRET = 'test_paynit_client_secret_456';
+    const creds = await getDecryptedCredentials();
+    assert(creds.apiKey === 'test_paynit_client_id_123', 'Decrypted credentials read PAYNIT_CLIENT_ID from environment');
+    assert(creds.apiSecret === 'test_paynit_client_secret_456', 'Decrypted credentials read PAYNIT_CLIENT_SECRET from environment');
+
+    // 3. Status Response Mapping (SUCCESS / PROCESSING / FAILED)
+    // A: Confirmed Success
+    const successRes = payoutGateway.parseProviderStatus({
+      status: 'SUCCESS',
+      utr: 'UTR9988776655',
+      order_id: 'order_123',
+    });
+    assert(successRes === 'success', 'parseProviderStatus: Confirmed SUCCESS maps to success');
+
+    // B: Completed / Paid
+    const completedRes = payoutGateway.parseProviderStatus({
+      status: 'COMPLETED',
+      data: { utr: 'UTR112233' },
+    });
+    assert(completedRes === 'success', 'parseProviderStatus: COMPLETED maps to success');
+
+    // C: Processing / Pending / Queued
+    const procRes = payoutGateway.parseProviderStatus({
+      status: 'PROCESSING',
+      order_id: 'order_123',
+    });
+    assert(procRes === 'processing', 'parseProviderStatus: PROCESSING maps to processing');
+
+    const pendingRes = payoutGateway.parseProviderStatus({
+      status: 'PENDING',
+    });
+    assert(pendingRes === 'processing', 'parseProviderStatus: PENDING maps to processing');
+
+    // D: Failed / Rejected
+    const failedRes = payoutGateway.parseProviderStatus({
+      status: 'FAILED',
+      error: 'Invalid UPI VPA',
+    });
+    assert(failedRes === 'failed', 'parseProviderStatus: FAILED maps to failed');
+
+    const rejectedRes = payoutGateway.parseProviderStatus({
+      status: 'REJECTED',
+      message: 'Account blocked by beneficiary bank',
+    });
+    assert(rejectedRes === 'failed', 'parseProviderStatus: REJECTED maps to failed');
+
+    // E: Safety: Never mark successful on unconfirmed or partial response
+    const unconfirmedRes = payoutGateway.parseProviderStatus({
+      acknowledged: true,
+      message: 'Order received',
+    });
+    assert(unconfirmedRes === 'processing', 'parseProviderStatus: Unconfirmed response remains in processing (never prematurely success)');
+
+    // 4. Safe Execution: Payouts Disabled Safeguard
+    const dummyWithdrawal: Withdrawal = {
+      id: `WTH_TEST_${Date.now()}`,
+      userId: 'test_user_id',
+      userTelegramId: 99887766,
+      amount: 200,
+      upiId: 'user@okaxis',
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+
+    // When payoutsEnabled is false, executePayout halts safely
+    await saveGatewayConfig(
+      {
+        provider: 'paynit',
+        environment: 'test',
+        payoutsEnabled: false,
+        apiBaseUrl: 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1',
+        apiKey: 'test_paynit_client_id_123',
+        apiSecret: 'test_paynit_client_secret_456',
+      },
+      'admin_tester'
+    );
+
+    const disabledPayoutRes = await payoutGateway.executePayout(dummyWithdrawal);
+    assert(disabledPayoutRes.status === 'processing', 'executePayout: When payouts are disabled, order remains processing');
+    assert(disabledPayoutRes.providerResponse.includes('PAYOUTS_DISABLED'), 'executePayout: Explains payouts are disabled in settings');
+
+    // 5. Test Mode (Sandbox): Safe Simulation without real money transfer
+    await saveGatewayConfig(
+      {
+        provider: 'paynit',
+        environment: 'test',
+        payoutsEnabled: true,
+        apiBaseUrl: 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1',
+        apiKey: 'test_paynit_client_id_123',
+        apiSecret: 'test_paynit_client_secret_456',
+      },
+      'admin_tester'
+    );
+
+    const testModePayoutRes = await payoutGateway.executePayout(dummyWithdrawal);
+    assert(testModePayoutRes.status === 'processing', 'executePayout: Test Mode executes simulation without transferring real money');
+    assert(testModePayoutRes.providerResponse.includes('SANDBOX_TEST_MODE'), 'executePayout: Safe simulation marked as SANDBOX_TEST_MODE');
+
+    // Restore safe default (payouts disabled)
+    await saveGatewayConfig(
+      {
+        provider: 'paynit',
+        environment: 'test',
+        payoutsEnabled: false,
+        apiBaseUrl: 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1',
+      },
+      'admin_tester'
+    );
   }
 
   /* ------------------------------------------------------------------

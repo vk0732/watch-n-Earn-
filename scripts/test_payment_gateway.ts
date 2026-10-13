@@ -216,6 +216,67 @@ async function runTests() {
   }
   console.log('  ✓ Credentials securely removed and zeroed out');
 
+  // TEST 8: Paynit UPI Payout Gateway Protocol & Endpoint Verification
+  console.log('\nTEST 8: Paynit UPI Gateway Protocol & Requirements');
+  // 1. Provider configuration & env variable support
+  process.env.PAYNIT_CLIENT_ID = 'paynit_test_client_id_001';
+  process.env.PAYNIT_CLIENT_SECRET = 'paynit_test_secret_key_002';
+
+  const paynitSaved = await saveGatewayConfig(
+    {
+      provider: 'paynit',
+      environment: 'test',
+      payoutsEnabled: false,
+      apiBaseUrl: 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1',
+      apiKey: 'paynit_test_client_id_001',
+      apiSecret: 'paynit_test_secret_key_002',
+    },
+    'test_admin'
+  );
+  const paynitPublic = await getPublicGatewayConfig();
+  if (paynitPublic.provider !== 'paynit') {
+    throw new Error(`Expected provider paynit, got ${paynitPublic.provider}`);
+  }
+  console.log('  ✓ Paynit provider registered and active in gateway configuration');
+  console.log(`    - Payout Endpoint: https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1/merchant-paynit-payout`);
+  console.log(`    - Status Endpoint: https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1/check-order-status`);
+
+  // 2. Status Mapping Verification
+  const pSuccess = payoutGateway.parseProviderStatus({ status: 'SUCCESS', utr: 'UTR123456789012' });
+  const pProc = payoutGateway.parseProviderStatus({ status: 'PROCESSING', order_id: 'ord_1' });
+  const pPending = payoutGateway.parseProviderStatus({ status: 'PENDING' });
+  const pFailed = payoutGateway.parseProviderStatus({ status: 'FAILED', error: 'Beneficiary invalid' });
+  const pRejected = payoutGateway.parseProviderStatus({ status: 'REJECTED' });
+
+  if (pSuccess !== 'success' || pProc !== 'processing' || pPending !== 'processing' || pFailed !== 'failed' || pRejected !== 'failed') {
+    throw new Error('Paynit status mapping validation failed');
+  }
+  console.log('  ✓ Status mapping verified: SUCCESS -> success, PROCESSING/PENDING -> processing, FAILED/REJECTED -> failed');
+
+  // 3. Safety: Never mark successful on unconfirmed response
+  const pUnconfirmed = payoutGateway.parseProviderStatus({ received: true });
+  if (pUnconfirmed !== 'processing') {
+    throw new Error('Safety failure: Unconfirmed response marked as success');
+  }
+  console.log('  ✓ Safety guarantee verified: Never marks success without confirmed response');
+
+  // 4. Test Mode Safety: Real money is not moved
+  const dummyWth: Withdrawal = {
+    id: `WTH_TEST_${Date.now()}`,
+    userId: testUserId,
+    userTelegramId: 99887766,
+    amount: 100,
+    upiId: 'merchant@oksbi',
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+  };
+
+  const paynitTestRes = await payoutGateway.executePayout(dummyWth);
+  if (paynitTestRes.status !== 'processing' || !paynitTestRes.providerResponse.includes('PAYOUTS_DISABLED')) {
+    throw new Error('Safety violation: Disabled payouts allowed execution');
+  }
+  console.log('  ✓ Automated UPI payouts verified DISABLED during test / review mode');
+
   console.log('\n====================================================');
   console.log('🎉 ALL PAYMENT GATEWAY TESTS PASSED SUCCESSFULLY!');
   console.log('====================================================');

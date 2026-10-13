@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { db, cleanDocData, memStore } from './db.ts';
 
-export type GatewayProvider = 'cashfree' | 'razorpayx' | 'paytm' | 'custom';
+export type GatewayProvider = 'cashfree' | 'razorpayx' | 'paytm' | 'paynit' | 'custom';
 export type GatewayEnvironment = 'test' | 'live';
 export type ConnectionStatus = 'not_configured' | 'connected' | 'failed' | 'integration_required';
 
@@ -191,6 +191,17 @@ export const SUPPORTED_PROVIDERS = [
     isIntegrated: true,
   },
   {
+    id: 'paynit' as GatewayProvider,
+    name: 'Paynit UPI Payouts (Supabase Gateway)',
+    description: 'Instant automated UPI Payouts via Paynit Merchant API. Endpoints: merchant-paynit-payout & check-order-status.',
+    requiresMerchantId: false,
+    merchantIdLabel: 'Merchant ID (Optional)',
+    defaultTestUrl: 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1',
+    defaultLiveUrl: 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1',
+    docsUrl: 'https://pxqyeonymwlpiklfyjbb.supabase.co',
+    isIntegrated: true,
+  },
+  {
     id: 'custom' as GatewayProvider,
     name: 'Custom / Other Provider',
     description: 'Select this to integrate an enterprise or custom banking aggregator.',
@@ -223,17 +234,38 @@ export async function getStoredGatewayConfig(): Promise<StoredGatewayConfig> {
   }
 
   // Fallback defaults if not yet configured
+  const envProvider =
+    (process.env.PAYOUT_PROVIDER as GatewayProvider) ||
+    (process.env.PAYNIT_CLIENT_ID ? 'paynit' : 'cashfree');
+
+  const envApiKey =
+    process.env.PAYNIT_CLIENT_ID ||
+    process.env.PAYOUT_API_KEY ||
+    process.env.PAYOUT_CLIENT_ID ||
+    '';
+
+  const envApiSecret =
+    process.env.PAYNIT_CLIENT_SECRET ||
+    process.env.PAYOUT_API_SECRET ||
+    process.env.PAYOUT_CLIENT_SECRET ||
+    '';
+
   const defaultConfig: StoredGatewayConfig = {
-    provider: (process.env.PAYOUT_PROVIDER as GatewayProvider) || 'cashfree',
+    provider: envProvider,
     environment: (process.env.PAYOUT_LIVE_ENABLED === 'true' ? 'live' : 'test') as GatewayEnvironment,
     payoutsEnabled: process.env.PAYOUT_LIVE_ENABLED === 'true',
-    apiBaseUrl: process.env.PAYOUT_BASE_URL || 'https://sandbox.cashfree.com/payout/v1',
-    hasApiKey: Boolean(process.env.PAYOUT_API_KEY && !process.env.PAYOUT_API_KEY.includes('your_')),
-    hasApiSecret: Boolean(process.env.PAYOUT_API_SECRET && !process.env.PAYOUT_API_SECRET.includes('your_')),
+    apiBaseUrl:
+      process.env.PAYNIT_BASE_URL ||
+      process.env.PAYOUT_BASE_URL ||
+      (envProvider === 'paynit'
+        ? 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1'
+        : 'https://sandbox.cashfree.com/payout/v1'),
+    hasApiKey: Boolean(envApiKey && !envApiKey.includes('your_')),
+    hasApiSecret: Boolean(envApiSecret && !envApiSecret.includes('your_')),
     hasMerchantId: false,
     hasWebhookSecret: false,
-    maskedApiKey: process.env.PAYOUT_API_KEY ? maskSecret(process.env.PAYOUT_API_KEY) : '',
-    maskedApiSecret: process.env.PAYOUT_API_SECRET ? '********' : '',
+    maskedApiKey: envApiKey && !envApiKey.includes('your_') ? maskSecret(envApiKey) : '',
+    maskedApiSecret: envApiSecret && !envApiSecret.includes('your_') ? '********' : '',
     lastTestStatus: 'not_configured',
     lastTestMessage: 'Credentials have not been tested with the provider yet.',
     updatedAt: new Date().toISOString(),
@@ -241,11 +273,11 @@ export async function getStoredGatewayConfig(): Promise<StoredGatewayConfig> {
   };
 
   // If environment variables provided initial keys, encrypt them
-  if (process.env.PAYOUT_API_KEY && !process.env.PAYOUT_API_KEY.includes('your_')) {
-    defaultConfig.encryptedApiKey = encryptSecret(process.env.PAYOUT_API_KEY);
+  if (envApiKey && !envApiKey.includes('your_')) {
+    defaultConfig.encryptedApiKey = encryptSecret(envApiKey);
   }
-  if (process.env.PAYOUT_API_SECRET && !process.env.PAYOUT_API_SECRET.includes('your_')) {
-    defaultConfig.encryptedApiSecret = encryptSecret(process.env.PAYOUT_API_SECRET);
+  if (envApiSecret && !envApiSecret.includes('your_')) {
+    defaultConfig.encryptedApiSecret = encryptSecret(envApiSecret);
   }
 
   inMemoryGatewayConfig = defaultConfig;
@@ -469,14 +501,53 @@ export async function recordConnectionTestResult(
  */
 export async function getDecryptedCredentials(): Promise<DecryptedGatewayCredentials> {
   const stored = await getStoredGatewayConfig();
+  const provider =
+    stored.provider ||
+    (process.env.PAYOUT_PROVIDER as GatewayProvider) ||
+    (process.env.PAYNIT_CLIENT_ID ? 'paynit' : 'cashfree');
+
+  const apiKey =
+    decryptSecret(stored.encryptedApiKey) ||
+    process.env.PAYNIT_CLIENT_ID ||
+    process.env.PAYOUT_CLIENT_ID ||
+    process.env.PAYOUT_API_KEY ||
+    '';
+
+  const apiSecret =
+    decryptSecret(stored.encryptedApiSecret) ||
+    process.env.PAYNIT_CLIENT_SECRET ||
+    process.env.PAYOUT_CLIENT_SECRET ||
+    process.env.PAYOUT_API_SECRET ||
+    '';
+
+  const merchantId =
+    decryptSecret(stored.encryptedMerchantId) ||
+    process.env.PAYNIT_MERCHANT_ID ||
+    process.env.PAYOUT_MERCHANT_ID ||
+    '';
+
+  const webhookSecret =
+    decryptSecret(stored.encryptedWebhookSecret) ||
+    process.env.PAYNIT_WEBHOOK_SECRET ||
+    process.env.PAYOUT_WEBHOOK_SECRET ||
+    '';
+
+  const apiBaseUrl =
+    stored.apiBaseUrl ||
+    process.env.PAYNIT_BASE_URL ||
+    process.env.PAYOUT_BASE_URL ||
+    (provider === 'paynit'
+      ? 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1'
+      : '');
+
   return {
-    provider: stored.provider,
+    provider,
     environment: stored.environment,
     payoutsEnabled: stored.payoutsEnabled,
-    apiBaseUrl: stored.apiBaseUrl,
-    apiKey: decryptSecret(stored.encryptedApiKey),
-    apiSecret: decryptSecret(stored.encryptedApiSecret),
-    merchantId: decryptSecret(stored.encryptedMerchantId),
-    webhookSecret: decryptSecret(stored.encryptedWebhookSecret),
+    apiBaseUrl,
+    apiKey,
+    apiSecret,
+    merchantId,
+    webhookSecret,
   };
 }

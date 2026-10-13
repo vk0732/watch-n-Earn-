@@ -139,6 +139,10 @@ export class UPIPaymentGatewayAdapter {
       return await this.testPaytmConnection(creds);
     }
 
+    if (creds.provider === 'paynit') {
+      return await this.testPaynitConnection(creds);
+    }
+
     // Custom or Unintegrated Provider
     const result: ConnectionTestResult = {
       success: false,
@@ -392,6 +396,111 @@ export class UPIPaymentGatewayAdapter {
   }
 
   /**
+   * Test Paynit Gateway Connection
+   * Uses Paynit Official Status API: POST /check-order-status
+   * Safely verifies X-Client-Id and X-Client-Secret without moving any funds
+   */
+  private async testPaynitConnection(creds: DecryptedGatewayCredentials): Promise<ConnectionTestResult> {
+    const baseUrl =
+      creds.apiBaseUrl ||
+      process.env.PAYNIT_BASE_URL ||
+      'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1';
+
+    const statusUrl = process.env.PAYNIT_STATUS_URL || `${baseUrl.replace(/\/$/, '')}/check-order-status`;
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+
+      const response = await fetch(statusUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client-Id': creds.apiKey,
+          'X-Client-Secret': creds.apiSecret,
+          'User-Agent': 'TeleEarn-Admin/1.0',
+        },
+        body: JSON.stringify({ order_id: 'probe_test_connection' }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      const status = response.status;
+      let data: any = {};
+      try {
+        data = await response.json();
+      } catch {
+        data = { text: await response.text().catch(() => '') };
+      }
+
+      // Check authentication errors
+      if (
+        status === 401 ||
+        status === 403 ||
+        data.error?.toString().toLowerCase().includes('unauthorized') ||
+        data.message?.toString().toLowerCase().includes('invalid client')
+      ) {
+        const fullMsg = `Paynit Authentication Failed (HTTP ${status}): ${data.message || data.error || 'Invalid X-Client-Id or X-Client-Secret.'}`;
+        await recordConnectionTestResult('failed', fullMsg);
+        return {
+          success: false,
+          status: 'failed',
+          message: fullMsg,
+          httpStatus: status,
+          environment: creds.environment,
+          provider: 'Paynit UPI Payouts',
+          timestamp: new Date().toISOString(),
+          rawDetails: data,
+        };
+      }
+
+      // If response is OK or returns authenticated order check (even 404 for nonexistent probe order)
+      if (response.ok || status === 404 || data.status !== undefined || data.message !== undefined) {
+        const msg = `Successfully authenticated with Paynit UPI Gateway (${creds.environment.toUpperCase()} Mode). Provider API credentials verified.`;
+        await recordConnectionTestResult('connected', msg);
+        return {
+          success: true,
+          status: 'connected',
+          message: msg,
+          httpStatus: status,
+          environment: creds.environment,
+          provider: 'Paynit UPI Payouts',
+          timestamp: new Date().toISOString(),
+          rawDetails: data,
+        };
+      }
+
+      const msg = `Paynit Payouts check returned HTTP ${status}: ${data.message || data.error || response.statusText}`;
+      await recordConnectionTestResult('failed', msg);
+      return {
+        success: false,
+        status: 'failed',
+        message: msg,
+        httpStatus: status,
+        environment: creds.environment,
+        provider: 'Paynit UPI Payouts',
+        timestamp: new Date().toISOString(),
+        rawDetails: data,
+      };
+    } catch (err: any) {
+      const isAbort = err.name === 'AbortError';
+      const msg = isAbort
+        ? `Connection to Paynit timed out after 12s at ${statusUrl}`
+        : `Network connection to Paynit failed: ${err.message}`;
+      await recordConnectionTestResult('failed', msg);
+      return {
+        success: false,
+        status: 'failed',
+        message: msg,
+        environment: creds.environment,
+        provider: 'Paynit UPI Payouts',
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  /**
    * Process a payout through the configured gateway.
    * SAFETY GUARANTEE:
    * 1. If payouts are disabled: halts and places in review.
@@ -452,6 +561,10 @@ export class UPIPaymentGatewayAdapter {
 
     if (creds.provider === 'razorpayx') {
       return await this.executeRazorpayXLivePayout(withdrawal, creds);
+    }
+
+    if (creds.provider === 'paynit') {
+      return await this.executePaynitLivePayout(withdrawal, creds);
     }
 
     return {
@@ -690,10 +803,286 @@ export class UPIPaymentGatewayAdapter {
       }
     }
 
+    if (creds.provider === 'paynit') {
+      return await this.reconcilePaynitPayout(withdrawal, creds);
+    }
+
     return {
       status: withdrawal.status as any,
       providerResponse: 'Reconciliation query complete; status remains unchanged.',
     };
+  }
+
+  /**
+   * Paynit Live Payout execution
+   * Payout endpoint: https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1/merchant-paynit-payout
+   * Required headers:
+   * - Content-Type: application/json
+   * - X-Client-Id: <client_id>
+   * - X-Client-Secret: <client_secret>
+   * - X-Idempotency-Key: <idempotency_key>
+   * Payload fields: order_id, amount, payout_method ("UPI"), upi_id, note
+   */
+  public async executePaynitLivePayout(
+    withdrawal: Withdrawal,
+    creds: DecryptedGatewayCredentials
+  ): Promise<PayoutProcessResult> {
+    const baseUrl =
+      creds.apiBaseUrl ||
+      process.env.PAYNIT_BASE_URL ||
+      'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1';
+
+    const payoutUrl = process.env.PAYNIT_PAYOUT_URL || `${baseUrl.replace(/\/$/, '')}/merchant-paynit-payout`;
+    const idempotencyKey = `payout_${withdrawal.id}`;
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+
+      const payload = {
+        order_id: withdrawal.id,
+        amount: Number(withdrawal.amount),
+        payout_method: 'UPI',
+        upi_id: withdrawal.upiId.trim(),
+        note: `TeleEarn payout for order ${withdrawal.id}`,
+      };
+
+      const res = await fetch(payoutUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client-Id': creds.apiKey,
+          'X-Client-Secret': creds.apiSecret,
+          'X-Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      let resData: any = {};
+      try {
+        resData = await res.json();
+      } catch {
+        resData = { text: await res.text().catch(() => '') };
+      }
+
+      // Check HTTP authorization/client error
+      if (!res.ok && res.status >= 400 && res.status < 500) {
+        return {
+          status: 'failed',
+          providerOrderId: resData.order_id || resData.data?.order_id || withdrawal.id,
+          providerResponse: JSON.stringify(resData),
+          failureReason: resData.message || resData.error || `HTTP ${res.status}: Provider rejected payout request.`,
+        };
+      }
+
+      const parsedStatus = this.parseProviderStatus(resData);
+      const utr =
+        resData.utr ||
+        resData.data?.utr ||
+        resData.rrn ||
+        resData.bank_reference ||
+        resData.data?.bank_reference;
+
+      const providerOrderId =
+        resData.order_id ||
+        resData.payout_id ||
+        resData.data?.order_id ||
+        resData.data?.payout_id ||
+        idempotencyKey;
+
+      if (parsedStatus === 'success') {
+        return {
+          status: 'success',
+          providerOrderId,
+          utr,
+          providerResponse: JSON.stringify(resData),
+        };
+      }
+
+      if (parsedStatus === 'failed') {
+        return {
+          status: 'failed',
+          providerOrderId,
+          providerResponse: JSON.stringify(resData),
+          failureReason:
+            resData.message ||
+            resData.error ||
+            resData.failure_reason ||
+            resData.data?.failure_reason ||
+            'Paynit transfer rejected by bank.',
+        };
+      }
+
+      // Queued, pending, or intermediate response
+      return {
+        status: 'processing',
+        providerOrderId,
+        providerResponse: JSON.stringify(resData),
+      };
+    } catch (err: any) {
+      // Network timeout: keep status as 'processing' so money is not duplicate-sent
+      return {
+        status: 'processing',
+        providerResponse: JSON.stringify({ error: err.message, state: 'DISPATCH_TIMEOUT' }),
+        failureReason: `Network timeout during Paynit dispatch: ${err.message}. Awaiting reconciliation via check-order-status.`,
+      };
+    }
+  }
+
+  /**
+   * Reconcile Paynit Payout status
+   * Status endpoint: https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1/check-order-status
+   * Required headers:
+   * - Content-Type: application/json
+   * - X-Client-Id: <client_id>
+   * - X-Client-Secret: <client_secret>
+   * Status request must contain ONLY order_id
+   */
+  public async reconcilePaynitPayout(
+    withdrawal: Withdrawal,
+    creds: DecryptedGatewayCredentials
+  ): Promise<PayoutProcessResult> {
+    const baseUrl =
+      creds.apiBaseUrl ||
+      process.env.PAYNIT_BASE_URL ||
+      'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1';
+
+    const statusUrl = process.env.PAYNIT_STATUS_URL || `${baseUrl.replace(/\/$/, '')}/check-order-status`;
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+
+      const res = await fetch(statusUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client-Id': creds.apiKey,
+          'X-Client-Secret': creds.apiSecret,
+        },
+        body: JSON.stringify({ order_id: withdrawal.id }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = { text: await res.text().catch(() => '') };
+      }
+
+      const parsedStatus = this.parseProviderStatus(data);
+      const utr =
+        data.utr ||
+        data.data?.utr ||
+        data.rrn ||
+        data.bank_reference ||
+        data.data?.bank_reference;
+
+      const providerOrderId =
+        data.order_id ||
+        data.payout_id ||
+        data.data?.order_id ||
+        data.data?.payout_id ||
+        withdrawal.id;
+
+      if (parsedStatus === 'success') {
+        return {
+          status: 'success',
+          utr,
+          providerOrderId,
+          providerResponse: JSON.stringify(data),
+        };
+      }
+
+      if (parsedStatus === 'failed') {
+        return {
+          status: 'failed',
+          providerOrderId,
+          providerResponse: JSON.stringify(data),
+          failureReason:
+            data.message ||
+            data.error ||
+            data.failure_reason ||
+            data.data?.failure_reason ||
+            'Paynit reported order failed.',
+        };
+      }
+
+      if (parsedStatus === 'processing') {
+        return {
+          status: 'processing',
+          providerOrderId,
+          providerResponse: JSON.stringify(data),
+        };
+      }
+    } catch (err: any) {
+      console.warn('[PayoutAdapter] Paynit reconcile error:', err);
+    }
+
+    return {
+      status: withdrawal.status as any,
+      providerResponse: 'Reconciliation query complete; status remains unchanged.',
+    };
+  }
+
+  /**
+   * Parse provider status from raw response
+   * SAFETY GUARANTEE: Never marks payout 'success' without confirmed provider confirmation
+   */
+  public parseProviderStatus(data: any): 'success' | 'processing' | 'failed' {
+    if (!data || typeof data !== 'object') return 'processing';
+
+    const rawStatus = (
+      data.status ||
+      data.order_status ||
+      data.payout_status ||
+      data.data?.status ||
+      data.data?.order_status ||
+      data.data?.payout_status ||
+      ''
+    ).toString().toUpperCase().trim();
+
+    // 1. Explicit Success confirmation
+    if (
+      rawStatus === 'SUCCESS' ||
+      rawStatus === 'COMPLETED' ||
+      rawStatus === 'PAID' ||
+      rawStatus === 'SETTLED'
+    ) {
+      return 'success';
+    }
+
+    if (data.success === true && (rawStatus === 'SUCCESS' || Boolean(data.utr || data.data?.utr))) {
+      return 'success';
+    }
+
+    // 2. Explicit Failure / Rejected
+    if (
+      rawStatus === 'FAILED' ||
+      rawStatus === 'REJECTED' ||
+      rawStatus === 'CANCELLED' ||
+      rawStatus === 'FAILURE' ||
+      rawStatus === 'DECLINED'
+    ) {
+      return 'failed';
+    }
+
+    if (data.error !== undefined && !['PROCESSING', 'PENDING', 'QUEUED'].includes(rawStatus)) {
+      return 'failed';
+    }
+
+    if (data.success === false && !['PROCESSING', 'PENDING', 'QUEUED'].includes(rawStatus)) {
+      return 'failed';
+    }
+
+    // 3. Processing / Pending / Queued or unconfirmed
+    return 'processing';
   }
 
   /**

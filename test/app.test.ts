@@ -20,6 +20,9 @@ import {
   checkTelegramChannelMembership,
   checkBotChannelAccess,
   formatChannelIdentifier,
+  getChannelCandidateIds,
+  getChannelAlias,
+  clearChannelAliases,
   setMockChannelMembership,
   clearMockChannelMemberships,
 } from '../server/telegram.ts';
@@ -530,7 +533,56 @@ async function runTests() {
     const tgMeInvite = formatChannelIdentifier('https://telegram.me/+AnotherCode456');
     assert(Boolean(tgMeInvite.error), 'telegram.me/+ invite link correctly rejected as chat ID');
 
+    // F. Candidate Base ID Resolution & Message-Link Concatenation Fallback
+    clearChannelAliases();
     clearMockChannelMemberships();
+
+    // 1. Candidate ID generator returns base channel ID
+    const candidates = getChannelCandidateIds('-10020877627202664');
+    assert(candidates.includes('-1002087762720'), 'Candidate Generator: -10020877627202664 resolves candidate base ID -1002087762720');
+
+    // 2. Direct format of t.me/c/<channel>/<msg> URL
+    const cUrlParsed = formatChannelIdentifier('https://t.me/c/2087762720/2664');
+    assert(cUrlParsed.ok === true && cUrlParsed.formatted === '-1002087762720' && cUrlParsed.isPrivate === true, 'Format Identifier: t.me/c/2087762720/2664 directly formatted to base ID -1002087762720');
+
+    // 3. Bot Access candidate resolution: when mock access is on base ID, query with concatenated ID resolves base ID
+    setMockChannelMembership('access_-1002087762720', {
+      isMember: true,
+      status: 'verified',
+    });
+    const botAccessCandidate = await checkBotChannelAccess('-10020877627202664');
+    assert(botAccessCandidate.ok === true && botAccessCandidate.resolvedChannelId === '-1002087762720', 'Candidate Resolution: checkBotChannelAccess with -10020877627202664 resolves to base ID -1002087762720');
+
+    // 4. User Membership candidate resolution: when user membership is on base ID, query with concatenated ID resolves base ID
+    setMockChannelMembership(`-1002087762720_${testTgUser}`, {
+      isMember: true,
+      status: 'member',
+    });
+    const userMembershipCandidate = await checkTelegramChannelMembership('-10020877627202664', testTgUser);
+    assert(userMembershipCandidate.isMember === true && userMembershipCandidate.resolvedChannelId === '-1002087762720', 'Candidate Resolution: checkTelegramChannelMembership with -10020877627202664 resolves to base ID -1002087762720');
+
+    // 5. Verify alias caching
+    assert(getChannelAlias('-10020877627202664') === '-1002087762720', 'Alias Cache: -10020877627202664 cached as alias to -1002087762720');
+
+    // 6. Task verification flow with concatenated ID transparently resolves and completes
+    const concatenatedTask: Task = {
+      id: 'task_concatenated_private',
+      title: 'Join Private Channel',
+      description: 'Join Private Channel with ID -10020877627202664',
+      destinationUrl: 'https://t.me/+rYFQsazjO4FjN2E9',
+      rewardAmount: 35,
+      taskType: 'channel',
+      channelId: '-10020877627202664',
+      timerSeconds: 0,
+      isActive: true,
+      sortOrder: 3,
+      createdAt: new Date().toISOString(),
+    };
+    const taskConcatenatedRes = await verifyChannelTask(testUserProfile, concatenatedTask);
+    assert(taskConcatenatedRes.success === true, 'Task Flow: Private channel task with -10020877627202664 verifies successfully via candidate resolution');
+
+    clearMockChannelMemberships();
+    clearChannelAliases();
   }
 
   console.log('\n==================================================');

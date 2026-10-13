@@ -152,9 +152,11 @@ export interface ChannelMembershipResult {
   status: string;
   error?: string;
   diagnostic?: string;
+  resolvedChannelId?: string;
 }
 
 const mockChannelOverrides = new Map<string, ChannelMembershipResult>();
+const channelAliasCache = new Map<string, string>();
 
 export function setMockChannelMembership(
   channelOrKey: string,
@@ -171,6 +173,57 @@ export function clearMockChannelMemberships() {
   mockChannelOverrides.clear();
 }
 
+export function getChannelAlias(id: string): string | undefined {
+  return channelAliasCache.get(id);
+}
+
+export function setChannelAlias(fromId: string, toId: string) {
+  channelAliasCache.set(fromId, toId);
+}
+
+export function clearChannelAliases() {
+  channelAliasCache.clear();
+}
+
+/**
+ * Resolves candidate Telegram channel IDs for private channels.
+ * Often users copy message links like t.me/c/2087762720/2664 and append/prepend to get
+ * -10020877627202664 where 2087762720 is the 10-digit channel ID and 2664 is the message ID.
+ * Returns an array of candidate IDs in prioritized order.
+ */
+export function getChannelCandidateIds(formattedChannel: string): string[] {
+  const candidates: string[] = [];
+
+  // Check alias cache first
+  const cached = channelAliasCache.get(formattedChannel);
+  if (cached && !candidates.includes(cached)) {
+    candidates.push(cached);
+  }
+
+  if (!candidates.includes(formattedChannel)) {
+    candidates.push(formattedChannel);
+  }
+
+  // If ID starts with -100 and has more than 10 digits after -100 (e.g. -10020877627202664)
+  const match10 = formattedChannel.match(/^-100(\d{10})(\d{1,8})$/);
+  if (match10) {
+    const base10 = `-100${match10[1]}`;
+    if (!candidates.includes(base10)) {
+      candidates.push(base10);
+    }
+  }
+
+  const match9 = formattedChannel.match(/^-100(\d{9})(\d{1,8})$/);
+  if (match9) {
+    const base9 = `-100${match9[1]}`;
+    if (!candidates.includes(base9)) {
+      candidates.push(base9);
+    }
+  }
+
+  return candidates;
+}
+
 /**
  * Normalizes and formats a channel identifier for Telegram Bot API calls.
  * Returns { ok: true, formatted: string, isPrivate: boolean } or { ok: false, error: string }
@@ -180,10 +233,17 @@ export function formatChannelIdentifier(channelId: string): {
   formatted?: string;
   isPrivate?: boolean;
   error?: string;
+  resolvedChannelId?: string;
 } {
   const trimmed = (channelId || '').trim();
   if (!trimmed) {
     return { ok: false, error: 'Channel identifier is empty' };
+  }
+
+  // Check alias cache first
+  if (channelAliasCache.has(trimmed)) {
+    const cached = channelAliasCache.get(trimmed)!;
+    return { ok: true, formatted: cached, isPrivate: true, resolvedChannelId: cached };
   }
 
   // Reject private invite links passed as chat IDs
@@ -196,6 +256,13 @@ export function formatChannelIdentifier(channelId: string): {
       error:
         'Private invite links cannot be used as chat IDs. For private channels, please provide the numeric Channel ID (starting with -100).',
     };
+  }
+
+  // Handle t.me/c/<channel_id>/<msg_id> private message links directly
+  const cMatch = trimmed.match(/(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/c\/(\d+)(?:\/\d+)?/i);
+  if (cMatch) {
+    const baseId = `-100${cMatch[1]}`;
+    return { ok: true, formatted: baseId, isPrivate: true, resolvedChannelId: baseId };
   }
 
   // Handle numeric channel/supergroup IDs (-100...)
@@ -258,10 +325,13 @@ export interface BotChannelAccessResult {
   botUsername?: string;
   isPrivate?: boolean;
   canCheckMembers?: boolean;
+  resolvedChannelId?: string;
 }
 
 /**
  * Checks if the bot is a member/admin in the target channel and has sufficient rights.
+ * Automatically tries candidate base IDs if a concatenated message-link ID (e.g. -10020877627202664)
+ * produces 'chat not found'.
  */
 export async function checkBotChannelAccess(channelId: string): Promise<BotChannelAccessResult> {
   const parsed = formatChannelIdentifier(channelId);
@@ -274,18 +344,26 @@ export async function checkBotChannelAccess(channelId: string): Promise<BotChann
   }
 
   const formattedChannel = parsed.formatted;
+  const candidates = getChannelCandidateIds(formattedChannel);
 
   // Check mock overrides for automated testing
-  if (mockChannelOverrides.has(`access_${formattedChannel}`)) {
-    const mock = mockChannelOverrides.get(`access_${formattedChannel}`)!;
-    return {
-      ok: mock.isMember,
-      status: mock.status as any,
-      error: mock.error,
-      channelTitle: 'Test Mock Channel',
-      botUsername: 'WatchXEarnBot',
-      isPrivate: parsed.isPrivate,
-    };
+  for (const candidate of candidates) {
+    if (mockChannelOverrides.has(`access_${candidate}`)) {
+      const mock = mockChannelOverrides.get(`access_${candidate}`)!;
+      if (candidate !== formattedChannel) {
+        channelAliasCache.set(formattedChannel, candidate);
+        channelAliasCache.set(channelId, candidate);
+      }
+      return {
+        ok: mock.isMember,
+        status: mock.status as any,
+        error: mock.error,
+        channelTitle: 'Test Mock Channel',
+        botUsername: 'WatchXEarnBot',
+        isPrivate: parsed.isPrivate,
+        resolvedChannelId: candidate,
+      };
+    }
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -312,20 +390,43 @@ export async function checkBotChannelAccess(channelId: string): Promise<BotChann
     const botId = meData.result?.id;
     const botUsername = meData.result?.username || process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot';
 
-    // 2. Fetch Chat info via getChat
-    const chatRes = await fetch(
-      `https://api.telegram.org/bot${token}/getChat?chat_id=${encodeURIComponent(formattedChannel)}`,
-      { signal: AbortSignal.timeout(4000) }
-    );
-    const chatData = (await chatRes.json()) as any;
+    // 2. Query candidates with getChat
+    let chatData: any = null;
+    let successfulCandidate = formattedChannel;
+    let lastErrorDesc = '';
 
-    if (!chatData.ok) {
-      const desc = chatData.description || '';
-      console.warn(`[getChat Warning] Chat: ${formattedChannel}, Desc: ${desc}`);
+    for (const candidate of candidates) {
+      const chatRes = await fetch(
+        `https://api.telegram.org/bot${token}/getChat?chat_id=${encodeURIComponent(candidate)}`,
+        { signal: AbortSignal.timeout(4000) }
+      );
+      const resJson = (await chatRes.json()) as any;
+      if (resJson.ok) {
+        chatData = resJson;
+        successfulCandidate = candidate;
+        if (candidate !== formattedChannel) {
+          channelAliasCache.set(formattedChannel, candidate);
+          channelAliasCache.set(channelId, candidate);
+        }
+        break;
+      } else {
+        lastErrorDesc = resJson.description || '';
+        if (!lastErrorDesc.includes('chat not found')) {
+          chatData = resJson;
+          successfulCandidate = candidate;
+          break;
+        }
+      }
+    }
+
+    if (!chatData || !chatData.ok) {
+      const desc = lastErrorDesc || chatData?.description || '';
+      console.warn(`[getChat Warning] Chat: ${formattedChannel} (candidates: ${candidates.join(', ')}), Desc: ${desc}`);
 
       if (desc.includes('chat not found')) {
+        const candidateNote = candidates.length > 1 ? ` (candidate ${candidates[1]} also not found)` : '';
         const errorMsg = parsed.isPrivate
-          ? `Bot @${botUsername} is not a member of private channel ${formattedChannel}. Please add @${botUsername} to the channel as an Administrator with 'View members' permissions.`
+          ? `Bot @${botUsername} is not a member of private channel ${formattedChannel}${candidateNote}. Please add @${botUsername} to the channel as an Administrator with 'View members' permissions.`
           : `Channel ${formattedChannel} was not found. Please verify the username or ensure @${botUsername} is added as an Administrator.`;
         return {
           ok: false,
@@ -340,9 +441,10 @@ export async function checkBotChannelAccess(channelId: string): Promise<BotChann
         return {
           ok: false,
           status: 'bot_not_admin',
-          error: `Bot @${botUsername} must be promoted to Administrator with 'View members' permissions in ${formattedChannel}.`,
+          error: `Bot @${botUsername} must be promoted to Administrator with 'View members' permissions in ${successfulCandidate}.`,
           botUsername,
           isPrivate: parsed.isPrivate,
+          resolvedChannelId: successfulCandidate,
         };
       }
 
@@ -351,15 +453,16 @@ export async function checkBotChannelAccess(channelId: string): Promise<BotChann
         status: 'api_error',
         error: `Telegram API error: ${desc}`,
         botUsername,
+        resolvedChannelId: successfulCandidate,
       };
     }
 
-    const channelTitle = chatData.result?.title || formattedChannel;
+    const channelTitle = chatData.result?.title || successfulCandidate;
 
-    // 3. Verify Bot status inside channel via getChatMember
+    // 3. Verify Bot status inside channel via getChatMember using the successful candidate
     const memberRes = await fetch(
       `https://api.telegram.org/bot${token}/getChatMember?chat_id=${encodeURIComponent(
-        formattedChannel
+        successfulCandidate
       )}&user_id=${botId}`,
       { signal: AbortSignal.timeout(4000) }
     );
@@ -373,6 +476,7 @@ export async function checkBotChannelAccess(channelId: string): Promise<BotChann
         channelTitle,
         botUsername,
         isPrivate: parsed.isPrivate,
+        resolvedChannelId: successfulCandidate,
       };
     }
 
@@ -385,6 +489,7 @@ export async function checkBotChannelAccess(channelId: string): Promise<BotChann
         channelTitle,
         botUsername,
         isPrivate: parsed.isPrivate,
+        resolvedChannelId: successfulCandidate,
       };
     }
 
@@ -395,6 +500,7 @@ export async function checkBotChannelAccess(channelId: string): Promise<BotChann
       botUsername,
       isPrivate: parsed.isPrivate,
       canCheckMembers: true,
+      resolvedChannelId: successfulCandidate,
     };
   } catch (err: any) {
     return {
@@ -406,7 +512,9 @@ export async function checkBotChannelAccess(channelId: string): Promise<BotChann
 }
 
 /**
- * Checks if a user is a member of a Telegram channel using the Bot API
+ * Checks if a user is a member of a Telegram channel using the Bot API.
+ * Automatically tries candidate base IDs if a concatenated message-link ID (e.g. -10020877627202664)
+ * produces 'chat not found'.
  */
 export async function checkTelegramChannelMembership(
   channelId: string,
@@ -422,49 +530,68 @@ export async function checkTelegramChannelMembership(
   }
 
   const formattedChannel = parsed.formatted;
+  const candidates = getChannelCandidateIds(formattedChannel);
 
-  // 1. Check if mock override is active for this channel + user or channel
-  const compositeKey = `${formattedChannel}_${userId}`;
-  if (mockChannelOverrides.has(compositeKey)) {
-    return mockChannelOverrides.get(compositeKey)!;
-  }
-  if (mockChannelOverrides.has(formattedChannel)) {
-    return mockChannelOverrides.get(formattedChannel)!;
+  // 1. Check if mock override is active for this channel + user or channel across candidates
+  for (const candidate of candidates) {
+    const compositeKey = `${candidate}_${userId}`;
+    if (mockChannelOverrides.has(compositeKey)) {
+      const res = mockChannelOverrides.get(compositeKey)!;
+      if (candidate !== formattedChannel) {
+        channelAliasCache.set(formattedChannel, candidate);
+        channelAliasCache.set(channelId, candidate);
+      }
+      return { ...res, resolvedChannelId: candidate };
+    }
+    if (mockChannelOverrides.has(candidate)) {
+      const res = mockChannelOverrides.get(candidate)!;
+      if (candidate !== formattedChannel) {
+        channelAliasCache.set(formattedChannel, candidate);
+        channelAliasCache.set(channelId, candidate);
+      }
+      return { ...res, resolvedChannelId: candidate };
+    }
   }
   const trimmed = (channelId || '').trim();
   if (mockChannelOverrides.has(trimmed)) {
     return mockChannelOverrides.get(trimmed)!;
   }
 
-  // 2. Built-in test channel patterns for automated test suites
-  const lower = formattedChannel.toLowerCase();
-  if (lower.includes('notjoined') || lower.includes('not_joined')) {
-    return {
-      isMember: false,
-      status: 'left',
-      error: 'Please join the channel and try again.',
-    };
-  }
-  if (lower.includes('botnotadmin') || lower.includes('bot_not_admin')) {
-    return {
-      isMember: false,
-      status: 'bot_not_admin',
-      error: `Bot must be added as an Administrator with 'View members' permissions in ${formattedChannel} to check user membership.`,
-      diagnostic: 'member_list_inaccessible',
-    };
-  }
-  if (lower.includes('apierror') || lower.includes('api_error')) {
-    return {
-      isMember: false,
-      status: 'api_error',
-      error: 'Telegram API error: Bad Request: chat not found',
-    };
-  }
-  if (lower.includes('joined_channel') || lower.includes('joinedchannel')) {
-    return {
-      isMember: true,
-      status: 'member',
-    };
+  // 2. Built-in test channel patterns for automated test suites across candidates
+  for (const candidate of candidates) {
+    const lower = candidate.toLowerCase();
+    if (lower.includes('notjoined') || lower.includes('not_joined')) {
+      return {
+        isMember: false,
+        status: 'left',
+        error: 'Please join the channel and try again.',
+        resolvedChannelId: candidate,
+      };
+    }
+    if (lower.includes('botnotadmin') || lower.includes('bot_not_admin')) {
+      return {
+        isMember: false,
+        status: 'bot_not_admin',
+        error: `Bot must be added as an Administrator with 'View members' permissions in ${candidate} to check user membership.`,
+        diagnostic: 'member_list_inaccessible',
+        resolvedChannelId: candidate,
+      };
+    }
+    if (lower.includes('apierror') || lower.includes('api_error')) {
+      return {
+        isMember: false,
+        status: 'api_error',
+        error: 'Telegram API error: Bad Request: chat not found',
+        resolvedChannelId: candidate,
+      };
+    }
+    if (lower.includes('joined_channel') || lower.includes('joinedchannel')) {
+      return {
+        isMember: true,
+        status: 'member',
+        resolvedChannelId: candidate,
+      };
+    }
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -477,32 +604,81 @@ export async function checkTelegramChannelMembership(
   }
 
   try {
-    const url = `https://api.telegram.org/bot${token}/getChatMember?chat_id=${encodeURIComponent(
-      formattedChannel
-    )}&user_id=${userId}`;
+    let data: any = null;
+    let successfulCandidate = formattedChannel;
+    let lastErrorDesc = '';
 
-    const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
-    const data = (await res.json()) as any;
+    for (const candidate of candidates) {
+      const url = `https://api.telegram.org/bot${token}/getChatMember?chat_id=${encodeURIComponent(
+        candidate
+      )}&user_id=${userId}`;
 
-    if (!data.ok) {
-      const desc = data.description || 'Unknown Telegram API error';
-      console.warn(`[Telegram Verify Warning] Channel: ${formattedChannel}, User: ${userId}, Code: ${data.error_code}, Desc: ${desc}`);
+      const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+      const resJson = (await res.json()) as any;
+
+      if (resJson.ok) {
+        data = resJson;
+        successfulCandidate = candidate;
+        if (candidate !== formattedChannel) {
+          channelAliasCache.set(formattedChannel, candidate);
+          channelAliasCache.set(channelId, candidate);
+        }
+        break;
+      } else {
+        const desc = resJson.description || '';
+        lastErrorDesc = desc;
+        if (desc.includes('chat not found')) {
+          continue;
+        }
+        if (
+          desc.includes('user not found') ||
+          desc.includes('participant_id_invalid') ||
+          desc.includes('USER_ID_INVALID')
+        ) {
+          data = resJson;
+          successfulCandidate = candidate;
+          if (candidate !== formattedChannel) {
+            channelAliasCache.set(formattedChannel, candidate);
+            channelAliasCache.set(channelId, candidate);
+          }
+          break;
+        }
+        if (desc.includes('member list is inaccessible') || desc.includes('need administrator rights')) {
+          data = resJson;
+          successfulCandidate = candidate;
+          if (candidate !== formattedChannel) {
+            channelAliasCache.set(formattedChannel, candidate);
+            channelAliasCache.set(channelId, candidate);
+          }
+          break;
+        }
+        data = resJson;
+        successfulCandidate = candidate;
+        break;
+      }
+    }
+
+    if (!data || !data.ok) {
+      const desc = data?.description || lastErrorDesc || 'Unknown Telegram API error';
+      console.warn(`[Telegram Verify Warning] Channel: ${formattedChannel} (resolved: ${successfulCandidate}), User: ${userId}, Desc: ${desc}`);
 
       if (desc.includes('member list is inaccessible') || desc.includes('need administrator rights')) {
         const botName = process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot';
         return {
           isMember: false,
           status: 'bot_not_admin',
-          error: `Bot @${botName} must be added as an Administrator with 'View members' permissions in ${formattedChannel} to check user membership.`,
+          error: `Bot @${botName} must be added as an Administrator with 'View members' permissions in ${successfulCandidate} to check user membership.`,
           diagnostic: 'member_list_inaccessible',
+          resolvedChannelId: successfulCandidate,
         };
       }
 
       if (desc.includes('chat not found')) {
         const botName = process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot';
         const isNumeric = formattedChannel.startsWith('-100') || formattedChannel.startsWith('-');
+        const candidateNote = candidates.length > 1 ? ` (candidate ${candidates[1]} also not found)` : '';
         const errorMsg = isNumeric
-          ? `Bot @${botName} is not a member of channel ${formattedChannel}. Please add @${botName} to the channel as an Administrator with 'View members' permissions.`
+          ? `Bot @${botName} is not a member of channel ${formattedChannel}${candidateNote}. Please add @${botName} to the channel as an Administrator with 'View members' permissions.`
           : `Channel ${formattedChannel} was not found. Please verify the channel username or ensure @${botName} is added as an Administrator.`;
 
         return {
@@ -523,6 +699,7 @@ export async function checkTelegramChannelMembership(
           status: 'user_not_found',
           error: 'Please join the channel and try again.',
           diagnostic: 'user_not_found',
+          resolvedChannelId: successfulCandidate,
         };
       }
 
@@ -530,6 +707,7 @@ export async function checkTelegramChannelMembership(
         isMember: false,
         status: 'api_error',
         error: `Telegram API error: ${desc}`,
+        resolvedChannelId: successfulCandidate,
       };
     }
 
@@ -547,12 +725,14 @@ export async function checkTelegramChannelMembership(
         isMember: false,
         status: memberStatus || 'left',
         error: 'Please join the channel and try again.',
+        resolvedChannelId: successfulCandidate,
       };
     }
 
     return {
       isMember: true,
       status: memberStatus,
+      resolvedChannelId: successfulCandidate,
     };
   } catch (err: any) {
     console.error('[Telegram Membership Exception]', err.message);

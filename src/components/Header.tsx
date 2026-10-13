@@ -46,7 +46,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex gap-2">
             <button
               onClick={() => {
-                onSwitchUser('504198372', 'Admin Vivek');
+                onSwitchUser('2022247489', 'Admin Vivek');
                 setShowSimMenu(false);
               }}
               className="flex-1 py-1 px-2 bg-red-600/30 border border-red-500/40 text-red-300 rounded-lg font-bold text-[10px]"

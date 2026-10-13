@@ -107,9 +107,9 @@ export default function App() {
 
       // If in browser preview without Telegram wrapper, construct safe sandbox initData
       if (!rawInitData) {
-        const mockId = customMockId || localStorage.getItem('teleearn_mock_id') || '504198372';
-        const mockFirstName = customName || 'Vivek Admin';
-        const mockUsername = 'vivek_admin';
+        const mockId = customMockId || localStorage.getItem('teleearn_mock_id') || '987654321';
+        const mockFirstName = customName || 'Normal User';
+        const mockUsername = 'normal_user';
 
         const mockUserObj = {
           id: Number(mockId),

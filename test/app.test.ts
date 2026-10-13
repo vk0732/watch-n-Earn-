@@ -297,10 +297,16 @@ async function runTests() {
      ------------------------------------------------------------------ */
   console.log('\nTest Suite 7: Admin Authorization Gate');
   {
-    process.env.ADMIN_TELEGRAM_IDS = '504198372,999888';
-    assert(isTelegramAdmin(504198372) === true, 'Authorized admin ID (504198372) granted access');
-    assert(isTelegramAdmin('999888') === true, 'Authorized admin string ID ("999888") granted access');
+    delete process.env.ADMIN_TELEGRAM_IDS;
+    assert(isTelegramAdmin(2022247489) === true, 'Authorized admin ID (2022247489) granted access by default');
+    assert(isTelegramAdmin('2022247489') === true, 'Authorized admin string ID ("2022247489") granted access');
+    assert(isTelegramAdmin(504198372) === false, 'Old/unauthorized ID (504198372) strictly rejected');
     assert(isTelegramAdmin(12345678) === false, 'Unauthorized user ID (12345678) rejected');
+    assert(isTelegramAdmin(987654321) === false, 'Regular user ID (987654321) rejected');
+
+    process.env.ADMIN_TELEGRAM_IDS = '2022247489';
+    assert(isTelegramAdmin(2022247489) === true, 'Explicitly configured admin ID (2022247489) granted access');
+    assert(isTelegramAdmin(99999999) === false, 'Arbitrary user ID strictly rejected');
   }
 
   /* ------------------------------------------------------------------

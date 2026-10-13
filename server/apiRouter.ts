@@ -160,8 +160,11 @@ async function extractTelegramUser(req: Request, res: Response, next: NextFuncti
     return res.status(403).json({ error: 'Your account is suspended. Contact support.' });
   }
 
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const hasLiveBot = Boolean(botToken && !botToken.includes('ABCdefGHIjklMNOpqrSTUvwxYZ'));
+
   (req as any).user = user;
-  (req as any).isAdmin = isTelegramAdmin(user.telegramId);
+  (req as any).isAdmin = isTelegramAdmin(user.telegramId) && (!hasLiveBot || !result.isSimulated);
   (req as any).isSimulatedAuth = result.isSimulated;
   next();
 }
@@ -170,11 +173,24 @@ async function extractTelegramUser(req: Request, res: Response, next: NextFuncti
  * Admin Access Gate
  */
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (!(req as any).isAdmin) {
+  const user = (req as any).user as UserProfile;
+  const isSimulated = Boolean((req as any).isSimulatedAuth);
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const hasLiveBot = Boolean(botToken && !botToken.includes('ABCdefGHIjklMNOpqrSTUvwxYZ'));
+
+  if (!user || !(req as any).isAdmin || !isTelegramAdmin(user.telegramId)) {
     return res.status(403).json({
       error: 'Access denied: You are not authorized as an administrator for this bot.',
     });
   }
+
+  // Deny simulated admin operations when live bot credentials are configured
+  if (hasLiveBot && isSimulated) {
+    return res.status(403).json({
+      error: 'Access denied: Admin operations require verified Telegram client credentials.',
+    });
+  }
+
   next();
 }
 
@@ -418,7 +434,9 @@ apiRouter.post('/auth/verify-telegram', async (req, res) => {
       await saveUser(user);
     }
 
-    const isAdmin = isTelegramAdmin(user.telegramId);
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    const hasLiveBot = Boolean(botToken && !botToken.includes('ABCdefGHIjklMNOpqrSTUvwxYZ'));
+    const isAdmin = isTelegramAdmin(user.telegramId) && (!hasLiveBot || !verification.isSimulated);
 
     res.json({
       success: true,

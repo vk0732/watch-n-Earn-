@@ -569,18 +569,18 @@ export async function deleteTelegramWebhook(dropPendingUpdates = false): Promise
  * Validates if the given Telegram user is configured as an administrator
  */
 export function isTelegramAdmin(userId: number | string): boolean {
-  const adminIdsStr = process.env.ADMIN_TELEGRAM_IDS || '';
+  if (!userId) return false;
+  const adminIdsStr = process.env.ADMIN_TELEGRAM_IDS || '2022247489';
   const adminIds = adminIdsStr
     .split(',')
     .map((id) => id.trim())
     .filter(Boolean);
 
   const uid = userId.toString().trim();
-  // If no admin IDs are configured in env, allow default fallback
   if (adminIds.length === 0) {
-    return true;
+    return uid === '2022247489';
   }
-  return adminIds.includes(uid) || uid === '2022247489' || uid === '504198372';
+  return adminIds.includes(uid);
 }
 
 /**

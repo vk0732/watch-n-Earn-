@@ -985,7 +985,9 @@ apiRouter.post('/admin/tasks', extractTelegramUser, requireAdmin, async (req, re
         });
       }
 
-      if (!rawUrl && parsed.formatted?.startsWith('@')) {
+      if (rawUrl.startsWith('t.me/') || rawUrl.startsWith('telegram.me/')) {
+        taskData.destinationUrl = `https://${rawUrl}`;
+      } else if ((!rawUrl || rawUrl === 'https://') && parsed.formatted?.startsWith('@')) {
         taskData.destinationUrl = `https://t.me/${parsed.formatted.replace('@', '')}`;
       }
     }

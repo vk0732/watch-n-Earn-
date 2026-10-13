@@ -439,6 +439,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       }
 
       let finalJoinUrl = rawUrl;
+      if (finalJoinUrl.startsWith('t.me/') || finalJoinUrl.startsWith('telegram.me/')) {
+        finalJoinUrl = `https://${finalJoinUrl}`;
+      }
       if ((!finalJoinUrl || finalJoinUrl === 'https://') && formattedId.startsWith('@')) {
         finalJoinUrl = `https://t.me/${formattedId.replace('@', '')}`;
       } else if (
@@ -2372,260 +2375,165 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
           {/* Edit/Create Task Modal */}
           {editingTask && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
               <form
                 onSubmit={handleSaveTask}
-                className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4 shadow-2xl"
+                className="w-full max-w-md max-h-[92vh] sm:max-h-[88vh] flex flex-col bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden my-auto"
               >
-                <h3 className="text-base font-bold text-white">
-                  {editingTask.id ? 'Edit Task' : 'Create Watch & Earn Task'}
-                </h3>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Title</label>
-                  <input
-                    type="text"
-                    value={editingTask.title || ''}
-                    onChange={(e) => setEditingTask({ ...editingTask, title: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                    required
-                  />
+                {/* Modal Header */}
+                <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-900">
+                  <h3 className="text-sm sm:text-base font-bold text-white">
+                    {editingTask.id ? 'Edit Task' : 'Create Watch & Earn Task'}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setEditingTask(null)}
+                    className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
+                    aria-label="Close"
+                  >
+                    <XCircle className="w-5 h-5" />
+                  </button>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Description</label>
-                  <textarea
-                    value={editingTask.description || ''}
-                    onChange={(e) => setEditingTask({ ...editingTask, description: e.target.value })}
-                    rows={2}
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
+
+                {/* Modal Scrollable Body */}
+                <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Reward (₹ Coins)</label>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Title</label>
                     <input
-                      type="number"
-                      step="1"
-                      min="1"
-                      value={editingTask.rewardAmount || ''}
-                      onChange={(e) => setEditingTask({ ...editingTask, rewardAmount: Number(e.target.value) })}
+                      type="text"
+                      value={editingTask.title || ''}
+                      onChange={(e) => setEditingTask({ ...editingTask, title: e.target.value })}
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
                       required
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Task Type</label>
-                    <select
-                      value={editingTask.taskType || 'video'}
-                      onChange={(e) => {
-                        const newType = e.target.value as any;
-                        setEditingTask({
-                          ...editingTask,
-                          taskType: newType,
-                          timerSeconds: newType === 'channel' ? 0 : editingTask.timerSeconds || 15,
-                        });
-                      }}
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-bold"
-                    >
-                      <option value="video">Video</option>
-                      <option value="website">Website</option>
-                      <option value="channel">Channel</option>
-                      <option value="social">Social</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(editingTask.isActive)}
-                      onChange={(e) => setEditingTask({ ...editingTask, isActive: e.target.checked })}
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Description</label>
+                    <textarea
+                      value={editingTask.description || ''}
+                      onChange={(e) => setEditingTask({ ...editingTask, description: e.target.value })}
+                      rows={2}
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
                     />
-                    <span>Active Task (Visible to users)</span>
-                  </label>
-                </div>
-
-                {/* ================= TYPE-SPECIFIC FIELDS ================= */}
-                {/* 1. CHANNEL TASK FIELDS */}
-                {editingTask.taskType === 'channel' && (
-                  <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-700/80 rounded-xl">
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-xs font-semibold text-emerald-400">
-                          Channel Username or Numeric Chat ID
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => handleTestChannelAccess(editingTask.channelId || '')}
-                          disabled={testingAccess || !editingTask.channelId}
-                          className="text-[11px] font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-2 py-0.5 rounded border border-blue-500/30 transition disabled:opacity-50"
-                        >
-                          {testingAccess ? 'Testing...' : 'Test Bot Access'}
-                        </button>
-                      </div>
-                      <input
-                        type="text"
-                        placeholder="e.g. @teleearnofficial or -1001234567890"
-                        value={editingTask.channelId || ''}
-                        onChange={(e) => setEditingTask({ ...editingTask, channelId: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
-                        required
-                      />
-                      <p className="text-[10px] text-slate-400 mt-1">
-                        For private channels: Enter numeric ID starting with <code className="text-amber-400 font-mono">-100...</code>
-                      </p>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">
-                        Telegram Join URL (Public link or Private Invite Link)
-                      </label>
-                      <input
-                        type="url"
-                        placeholder="https://t.me/teleearnofficial or https://t.me/+inviteCode"
-                        value={editingTask.destinationUrl || ''}
-                        onChange={(e) => setEditingTask({ ...editingTask, destinationUrl: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
-                        required
-                      />
-                      <p className="text-[10px] text-slate-400 mt-1">
-                        For private channels, paste the full invite link (e.g. <code className="text-slate-300 font-mono">https://t.me/+...</code>)
-                      </p>
-                    </div>
-                    <div className="text-[11px] text-amber-400/90 bg-amber-500/10 p-2.5 rounded-lg border border-amber-500/20 leading-relaxed">
-                      💡 <strong>Telegram Bot API Requirement:</strong> The bot checks membership using <code>getChatMember</code> with the numeric Channel ID. Ensure your bot is an Administrator in this channel with &quot;View members&quot; permissions.
-                    </div>
                   </div>
-                )}
-
-                {/* 2. VIDEO TASK FIELDS */}
-                {editingTask.taskType === 'video' && (
-                  <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-700/80 rounded-xl">
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-red-400 mb-1">Video URL</label>
-                      <input
-                        type="url"
-                        placeholder="https://youtube.com/watch?v=..."
-                        value={editingTask.destinationUrl || ''}
-                        onChange={(e) => setEditingTask({ ...editingTask, destinationUrl: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">
-                        Required Watch Timer (Seconds)
-                      </label>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Reward (₹ Coins)</label>
                       <input
                         type="number"
                         step="1"
                         min="1"
-                        value={editingTask.timerSeconds || 15}
-                        onChange={(e) => setEditingTask({ ...editingTask, timerSeconds: Number(e.target.value) })}
+                        value={editingTask.rewardAmount || ''}
+                        onChange={(e) => setEditingTask({ ...editingTask, rewardAmount: Number(e.target.value) })}
                         className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
                         required
                       />
                     </div>
-                  </div>
-                )}
-
-                {/* 3. WEBSITE TASK FIELDS */}
-                {editingTask.taskType === 'website' && (
-                  <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-700/80 rounded-xl">
                     <div>
-                      <label className="block text-xs font-semibold text-blue-400 mb-1">Website URL</label>
-                      <input
-                        type="url"
-                        placeholder="https://example.com"
-                        value={editingTask.destinationUrl || ''}
-                        onChange={(e) => setEditingTask({ ...editingTask, destinationUrl: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">
-                        Required Visit Timer (Seconds)
-                      </label>
-                      <input
-                        type="number"
-                        step="1"
-                        min="1"
-                        value={editingTask.timerSeconds || 15}
-                        onChange={(e) => setEditingTask({ ...editingTask, timerSeconds: Number(e.target.value) })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                        required
-                      />
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Task Type</label>
+                      <select
+                        value={editingTask.taskType || 'video'}
+                        onChange={(e) => {
+                          const newType = e.target.value as any;
+                          setEditingTask({
+                            ...editingTask,
+                            taskType: newType,
+                            timerSeconds: newType === 'channel' ? 0 : editingTask.timerSeconds || 15,
+                            destinationUrl:
+                              newType === 'channel' && editingTask.destinationUrl === 'https://'
+                                ? ''
+                                : editingTask.destinationUrl,
+                          });
+                        }}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-bold"
+                      >
+                        <option value="video">Video</option>
+                        <option value="website">Website</option>
+                        <option value="channel">Channel</option>
+                        <option value="social">Social</option>
+                      </select>
                     </div>
                   </div>
-                )}
 
-                {/* 4. SOCIAL TASK FIELDS */}
-                {editingTask.taskType === 'social' && (
-                  <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-700/80 rounded-xl">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-pink-400 mb-1">Social Platform</label>
-                        <select
-                          value={editingTask.socialPlatform || 'youtube'}
-                          onChange={(e) => setEditingTask({ ...editingTask, socialPlatform: e.target.value as any })}
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-semibold"
-                        >
-                          <option value="youtube">YouTube</option>
-                          <option value="twitter">X / Twitter</option>
-                          <option value="instagram">Instagram</option>
-                          <option value="telegram">Telegram</option>
-                          <option value="discord">Discord</option>
-                          <option value="facebook">Facebook</option>
-                          <option value="other">Other Platform</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Verification Method</label>
-                        <select
-                          value={editingTask.verificationMethod || ''}
-                          onChange={(e) => setEditingTask({ ...editingTask, verificationMethod: e.target.value as any })}
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                        >
-                          <option value="">Direct Action Confirmation (Instant)</option>
-                          <option value="manual_review">Manual Review (User Handle)</option>
-                          <option value="code_confirmation">Secret Verification Code</option>
-                          <option value="timer">Engagement Timer</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Target Social URL</label>
+                  <div>
+                    <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
                       <input
-                        type="url"
-                        placeholder="https://x.com/... or https://instagram.com/..."
-                        value={editingTask.destinationUrl || ''}
-                        onChange={(e) => setEditingTask({ ...editingTask, destinationUrl: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
-                        required
+                        type="checkbox"
+                        checked={Boolean(editingTask.isActive)}
+                        onChange={(e) => setEditingTask({ ...editingTask, isActive: e.target.checked })}
                       />
-                    </div>
+                      <span>Active Task (Visible to users)</span>
+                    </label>
+                  </div>
 
-                    {editingTask.verificationMethod === 'code_confirmation' && (
+                  {/* ================= TYPE-SPECIFIC FIELDS ================= */}
+                  {/* 1. CHANNEL TASK FIELDS */}
+                  {editingTask.taskType === 'channel' && (
+                    <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-700/80 rounded-xl">
                       <div>
-                        <label className="block text-xs font-semibold text-amber-400 mb-1">
-                          Secret Code (In Post Description)
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-xs font-semibold text-emerald-400">
+                            Channel Username or Numeric Chat ID
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => handleTestChannelAccess(editingTask.channelId || '')}
+                            disabled={testingAccess || !editingTask.channelId}
+                            className="text-[11px] font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-2 py-0.5 rounded border border-blue-500/30 transition disabled:opacity-50"
+                          >
+                            {testingAccess ? 'Testing...' : 'Test Bot Access'}
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="e.g. @teleearnofficial or -1001234567890"
+                          value={editingTask.channelId || ''}
+                          onChange={(e) => setEditingTask({ ...editingTask, channelId: e.target.value })}
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                          required
+                        />
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          For private channels: Enter numeric ID starting with <code className="text-amber-400 font-mono">-100...</code>
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">
+                          Telegram Join URL (Public link or Private Invite Link)
                         </label>
                         <input
                           type="text"
-                          placeholder="e.g. SECRET2025"
-                          value={editingTask.verificationCode || ''}
-                          onChange={(e) => setEditingTask({ ...editingTask, verificationCode: e.target.value })}
+                          placeholder="https://t.me/teleearnofficial or https://t.me/+inviteCode"
+                          value={editingTask.destinationUrl === 'https://' ? '' : (editingTask.destinationUrl || '')}
+                          onChange={(e) => setEditingTask({ ...editingTask, destinationUrl: e.target.value })}
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                        />
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          For private channels, paste the full invite link (e.g. <code className="text-slate-300 font-mono">https://t.me/+...</code>)
+                        </p>
+                      </div>
+                      <div className="text-[11px] text-amber-400/90 bg-amber-500/10 p-2.5 rounded-lg border border-amber-500/20 leading-relaxed">
+                        💡 <strong>Telegram Bot API Requirement:</strong> The bot checks membership using <code>getChatMember</code> with the numeric Channel ID. Ensure your bot is an Administrator in this channel with &quot;View members&quot; permissions.
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 2. VIDEO TASK FIELDS */}
+                  {editingTask.taskType === 'video' && (
+                    <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-700/80 rounded-xl">
+                      <div>
+                        <label className="block text-xs font-semibold text-red-400 mb-1">Video URL</label>
+                        <input
+                          type="url"
+                          placeholder="https://youtube.com/watch?v=..."
+                          value={editingTask.destinationUrl || ''}
+                          onChange={(e) => setEditingTask({ ...editingTask, destinationUrl: e.target.value })}
                           className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
                           required
                         />
                       </div>
-                    )}
-
-                    {editingTask.verificationMethod === 'timer' && (
                       <div>
                         <label className="block text-xs font-semibold text-slate-300 mb-1">
-                          Engagement Timer (Seconds)
+                          Required Watch Timer (Seconds)
                         </label>
                         <input
                           type="number"
@@ -2637,26 +2545,141 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                           required
                         />
                       </div>
-                    )}
+                    </div>
+                  )}
 
-                    {editingTask.verificationMethod === 'manual_review' && (
-                      <div className="text-[11px] text-blue-400/90 bg-blue-500/10 p-2 rounded-lg border border-blue-500/20">
-                        Users will submit their social username / profile link for verification.
+                  {/* 3. WEBSITE TASK FIELDS */}
+                  {editingTask.taskType === 'website' && (
+                    <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-700/80 rounded-xl">
+                      <div>
+                        <label className="block text-xs font-semibold text-blue-400 mb-1">Website URL</label>
+                        <input
+                          type="url"
+                          placeholder="https://example.com"
+                          value={editingTask.destinationUrl || ''}
+                          onChange={(e) => setEditingTask({ ...editingTask, destinationUrl: e.target.value })}
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                          required
+                        />
                       </div>
-                    )}
-                  </div>
-                )}
-                <div className="flex gap-2 pt-2">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">
+                          Required Visit Timer (Seconds)
+                        </label>
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          value={editingTask.timerSeconds || 15}
+                          onChange={(e) => setEditingTask({ ...editingTask, timerSeconds: Number(e.target.value) })}
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                          required
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 4. SOCIAL TASK FIELDS */}
+                  {editingTask.taskType === 'social' && (
+                    <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-700/80 rounded-xl">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-pink-400 mb-1">Social Platform</label>
+                          <select
+                            value={editingTask.socialPlatform || 'youtube'}
+                            onChange={(e) => setEditingTask({ ...editingTask, socialPlatform: e.target.value as any })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-semibold"
+                          >
+                            <option value="youtube">YouTube</option>
+                            <option value="twitter">X / Twitter</option>
+                            <option value="instagram">Instagram</option>
+                            <option value="telegram">Telegram</option>
+                            <option value="discord">Discord</option>
+                            <option value="facebook">Facebook</option>
+                            <option value="other">Other Platform</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">Verification Method</label>
+                          <select
+                            value={editingTask.verificationMethod || ''}
+                            onChange={(e) => setEditingTask({ ...editingTask, verificationMethod: e.target.value as any })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                          >
+                            <option value="">Direct Action Confirmation (Instant)</option>
+                            <option value="manual_review">Manual Review (User Handle)</option>
+                            <option value="code_confirmation">Secret Verification Code</option>
+                            <option value="timer">Engagement Timer</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Target Social URL</label>
+                        <input
+                          type="url"
+                          placeholder="https://x.com/... or https://instagram.com/..."
+                          value={editingTask.destinationUrl || ''}
+                          onChange={(e) => setEditingTask({ ...editingTask, destinationUrl: e.target.value })}
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                          required
+                        />
+                      </div>
+
+                      {editingTask.verificationMethod === 'code_confirmation' && (
+                        <div>
+                          <label className="block text-xs font-semibold text-amber-400 mb-1">
+                            Secret Code (In Post Description)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. SECRET2025"
+                            value={editingTask.verificationCode || ''}
+                            onChange={(e) => setEditingTask({ ...editingTask, verificationCode: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                            required
+                          />
+                        </div>
+                      )}
+
+                      {editingTask.verificationMethod === 'timer' && (
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">
+                            Engagement Timer (Seconds)
+                          </label>
+                          <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            value={editingTask.timerSeconds || 15}
+                            onChange={(e) => setEditingTask({ ...editingTask, timerSeconds: Number(e.target.value) })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                            required
+                          />
+                        </div>
+                      )}
+
+                      {editingTask.verificationMethod === 'manual_review' && (
+                        <div className="text-[11px] text-blue-400/90 bg-blue-500/10 p-2 rounded-lg border border-blue-500/20">
+                          Users will submit their social username / profile link for verification.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Modal Fixed/Sticky Footer */}
+                <div className="p-3.5 sm:p-4 bg-slate-900 border-t border-slate-800 flex gap-2 shrink-0 sticky bottom-0 z-10 shadow-lg">
                   <button
                     type="button"
                     onClick={() => setEditingTask(null)}
-                    className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl"
+                    className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl"
+                    className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-xs rounded-xl shadow-lg shadow-red-600/30 transition flex items-center justify-center gap-1.5"
                   >
                     Save Task
                   </button>

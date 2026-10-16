@@ -3053,7 +3053,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   <div className="text-xs text-slate-700 grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-xl">
                     <div>User ID: <span className="font-mono text-white">{w.userId}</span></div>
                     <div>Username: <span className="text-white">@{w.username || 'unknown'}</span></div>
-                    <div>UPI Address: <span className="font-mono text-emerald-300 font-bold">{w.upiId}</span></div>
+                    {w.giftCardCode ? (
+                      <div>Gift Card Code: <span className="font-mono text-amber-500 font-bold">{w.giftCardCode}</span></div>
+                    ) : (
+                      <div>Fulfillment: <span className="font-bold text-slate-800">Gift Card Voucher</span></div>
+                    )}
                     <div>Requested: <span className="text-slate-500">{new Date(w.createdAt).toLocaleString()}</span></div>
                     {w.payoutTransactionId && (
                       <div className="col-span-2">

@@ -828,46 +828,28 @@ apiRouter.get('/referrals/stats', extractTelegramUser, async (req, res) => {
 });
 
 /* ========================================================
-   WITHDRAWALS & UPI PAYOUT
+   WITHDRAWALS & INSTANT AMAZON GIFT CARD REDEMPTION
    ======================================================== */
 apiRouter.post('/withdrawals/create', extractTelegramUser, requireLiveChannelMembership, async (req, res) => {
   try {
     const user = (req as any).user as UserProfile;
-    const { amount, upiId } = req.body;
+    const { amount } = req.body;
 
     const numAmount = amount !== undefined && amount !== null && amount !== '' ? Number(amount) : undefined;
     if (numAmount !== undefined && (isNaN(numAmount) || numAmount <= 0)) {
       return res.status(400).json({ error: 'Please enter a valid withdrawal amount.' });
     }
 
-    // If no upiId provided: Instant Amazon Gift Card Code redemption
-    if (!upiId) {
-      const result = await redeemGiftCardWithdrawal(user.id, numAmount);
-      return res.json({
-        success: true,
-        orderId: result.withdrawal.id,
-        giftCardCode: result.giftCardCode,
-        denomination: result.withdrawal.giftCardDenomination,
-        withdrawal: result.withdrawal,
-        remainingBalance: result.user.balance,
-        message: 'Amazon Gift Card Code redeemed successfully!',
-      });
-    }
-
-    // If upiId provided (legacy fallback / automated tests):
-    const upiCheck = validateUpiId(upiId);
-    if (!upiCheck.isValid) {
-      return res.status(400).json({ error: upiCheck.error });
-    }
-
-    const result = await createWithdrawalRequest(user.id, numAmount || 10, upiId.trim());
-
-    res.json({
+    // Every withdrawal is fulfilled instantly via Amazon Gift Card Code redemption
+    const result = await redeemGiftCardWithdrawal(user.id, numAmount);
+    return res.json({
       success: true,
       orderId: result.withdrawal.id,
+      giftCardCode: result.giftCardCode,
+      denomination: result.withdrawal.giftCardDenomination,
       withdrawal: result.withdrawal,
       remainingBalance: result.user.balance,
-      message: `Withdrawal request for ₹${numAmount || 10} submitted successfully! Your order is Pending review.`,
+      message: 'Amazon Gift Card Code redeemed successfully!',
     });
   } catch (err: any) {
     res.status(400).json({ error: err.message });

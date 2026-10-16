@@ -204,17 +204,15 @@ export const WalletView: React.FC<WalletViewProps> = ({
                     <span className="text-sm font-black text-slate-900">₹{w.amount.toFixed(2)}</span>
                     <span className="text-[10px] text-slate-400 font-mono">({w.id})</span>
                   </div>
-                  {w.giftCardCode ? (
-                    <div className="flex items-center gap-1.5 text-xs text-amber-800 font-semibold">
-                      <Gift className="w-3.5 h-3.5 text-amber-600" />
-                      <span>Amazon Gift Card</span>
+                  <div className="flex items-center gap-1.5 text-xs text-amber-800 font-semibold">
+                    <Gift className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Amazon Gift Card</span>
+                    {w.giftCardCode && (
                       <span className="bg-amber-50 border border-amber-200 text-amber-900 px-1.5 py-0.2 rounded font-mono text-[11px]">
                         {w.giftCardCode.length > 8 ? `${w.giftCardCode.slice(0, 4)}••••` : w.giftCardCode}
                       </span>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-slate-600">UPI: <span className="text-slate-900 font-mono font-medium">{w.upiId || 'Standard Payout'}</span></p>
-                  )}
+                    )}
+                  </div>
                   <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
                     {new Date(w.createdAt).toLocaleString()}
                   </p>
@@ -315,12 +313,12 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 <span className="text-slate-400">Amount:</span>
                 <span className="font-bold text-emerald-700 text-sm">₹{selectedWithdrawal.amount.toFixed(2)}</span>
               </div>
-              {selectedWithdrawal.upiId && !selectedWithdrawal.giftCardCode && (
-                <div className="flex justify-between py-1 border-b border-slate-100">
-                  <span className="text-slate-400">UPI Address:</span>
-                  <span className="font-mono text-slate-900 font-medium">{selectedWithdrawal.upiId}</span>
-                </div>
-              )}
+              <div className="flex justify-between py-1 border-b border-slate-100">
+                <span className="text-slate-400">Method:</span>
+                <span className="text-slate-900 font-medium flex items-center gap-1">
+                  <Gift className="w-3.5 h-3.5 text-amber-600" /> Amazon Gift Card
+                </span>
+              </div>
               <div className="flex justify-between py-1 border-b border-slate-100">
                 <span className="text-slate-400">Status:</span>
                 <span>{getStatusBadge(selectedWithdrawal.status)}</span>

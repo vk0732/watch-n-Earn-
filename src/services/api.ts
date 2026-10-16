@@ -146,18 +146,18 @@ export const api = {
     }>('/referrals/stats'),
 
   // Withdrawals & Gift Card Code Redemption
-  requestWithdrawal: (amount?: number, upiId?: string) =>
+  requestWithdrawal: (amount?: number) =>
     request<{
       success: boolean;
       orderId: string;
-      giftCardCode?: string;
+      giftCardCode: string;
       denomination?: number;
       withdrawal: Withdrawal;
       remainingBalance: number;
       message: string;
     }>('/withdrawals/create', {
       method: 'POST',
-      body: JSON.stringify({ amount, upiId }),
+      body: JSON.stringify({ amount }),
     }),
 
   redeemGiftCard: (amount?: number) =>

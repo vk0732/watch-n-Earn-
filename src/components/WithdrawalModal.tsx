@@ -19,7 +19,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   onClose,
   onSuccess,
 }) => {
-  const [amount, setAmount] = useState<string>(minWithdrawal.toString());
+  const [amount, setAmount] = useState<string>(minWithdrawal ? minWithdrawal.toString() : '10');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -29,6 +29,22 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     denomination: number;
     message: string;
   } | null>(null);
+
+  React.useEffect(() => {
+    if (minWithdrawal) {
+      setAmount(minWithdrawal.toString());
+    }
+  }, [minWithdrawal]);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setError(null);
+      setSuccessResult(null);
+      if (minWithdrawal) {
+        setAmount(minWithdrawal.toString());
+      }
+    }
+  }, [isOpen, minWithdrawal]);
 
   if (!isOpen) return null;
 

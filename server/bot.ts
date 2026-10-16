@@ -414,7 +414,7 @@ async function handleStartCommand(
   }
 
   // 4. All channels joined: Display Open App & Dashboard
-  const welcomeText = `🚀 <b>Welcome to TeleEarn!</b>\n\n💰 <b>Your Available Balance:</b> ₹${user.balance.toFixed(2)}\n🎁 <b>Signup Bonus:</b> Credited!\n\nEarn money by watching videos, visiting partner sites, and inviting friends!\nWithdraw directly to your <b>UPI ID</b> anytime.`;
+  const welcomeText = `🚀 <b>Welcome to TeleEarn!</b>\n\n💰 <b>Your Available Balance:</b> ₹${user.balance.toFixed(2)}\n🎁 <b>Signup Bonus:</b> Credited!\n\nEarn money by watching videos, visiting partner sites, and inviting friends!\nRedeem instant <b>Amazon Gift Cards</b> directly to your account anytime.`;
 
   const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
 
@@ -611,7 +611,7 @@ async function handleCallbackQuery(
 }
 
 async function handleHelpCommand(chatId: number, appUrl: string) {
-  const helpText = `📖 <b>TeleEarn Help & Commands</b>\n\n• /start - Launch bot and open dashboard\n• /balance - Check current cash balance\n• /help - View this help menu\n\n<b>How to Earn:</b>\n1. Open the Mini App\n2. Complete Watch & Earn tasks\n3. Claim Daily Check-In\n4. Share your referral link for +₹25 per friend!\n5. Request withdrawals to your UPI ID once you reach ₹100.`;
+  const helpText = `📖 <b>TeleEarn Help & Commands</b>\n\n• /start - Launch bot and open dashboard\n• /balance - Check current cash balance\n• /help - View this help menu\n\n<b>How to Earn:</b>\n1. Open the Mini App\n2. Complete Watch & Earn tasks\n3. Claim Daily Check-In\n4. Share your referral link for +₹25 per friend!\n5. Redeem instant Amazon Gift Cards once you reach the minimum balance.`;
   await sendTelegramMessage(chatId, helpText);
 }
 

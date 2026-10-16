@@ -77,7 +77,7 @@ export const memStore = {
       welcomeMessage:
         '🎁 <b>Welcome to TeleEarn!</b>\n\n💰 <b>Complete Tasks & Earn Rewards</b>\n⚡ Simple Tasks • Exciting Rewards\n\n🚀 Start your earning journey today!',
       forceJoinPrompt:
-        '⚠️ <b>Mandatory Channel Verification</b>\n\nTo unlock task earnings and UPI withdrawals, please join our official sponsor channels:\n\n{channels}\n\nTap "Verify Membership" once joined!',
+        '⚠️ <b>Mandatory Channel Verification</b>\n\nTo unlock task earnings and gift card redemptions, please join our official sponsor channels:\n\n{channels}\n\nTap "Verify Membership" once joined!',
       dailyRewardClaimed:
         '🎉 <b>Daily Streak Claimed!</b>\n\nYou received <b>+₹{amount}</b> for Day {streak}! Come back tomorrow for higher rewards.',
       taskCompleted:
@@ -85,11 +85,11 @@ export const memStore = {
       referralSuccess:
         '🤝 <b>New Referral Joined!</b>\n\nUser @{referee} joined using your invite link!\nYou earned <b>+₹{amount}</b> instant reward.',
       withdrawalReceived:
-        '📤 <b>Withdrawal Request Submitted</b>\n\nAmount: <b>₹{amount}</b>\nUPI ID: <code>{upi_id}</code>\nOrder ID: <code>{order_id}</code>\nStatus: <b>Pending Review</b>',
+        '📤 <b>Gift Card Redemption Received</b>\n\nAmount: <b>₹{amount}</b>\nOrder ID: <code>{order_id}</code>\nStatus: <b>Processing Code Allocation</b>',
       withdrawalApproved:
-        '✅ <b>Withdrawal Paid!</b>\n\nAmount: <b>₹{amount}</b> sent to UPI <code>{upi_id}</code>\nOrder ID: <code>{order_id}</code>\nTxn ID: <code>{txn_id}</code>',
+        '✅ <b>Gift Card Delivered!</b>\n\nAmount: <b>₹{amount}</b> Amazon Gift Card\nCode: <code>{gift_card_code}</code>\nOrder ID: <code>{order_id}</code>',
       payoutProofBroadcast:
-        '💸 <b>NEW UPI CASHBACK PAID!</b>\n\n👤 Recipient: {masked_user}\n💰 Amount: <b>₹{amount}</b>\n💳 Destination: <code>{masked_upi}</code>\n🆔 Order ID: <code>{order_id}</code>\n⚡ Status: <b>SUCCESS (Verified)</b>\n\n🤖 <i>Earn daily with TeleEarn Bot!</i>',
+        '🎁 <b>NEW AMAZON GIFT CARD REDEEMED!</b>\n\n👤 Recipient: {masked_user}\n💰 Amount: <b>₹{amount}</b>\n🏷️ Method: <b>Amazon Gift Card Code</b>\n🆔 Order ID: <code>{order_id}</code>\n⚡ Status: <b>SUCCESS (Delivered)</b>\n\n🤖 <i>Earn daily with TeleEarn Bot!</i>',
     },
   } as AppSettings,
   auditLogs: [] as AdminAuditLog[],
@@ -1050,138 +1050,14 @@ export async function recordReferral(referral: ReferralRecord): Promise<Referral
 }
 
 /* ========================================================
-   WITHDRAWALS & UPI ATOMICS
+   WITHDRAWALS & AMAZON GIFT CARD CODE REDEMPTION
    ======================================================== */
 export async function createWithdrawalRequest(
   userId: string,
   amount: number,
-  upiId?: string
-): Promise<{ withdrawal: Withdrawal; transaction: Transaction; user: UserProfile; giftCardCode?: string }> {
-  if (!upiId) {
-    return await redeemGiftCardWithdrawal(userId, amount);
-  }
-
-  // Concurrency isolation: Acquire per-user lock to prevent race conditions & limit bypass
-  const releaseLock = await acquireLock(`user_withdrawal_${userId}`);
-
-  try {
-    const user = await getUser(userId);
-    if (!user) throw new Error('User not found');
-    if (user.isBanned) throw new Error('Account suspended');
-
-    const settings = await getAppSettings();
-
-    // 1. Minimum withdrawal check
-    if (amount < settings.minWithdrawalAmount) {
-      throw new Error(`Minimum withdrawal amount is ₹${settings.minWithdrawalAmount}`);
-    }
-
-    // 2. Maximum withdrawal limit check (if configured and > 0)
-    if (settings.maxWithdrawalAmount && settings.maxWithdrawalAmount > 0) {
-      if (amount > settings.maxWithdrawalAmount) {
-        throw new Error(
-          `Withdrawal amount exceeds the allowed maximum limit of ₹${settings.maxWithdrawalAmount}. Please enter an amount up to ₹${settings.maxWithdrawalAmount}.`
-        );
-      }
-    }
-
-    // 3. Rolling 24-Hour Withdrawal Limits
-    if (settings.dailyWithdrawalLimitEnabled) {
-      const nowMs = Date.now();
-      const windowStartMs = nowMs - 24 * 60 * 60 * 1000;
-
-      // Retrieve all existing user withdrawals
-      const userWithdrawals = await getUserWithdrawals(userId);
-
-      // Eligible statuses for rolling 24h window:
-      // Count pending, processing, and success (completed).
-      // EXCLUDE rejected, failed, and reversed (per requirement: do not count failed or reversed payouts as completed payouts; prevent pending requests from being used to bypass limits).
-      const activeWindowWithdrawals = userWithdrawals.filter((w) => {
-        const isEligibleStatus =
-          w.status === 'pending' || w.status === 'processing' || w.status === 'success';
-        if (!isEligibleStatus) return false;
-        const createdAtMs = new Date(w.createdAt).getTime();
-        return createdAtMs >= windowStartMs;
-      });
-
-      // A. Maximum requests per 24 hours
-      const maxReqs = settings.maxWithdrawalRequestsPer24h;
-      if (maxReqs && maxReqs > 0) {
-        if (activeWindowWithdrawals.length >= maxReqs) {
-          throw new Error(
-            `Daily withdrawal request limit reached. You can make at most ${maxReqs} withdrawal request(s) in a 24-hour period.`
-          );
-        }
-      }
-
-      // B. Maximum total amount per 24 hours
-      const maxDailyAmount = settings.maxWithdrawalAmountPer24h;
-      if (maxDailyAmount && maxDailyAmount > 0) {
-        const currentDailySum = activeWindowWithdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
-        if (currentDailySum + amount > maxDailyAmount) {
-          const remainingDailyAllowance = Math.max(0, maxDailyAmount - currentDailySum);
-          throw new Error(
-            `Daily withdrawal amount limit reached. Your 24-hour limit is ₹${maxDailyAmount}. You have already withdrawn/requested ₹${currentDailySum.toFixed(
-              2
-            )} in the past 24 hours (remaining: ₹${remainingDailyAllowance.toFixed(2)}).`
-          );
-        }
-      }
-    }
-
-    if (user.balance < amount) {
-      throw new Error(`Insufficient balance. Available: ₹${user.balance.toFixed(2)}, Requested: ₹${amount}`);
-    }
-
-  // Atomically deduct balance
-  const newBalance = Math.round((user.balance - amount) * 100) / 100;
-  const orderId = `WTH-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-
-  const withdrawal: Withdrawal = {
-    id: orderId,
-    userId,
-    userTelegramId: user.telegramId,
-    username: user.username || '',
-    amount,
-    upiId,
-    status: 'pending',
-    createdAt: new Date().toISOString(),
-  };
-
-  const updatedUser: UserProfile = {
-    ...user,
-    balance: newBalance,
-    updatedAt: new Date().toISOString(),
-  };
-
-  const txId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const transaction: Transaction = {
-    id: txId,
-    userId,
-    type: 'withdrawal_deduct',
-    amount: -amount,
-    description: `Withdrawal request to UPI: ${upiId} (Order: ${orderId})`,
-    balanceAfter: newBalance,
-    referenceId: orderId,
-    createdAt: new Date().toISOString(),
-  };
-
-  memStore.users.set(userId, updatedUser);
-  memStore.withdrawals.set(orderId, withdrawal);
-  memStore.transactions.set(txId, transaction);
-
-  try {
-    await setDoc(doc(db, 'users', userId), cleanDocData(updatedUser), { merge: true });
-    await setDoc(doc(db, 'withdrawals', orderId), cleanDocData(withdrawal));
-    await setDoc(doc(db, 'transactions', txId), cleanDocData(transaction));
-  } catch (err) {
-    console.warn('[DB] createWithdrawalRequest Firestore sync fallback:', err);
-  }
-
-    return { withdrawal, transaction, user: updatedUser };
-  } finally {
-    releaseLock();
-  }
+  _deprecatedUpiId?: string
+): Promise<{ withdrawal: Withdrawal; transaction: Transaction; user: UserProfile; giftCardCode: string }> {
+  return await redeemGiftCardWithdrawal(userId, amount);
 }
 
 export async function getUserWithdrawals(userId: string): Promise<Withdrawal[]> {

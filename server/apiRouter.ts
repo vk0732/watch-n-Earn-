@@ -1256,48 +1256,9 @@ apiRouter.post('/admin/withdrawals/:orderId/action', extractTelegramUser, requir
     }
 
     if (action === 'process_payout') {
-      // Prevent duplicate payouts
-      if (target.status === 'success') {
-        releaseLock();
-        return res.status(400).json({ error: 'This withdrawal order is already marked as success. Duplicate payout blocked.' });
-      }
-      if (target.status === 'reversed') {
-        releaseLock();
-        return res.status(400).json({ error: 'This withdrawal order was reversed. Re-payout is not permitted.' });
-      }
-
-      // Run through payout gateway adapter
-      const payoutResult = await payoutGateway.executePayout(target);
-
-      const updated = await updateWithdrawalStatus(orderId, payoutResult.status, {
-        providerResponse: payoutResult.providerResponse,
-        failureReason: payoutResult.failureReason,
-        adminId: admin.id,
-      });
-
-      if (payoutResult.utr || payoutResult.providerOrderId) {
-        updated.payoutTransactionId = payoutResult.utr || payoutResult.providerOrderId;
-      }
-
-      await recordAdminAudit(
-        admin.id,
-        'DISPATCH_PAYOUT_GATEWAY',
-        `Dispatched order ${orderId} to payout provider. Result status: ${payoutResult.status}`
-      );
-
-      // If gateway confirmed immediate success, broadcast proof and notify user
-      if (updated.status === 'success') {
-        await broadcastPayoutProof(updated).catch(() => {});
-        await notifyUserWithdrawalResult(updated, true).catch(() => {});
-      } else if (updated.status === 'failed') {
-        await notifyUserWithdrawalResult(updated, false).catch(() => {});
-      }
-
       releaseLock();
-      return res.json({
-        success: true,
-        withdrawal: updated,
-        payoutResult,
+      return res.status(400).json({
+        error: 'UPI payouts are permanently disabled. All withdrawals are fulfilled exclusively via Amazon Gift Card Code redemption.',
       });
     }
 

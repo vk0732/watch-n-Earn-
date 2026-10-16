@@ -267,7 +267,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
       <div className="p-3.5 rounded-2xl bg-white border border-slate-200/80 flex items-center justify-between text-xs text-slate-500 shadow-2xs">
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-emerald-600" />
-          <span className="text-[11px]">Instant UPI Payouts Supported</span>
+          <span className="text-[11px]">Instant Amazon Gift Cards Supported</span>
         </div>
         <a
           href={`https://t.me/${settings.supportTelegramUsername || 'TeleEarnSupport'}`}

@@ -60,7 +60,7 @@ interface AdminViewProps {
 
 export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   const [activeTab, setActiveTab] = useState<
-    'stats' | 'giftcards' | 'gateway' | 'gamification' | 'withdrawals' | 'bot' | 'channels' | 'tasks' | 'settings' | 'users' | 'logs'
+    'stats' | 'giftcards' | 'gamification' | 'withdrawals' | 'bot' | 'channels' | 'tasks' | 'settings' | 'users' | 'logs'
   >('stats');
 
   // Gamification & Rewards State
@@ -70,7 +70,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
   // State
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [gatewayStatus, setGatewayStatus] = useState<any>(null);
 
   // Gift Card Inventory State
   const [gcStats, setGcStats] = useState<GiftCardInventoryStats | null>(null);
@@ -85,26 +84,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   const [gcActionId, setGcActionId] = useState<string | null>(null);
   const [gcCopiedId, setGcCopiedId] = useState<string | null>(null);
 
-  // Payment Gateway Settings State
-  const [gatewayConfig, setGatewayConfig] = useState<PaymentGatewayPublicConfig | null>(null);
-  const [gwLoading, setGwLoading] = useState(false);
-  const [gwSaving, setGwSaving] = useState(false);
-  const [gwTesting, setGwTesting] = useState(false);
-  const [gwTestResult, setGwTestResult] = useState<GatewayTestResult | null>(null);
-  const [showWipeCredsModal, setShowWipeCredsModal] = useState(false);
-  const [showSecretKey, setShowSecretKey] = useState(false);
-  const [showWebhookSecret, setShowWebhookSecret] = useState(false);
-  const [copiedWebhook, setCopiedWebhook] = useState(false);
-
-  // Payment Gateway Form fields
-  const [gwProvider, setGwProvider] = useState<string>('paynit');
-  const [gwEnv, setGwEnv] = useState<'test' | 'live'>('test');
-  const [gwPayoutsEnabled, setGwPayoutsEnabled] = useState<boolean>(false);
-  const [gwApiBaseUrl, setGwApiBaseUrl] = useState<string>('https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1');
-  const [gwApiKey, setGwApiKey] = useState<string>('');
-  const [gwApiSecret, setGwApiSecret] = useState<string>('');
-  const [gwMerchantId, setGwMerchantId] = useState<string>('');
-  const [gwWebhookSecret, setGwWebhookSecret] = useState<string>('');
   const [channels, setChannels] = useState<ForceJoinChannel[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -223,9 +202,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     setLoading(true);
     try {
       if (activeTab === 'stats') {
-        const res = await api.getAdminDashboard();
+        const [res, gcRes] = await Promise.all([
+          api.getAdminDashboard(),
+          api.getAdminGiftCardStats().catch(() => null),
+        ]);
         setStats(res.stats);
-        setGatewayStatus(res.gatewayStatus);
+        if (gcRes) setGcStats(gcRes.stats);
         setSettings(res.settings);
       } else if (activeTab === 'giftcards') {
         await loadGiftCardsData();
@@ -237,8 +219,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       } else if (activeTab === 'tasks') {
         const res = await api.getAdminTasks();
         setTasks(res.tasks || []);
-      } else if (activeTab === 'gateway') {
-        await loadGatewayConfig();
       } else if (activeTab === 'gamification') {
         const res = await api.getAdminGamification();
         setGamSettings(res.settings);
@@ -578,133 +558,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     }
   };
 
-  /* Payment Gateway Actions */
-  const loadGatewayConfig = async () => {
-    setGwLoading(true);
-    try {
-      const res = await api.getPaymentGatewayConfig();
-      setGatewayConfig(res.config);
-      setGwProvider(res.config.provider || 'paynit');
-      setGwEnv(res.config.environment || 'test');
-      setGwPayoutsEnabled(Boolean(res.config.payoutsEnabled));
-      setGwApiBaseUrl(res.config.apiBaseUrl || 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1');
-      setGwApiKey('');
-      setGwApiSecret('');
-      setGwMerchantId('');
-      setGwWebhookSecret('');
-    } catch (err: any) {
-      showNotify(err.message || 'Failed to load gateway config', 'error');
-    } finally {
-      setGwLoading(false);
-    }
-  };
-
-  const handleProviderChange = (newProvider: string) => {
-    setGwProvider(newProvider);
-    const provInfo = gatewayConfig?.supportedProviders?.find((p) => p.id === newProvider);
-    if (provInfo) {
-      setGwApiBaseUrl(gwEnv === 'live' ? provInfo.defaultLiveUrl : provInfo.defaultTestUrl);
-    } else {
-      setGwApiBaseUrl('https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1');
-    }
-  };
-
-  const handleEnvChange = (newEnv: 'test' | 'live') => {
-    setGwEnv(newEnv);
-  };
-
-  const handleSaveGatewayConfig = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setGwSaving(true);
-    try {
-      const res = await api.savePaymentGatewayConfig({
-        provider: gwProvider,
-        environment: gwEnv,
-        payoutsEnabled: gwPayoutsEnabled,
-        apiBaseUrl: gwApiBaseUrl,
-        apiKey: gwApiKey || undefined,
-        apiSecret: gwApiSecret || undefined,
-        merchantId: gwMerchantId || undefined,
-        webhookSecret: gwWebhookSecret || undefined,
-      });
-      setGatewayConfig(res.config);
-      setGwApiKey('');
-      setGwApiSecret('');
-      setGwMerchantId('');
-      setGwWebhookSecret('');
-      showNotify(res.message || 'Payment Gateway settings saved and encrypted securely!');
-    } catch (err: any) {
-      showNotify(err.message || 'Failed to save gateway config', 'error');
-    } finally {
-      setGwSaving(false);
-    }
-  };
-
-  const handleTestGatewayConnection = async () => {
-    setGwTesting(true);
-    setGwTestResult(null);
-    try {
-      const res = await api.testPaymentGatewayConnection();
-      setGwTestResult(res);
-      if (res.success) {
-        showNotify(`Connection verified: ${res.message}`);
-      } else {
-        showNotify(res.message, 'error');
-      }
-      const refreshed = await api.getPaymentGatewayConfig();
-      setGatewayConfig(refreshed.config);
-    } catch (err: any) {
-      const errRes: GatewayTestResult = {
-        success: false,
-        status: 'failed',
-        message: err.message || 'Connection test failed',
-        environment: gwEnv,
-        provider: gwProvider,
-        timestamp: new Date().toISOString(),
-      };
-      setGwTestResult(errRes);
-      showNotify(err.message || 'Connection test failed', 'error');
-    } finally {
-      setGwTesting(false);
-    }
-  };
-
-  const handleRemoveGatewayCredentials = async () => {
-    try {
-      const res = await api.removePaymentGatewayCredentials();
-      setGatewayConfig(res.config);
-      setGwApiKey('');
-      setGwApiSecret('');
-      setGwMerchantId('');
-      setGwWebhookSecret('');
-      setGwPayoutsEnabled(false);
-      setShowWipeCredsModal(false);
-      setGwTestResult(null);
-      showNotify('Gateway credentials securely wiped.');
-    } catch (err: any) {
-      showNotify(err.message || 'Failed to remove credentials', 'error');
-    }
-  };
-
-  const handleCopyWebhookUrl = () => {
-    if (gatewayConfig?.webhookUrl) {
-      navigator.clipboard.writeText(gatewayConfig.webhookUrl);
-      setCopiedWebhook(true);
-      setTimeout(() => setCopiedWebhook(false), 3000);
-      showNotify('Webhook URL copied to clipboard!');
-    }
-  };
-
-  const handleReconcileWithdrawal = async (orderId: string) => {
-    try {
-      const res = await api.reconcileWithdrawal(orderId);
-      showNotify(res.message || `Reconciliation complete: Order is ${res.withdrawal.status}`);
-      loadTabContent();
-    } catch (err: any) {
-      showNotify(err.message, 'error');
-    }
-  };
-
   /* Gamification Settings Actions */
   const handleSaveGamification = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -875,7 +728,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
           { id: 'stats', label: 'Dashboard', icon: Activity },
           { id: 'giftcards', label: 'Gift Card Inventory', icon: Ticket },
           { id: 'gamification', label: 'Gamification & Rewards', icon: Gift },
-          { id: 'gateway', label: 'Payment Gateway', icon: CreditCard },
           { id: 'withdrawals', label: 'Withdrawals', icon: Clock },
           { id: 'bot', label: 'Telegram Bot', icon: Bot },
           { id: 'channels', label: 'Force Join', icon: Radio },
@@ -955,32 +807,37 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             </div>
           </div>
 
-          {/* Gateway Safety Banner */}
+          {/* Gift Card Inventory Status Banner */}
           <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <CreditCard className="w-4 h-4 text-emerald-400" /> UPI Payout Gateway Status
+                <Ticket className="w-4 h-4 text-amber-500" /> Amazon Gift Card Inventory
               </h4>
               <span
                 className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
-                  gatewayStatus?.isLiveEnabled
-                    ? 'bg-emerald-500/20 text-emerald-400'
-                    : 'bg-amber-500/20 text-amber-400'
+                  gcStats && gcStats.availableCodes > 0
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    : 'bg-red-50 text-red-700 border border-red-200'
                 }`}
               >
-                {gatewayStatus?.isLiveEnabled ? 'LIVE GATEWAY CONNECTED' : 'SAFE SANDBOX / MANUAL REVIEW'}
+                {gcStats && gcStats.availableCodes > 0
+                  ? `${gcStats.availableCodes} CODES IN STOCK`
+                  : 'OUT OF STOCK'}
               </span>
             </div>
-            <p className="text-xs text-slate-700 leading-relaxed">{gatewayStatus?.statusMessage}</p>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              All user withdrawals are fulfilled via instant Amazon Gift Card Code redemption.
+              {gcStats && ` Currently ₹${gcStats.totalAvailableValue} total inventory value available across denominations.`}
+            </p>
             <div className="mt-3 pt-3 border-t border-slate-200/80 flex items-center justify-between">
               <span className="text-[11px] text-slate-500">
-                Provider: <strong className="text-white uppercase">{gatewayStatus?.providerName || 'None'}</strong> • Environment: <strong className={gatewayStatus?.isLiveEnabled ? 'text-emerald-400' : 'text-amber-400'}>{gatewayStatus?.environment?.toUpperCase() || 'TEST'}</strong>
+                Available: <strong className="text-slate-900">{gcStats?.availableCodes || 0}</strong> • Redeemed: <strong className="text-slate-900">{gcStats?.redeemedCodes || 0}</strong>
               </span>
               <button
-                onClick={() => setActiveTab('gateway')}
-                className="px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold rounded-lg transition"
+                onClick={() => setActiveTab('giftcards')}
+                className="px-3 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold rounded-lg transition"
               >
-                Payment Gateway Settings →
+                Manage Inventory →
               </button>
             </div>
           </div>
@@ -1741,429 +1598,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
         </div>
       )}
 
-      {/* TAB: PAYMENT GATEWAY SETTINGS */}
-      {activeTab === 'gateway' && (
-        <div className="space-y-4">
-          {/* Section Header & Configuration Status Indicator */}
-          <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <CreditCard className="w-5 h-5 text-red-500" /> Payment Gateway Settings
-                  </h3>
-                  <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-mono font-bold flex items-center gap-1">
-                    <Lock className="w-3 h-3" /> AES-256-GCM Encrypted
-                  </span>
-                </div>
-                <p className="text-xs text-slate-500 mt-1">
-                  Configure automated UPI payout provider credentials and integration settings. Secrets are encrypted at rest and never exposed to the frontend.
-                </p>
-              </div>
-
-              {/* Status Indicator Badge */}
-              <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
-                <span
-                  className={`px-3 py-1 rounded-xl text-xs font-bold border flex items-center gap-1.5 ${
-                    gatewayConfig?.status.connectionStatus === 'connected'
-                      ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                      : gatewayConfig?.status.connectionStatus === 'failed'
-                      ? 'bg-red-500/15 border-red-500/30 text-red-300'
-                      : gatewayConfig?.status.connectionStatus === 'integration_required'
-                      ? 'bg-purple-500/15 border-purple-500/30 text-purple-300'
-                      : 'bg-amber-500/15 border-amber-500/30 text-amber-300'
-                  }`}
-                >
-                  {gatewayConfig?.status.connectionStatus === 'connected' && <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />}
-                  {gatewayConfig?.status.connectionStatus === 'failed' && <XCircle className="w-3.5 h-3.5 text-red-400" />}
-                  {gatewayConfig?.status.connectionStatus === 'integration_required' && <AlertTriangle className="w-3.5 h-3.5 text-purple-400" />}
-                  {(!gatewayConfig?.status.connectionStatus || gatewayConfig?.status.connectionStatus === 'not_configured') && <Clock className="w-3.5 h-3.5 text-amber-400" />}
-                  <span>
-                    {gatewayConfig?.status.connectionStatus === 'connected'
-                      ? 'Connected'
-                      : gatewayConfig?.status.connectionStatus === 'failed'
-                      ? 'Connection Failed'
-                      : gatewayConfig?.status.connectionStatus === 'integration_required'
-                      ? 'Provider Integration Required'
-                      : 'Not Tested / Unconfigured'}
-                  </span>
-                </span>
-
-                <span
-                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold ${
-                    gwEnv === 'live'
-                      ? 'bg-red-500/20 text-red-300 border border-red-500/30'
-                      : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                  }`}
-                >
-                  {gwEnv === 'live' ? 'LIVE MODE' : 'TEST MODE'}
-                </span>
-              </div>
-            </div>
-
-            {/* Status Information Details Box */}
-            <div className="p-3.5 bg-slate-50/70 border border-slate-200/80/80 rounded-xl space-y-1.5 text-xs">
-              <div className="flex items-center justify-between text-slate-500 text-[11px]">
-                <span className="font-semibold text-slate-700">Configuration Status</span>
-                <span>
-                  Last Tested:{' '}
-                  {gatewayConfig?.status.lastTestedAt
-                    ? new Date(gatewayConfig.status.lastTestedAt).toLocaleString()
-                    : 'Never'}
-                </span>
-              </div>
-              <p className="text-slate-700 leading-relaxed font-mono text-[11px]">
-                {gatewayConfig?.status.message || 'No connection test performed yet. Configure credentials and click Test Connection.'}
-              </p>
-              <div className="flex flex-wrap gap-2 pt-1 text-[11px]">
-                <span className="text-slate-500">
-                  Payouts:{' '}
-                  <strong className={gwPayoutsEnabled ? 'text-emerald-400' : 'text-slate-500'}>
-                    {gwPayoutsEnabled ? 'ENABLED' : 'DISABLED'}
-                  </strong>
-                </span>
-                <span className="text-slate-500">•</span>
-                <span className="text-slate-500">
-                  Key:{' '}
-                  <strong className={gatewayConfig?.hasApiKey ? 'text-emerald-400 font-mono' : 'text-slate-500'}>
-                    {gatewayConfig?.hasApiKey ? (gatewayConfig.maskedApiKey || '****SAVED') : 'Not Set'}
-                  </strong>
-                </span>
-                <span className="text-slate-500">•</span>
-                <span className="text-slate-500">
-                  Secret:{' '}
-                  <strong className={gatewayConfig?.hasApiSecret ? 'text-emerald-400 font-mono' : 'text-slate-500'}>
-                    {gatewayConfig?.hasApiSecret ? (gatewayConfig.maskedApiSecret || '********') : 'Not Set'}
-                  </strong>
-                </span>
-                {gatewayConfig?.hasMerchantId && (
-                  <>
-                    <span className="text-slate-500">•</span>
-                    <span className="text-slate-500">
-                      Merchant ID: <strong className="text-emerald-400 font-mono">{gatewayConfig.maskedMerchantId}</strong>
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Configuration Form */}
-          <form onSubmit={handleSaveGatewayConfig} className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-              <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Settings className="w-4 h-4 text-[#0088cc]" /> Paynit UPI Payouts Configuration
-              </h4>
-              <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-[#0088cc] border border-blue-100">
-                Single Gateway Mode
-              </span>
-            </div>
-
-            {/* Field 1: Gateway Provider Banner */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Active Gateway Provider
-              </label>
-              <div className="p-3.5 bg-gradient-to-r from-blue-50/70 to-slate-50 border border-blue-100 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-[#0088cc] text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
-                    UPI
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-900">Paynit UPI Payouts</span>
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                        Integrated
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-500 mt-0.5">
-                      Direct automated UPI bank disbursements powered by Supabase Edge Functions.
-                    </p>
-                  </div>
-                </div>
-                <a
-                  href="https://pxqyeonymwlpiklfyjbb.supabase.co"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-xs text-[#0088cc] hover:text-[#0077b5] shrink-0 flex items-center gap-1 font-semibold self-start sm:self-auto"
-                >
-                  Supabase Console <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-            </div>
-
-            {/* Field 2: Environment Mode */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Environment Mode <span className="text-red-500">*</span>
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleEnvChange('test')}
-                  className={`p-3 rounded-xl border text-xs font-bold text-left transition flex items-center justify-between ${
-                    gwEnv === 'test'
-                      ? 'bg-blue-50 border-blue-300 text-blue-700 shadow-xs'
-                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <div>
-                    <p className="font-bold">Test Mode (Sandbox)</p>
-                    <p className="text-[10px] text-slate-500 font-normal mt-0.5">Safe simulation, no real funds moved</p>
-                  </div>
-                  {gwEnv === 'test' && <Check className="w-4 h-4 text-blue-600" />}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleEnvChange('live')}
-                  className={`p-3 rounded-xl border text-xs font-bold text-left transition flex items-center justify-between ${
-                    gwEnv === 'live'
-                      ? 'bg-red-50 border-red-300 text-red-700 shadow-xs'
-                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <div>
-                    <p className="font-bold">Live Mode (Production)</p>
-                    <p className="text-[10px] text-slate-500 font-normal mt-0.5">Executes real UPI bank transfers</p>
-                  </div>
-                  {gwEnv === 'live' && <Check className="w-4 h-4 text-red-600" />}
-                </button>
-              </div>
-
-              {gwEnv === 'live' && (
-                <div className="mt-2 p-2.5 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-700 flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0 text-red-500" />
-                  <span>
-                    <strong>Caution:</strong> Live Mode transfers real funds through Paynit banking rails. Verify your production keys before enabling automated payouts.
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Field 3: Paynit Client ID */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-slate-700">
-                  Paynit Client ID (<code className="text-slate-600 font-mono">X-Client-Id</code>) <span className="text-red-500">*</span>
-                </label>
-                {gatewayConfig?.hasApiKey && (
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">
-                    Saved: {gatewayConfig.maskedApiKey || '****••••'}
-                  </span>
-                )}
-              </div>
-              <input
-                type="text"
-                value={gwApiKey}
-                onChange={(e) => setGwApiKey(e.target.value)}
-                placeholder={
-                  gatewayConfig?.hasApiKey
-                    ? `Leave blank to keep saved (${gatewayConfig.maskedApiKey})`
-                    : 'Enter Paynit Client ID'
-                }
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono focus:outline-none transition"
-              />
-            </div>
-
-            {/* Field 4: Paynit Client Secret */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-slate-700">
-                  Paynit Client Secret (<code className="text-slate-600 font-mono">X-Client-Secret</code>) <span className="text-red-500">*</span>
-                </label>
-                {gatewayConfig?.hasApiSecret && (
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">
-                    Saved: {gatewayConfig.maskedApiSecret || '••••••••'}
-                  </span>
-                )}
-              </div>
-              <div className="relative">
-                <input
-                  type={showSecretKey ? 'text' : 'password'}
-                  value={gwApiSecret}
-                  onChange={(e) => setGwApiSecret(e.target.value)}
-                  placeholder={
-                    gatewayConfig?.hasApiSecret
-                      ? `Leave blank to keep saved (${gatewayConfig.maskedApiSecret})`
-                      : 'Enter Paynit Client Secret'
-                  }
-                  className="w-full px-3 py-2 pr-10 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono focus:outline-none transition"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowSecretKey(!showSecretKey)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition"
-                >
-                  {showSecretKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-              <p className="text-[11px] text-slate-500 mt-1">
-                Encrypted with AES-256-GCM at rest. Transmitted securely in HTTP header <code className="text-slate-600 font-mono">X-Client-Secret</code>.
-              </p>
-            </div>
-
-            {/* Field 5: API Base URL */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-slate-700">
-                  Supabase Edge Functions Base URL
-                </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setGwApiBaseUrl('https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1');
-                  }}
-                  className="text-[11px] text-[#0088cc] hover:underline font-semibold"
-                >
-                  Reset to Default URL
-                </button>
-              </div>
-              <input
-                type="url"
-                value={gwApiBaseUrl}
-                onChange={(e) => setGwApiBaseUrl(e.target.value)}
-                placeholder="https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1"
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono focus:outline-none transition"
-              />
-              <p className="text-[11px] text-slate-500 mt-1">
-                Endpoints: <code className="text-slate-600 font-mono">POST /merchant-paynit-payout</code> &amp; <code className="text-slate-600 font-mono">POST /check-order-status</code>.
-              </p>
-            </div>
-
-            {/* Field 6: Enable / Disable Automated Payouts */}
-            <div className="pt-2 border-t border-slate-100">
-              <label className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100/70 transition">
-                <input
-                  type="checkbox"
-                  checked={gwPayoutsEnabled}
-                  onChange={(e) => setGwPayoutsEnabled(e.target.checked)}
-                  className="mt-0.5 w-4 h-4 text-[#0088cc] rounded border-slate-300 focus:ring-[#0088cc]"
-                />
-                <div>
-                  <span className="text-xs font-bold text-slate-900 block">
-                    Enable Automated UPI Gateway Payouts
-                  </span>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    When enabled, withdrawals dispatched by administrators will trigger automated Paynit UPI payout execution. If disabled, orders require manual approval.
-                  </p>
-                </div>
-              </label>
-            </div>
-
-            {/* Action Buttons: Save Configuration & Test Connection */}
-            <div className="pt-2 flex flex-col sm:flex-row gap-2.5">
-              <button
-                type="submit"
-                disabled={gwSaving}
-                className="flex-1 py-2.5 px-4 bg-[#0088cc] hover:bg-[#0077b5] disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-2"
-              >
-                {gwSaving ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Zap className="w-3.5 h-3.5" />
-                )}
-                <span>Save Configuration</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleTestGatewayConnection}
-                disabled={gwTesting}
-                className="py-2.5 px-4 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 border border-emerald-300 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${gwTesting ? 'animate-spin' : ''}`} />
-                <span>{gwTesting ? 'Testing...' : 'Test Connection'}</span>
-              </button>
-
-              {gatewayConfig?.hasApiKey && (
-                <button
-                  type="button"
-                  onClick={() => setShowWipeCredsModal(true)}
-                  className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5"
-                  title="Remove saved credentials"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Remove Credentials</span>
-                </button>
-              )}
-            </div>
-          </form>
-
-          {/* Test Connection Result Card */}
-          {gwTestResult && (
-            <div
-              className={`p-4 rounded-2xl border space-y-2 transition ${
-                gwTestResult.success
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                  : 'bg-red-50 border-red-200 text-red-900'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {gwTestResult.success ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  ) : (
-                    <XCircle className="w-4 h-4 text-red-600" />
-                  )}
-                  <h4 className="text-xs font-bold uppercase tracking-wider">
-                    {gwTestResult.success
-                      ? 'Connection Test Succeeded'
-                      : 'Connection Test Failed'}
-                  </h4>
-                </div>
-                <span className="text-[10px] text-slate-500 font-mono">
-                  {new Date(gwTestResult.timestamp).toLocaleTimeString()}
-                </span>
-              </div>
-              <p className="text-xs leading-relaxed">{gwTestResult.message}</p>
-              {gwTestResult.httpStatus === 401 && (
-                <div className="p-2.5 bg-white/80 border border-red-200 rounded-xl text-[11px] text-red-800">
-                  <strong>💡 How to resolve HTTP 401:</strong> The Supabase Edge Function verified that the request reached the gateway, but rejected the credentials. Enter your valid Paynit Client ID and Client Secret above, click <strong>Save Configuration</strong>, and then test again.
-                </div>
-              )}
-              <div className="text-[10px] text-slate-500 flex items-center gap-3 pt-1 border-t border-slate-200/60">
-                <span>Provider: <strong className="text-slate-800">{gwTestResult.provider}</strong></span>
-                <span>Environment: <strong className="text-slate-800 uppercase">{gwTestResult.environment}</strong></span>
-                {gwTestResult.httpStatus && (
-                  <span>HTTP Status: <strong className="font-mono text-slate-800">{gwTestResult.httpStatus}</strong></span>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Wipe Credentials Modal */}
-          {showWipeCredsModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-              <div className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl p-6 space-y-3 shadow-2xl">
-                <div className="flex items-center gap-2 text-red-500">
-                  <AlertTriangle className="w-5 h-5 shrink-0" />
-                  <h4 className="text-sm font-bold text-slate-900">Remove Saved Credentials?</h4>
-                </div>
-                <p className="text-xs text-slate-600 leading-relaxed">
-                  This will securely erase encrypted API keys, secrets, and merchant identifiers from the server database. Automated payouts will be disabled until new credentials are configured.
-                </p>
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowWipeCredsModal(false)}
-                    className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleRemoveGatewayCredentials}
-                    className="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold transition"
-                  >
-                    Confirm & Wipe
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* TAB: TELEGRAM BOT INTEGRATION & LIVE STATUS */}
       {activeTab === 'bot' && (
@@ -3079,23 +2513,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         onClick={() => handleWithdrawalDecision(w.id, 'approve')}
                         className="flex-1 min-w-[120px] py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition"
                       >
-                        ✓ Approve Manual
+                        ✓ Mark Delivered
                       </button>
-                      <button
-                        onClick={() => handleWithdrawalDecision(w.id, 'process_payout')}
-                        className="flex-1 min-w-[140px] py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-lg transition flex items-center justify-center gap-1"
-                      >
-                        <Zap className="w-3 h-3" /> Process via Gateway
-                      </button>
-                      {w.status === 'processing' && (
-                        <button
-                          onClick={() => handleReconcileWithdrawal(w.id)}
-                          className="py-1.5 px-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-lg transition flex items-center gap-1"
-                          title="Query provider API to check if transaction settled or reversed"
-                        >
-                          <RefreshCw className="w-3 h-3" /> Reconcile
-                        </button>
-                      )}
                       <button
                         onClick={() => setRejectingOrder(w)}
                         className="py-1.5 px-3 bg-red-900/60 hover:bg-red-800 text-red-200 font-bold text-xs rounded-lg transition"
@@ -3125,7 +2544,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     type="text"
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
-                    placeholder="e.g. Invalid UPI ID / Duplicate request"
+                    placeholder="e.g. Ineligible / Duplicate request"
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                   />
                 </div>
@@ -3480,27 +2899,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     />
                     <span>Maintenance Mode (Temporarily lock Mini App for users)</span>
                   </label>
-                  <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(settings.payoutLiveEnabled)}
-                      onChange={(e) => setSettings({ ...settings, payoutLiveEnabled: e.target.checked })}
-                    />
-                    <span className="text-amber-400 font-bold">
-                      Enable Live UPI Gateway Payouts (Requires verified provider credentials)
-                    </span>
-                  </label>
-
-                  <div className="pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('gateway')}
-                      className="w-full py-2.5 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 border border-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition"
-                    >
-                      <CreditCard className="w-3.5 h-3.5" />
-                      Configure Payment Gateway Settings
-                    </button>
-                  </div>
                 </div>
 
                 <button

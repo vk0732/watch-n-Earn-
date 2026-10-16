@@ -2,17 +2,6 @@ import { getAppSettings } from './db.ts';
 import { sendTelegramMessage } from './telegram.ts';
 import type { Withdrawal, UserProfile } from '../src/types/index.ts';
 
-/**
- * Mask string for public payout proofs (e.g. user@okhdfcbank -> u***@okhdfcbank)
- */
-export function maskUpiId(upi: string): string {
-  if (!upi || !upi.includes('@')) return '***@upi';
-  const [handle, bank] = upi.split('@');
-  if (handle.length <= 3) {
-    return `${handle[0]}***@${bank}`;
-  }
-  return `${handle.slice(0, 2)}***${handle.slice(-2)}@${bank}`;
-}
 
 export function maskUsername(name?: string): string {
   if (!name) return 'User***';
@@ -32,10 +21,10 @@ export async function notifyAdminNewWithdrawal(withdrawal: Withdrawal, user: Use
     `👤 <b>User:</b> ${user.firstName} (@${user.username || 'none'})\n` +
     `🆔 <b>User ID:</b> <code>${user.id}</code>\n` +
     `💰 <b>Amount:</b> <b>₹${withdrawal.amount.toFixed(2)}</b>\n` +
-    `💳 <b>Method:</b> <code>${withdrawal.giftCardCode ? 'Amazon Gift Card' : (withdrawal.upiId || 'N/A')}</code>\n` +
+    `💳 <b>Method:</b> <code>Amazon Gift Card</code>\n` +
     `📦 <b>Order ID:</b> <code>${withdrawal.id}</code>\n` +
     `⏰ <b>Requested At:</b> ${new Date(withdrawal.createdAt).toLocaleString()}\n\n` +
-    `👉 <i>Log into the Admin Panel to review, approve or process this payout.</i>`;
+    `👉 <i>Log into the Admin Panel to review gift card inventory and redemptions.</i>`;
 
   const token = settings.payoutBotToken || process.env.PAYOUT_BOT_TOKEN;
   await sendTelegramMessage(adminChat, text, undefined, token);
@@ -53,20 +42,18 @@ export async function broadcastPayoutProof(withdrawal: Withdrawal): Promise<{ su
     `💸 <b>NEW CASHBACK PAID!</b>\n\n` +
     `👤 Recipient: {masked_user}\n` +
     `💰 Amount: <b>₹{amount}</b>\n` +
-    `💳 Destination: <code>{masked_upi}</code>\n` +
+    `💳 Reward: <b>Amazon Gift Card</b>\n` +
     `🆔 Order ID: <code>{order_id}</code>\n` +
-    `⚡ Status: <b>SUCCESS (Verified)</b>\n\n` +
+    `⚡ Status: <b>SUCCESS (Instant Delivery)</b>\n\n` +
     `🤖 <i>Earn daily with TeleEarn Bot!</i>`;
 
   const maskedUser = maskUsername(withdrawal.username);
-  const maskedUpi = withdrawal.giftCardCode
-    ? 'Amazon Gift Card'
-    : maskUpiId(withdrawal.upiId || 'Redemption');
+  const rewardMethod = 'Amazon Gift Card';
 
   const messageText = template
     .replace('{masked_user}', maskedUser)
     .replace('{amount}', withdrawal.amount.toFixed(2))
-    .replace('{masked_upi}', maskedUpi)
+    .replace('{masked_upi}', rewardMethod)
     .replace('{order_id}', withdrawal.id)
     .replace('{txn_id}', withdrawal.payoutTransactionId || `PAY-${Date.now().toString().slice(-6)}`);
 
@@ -97,18 +84,13 @@ export async function notifyUserWithdrawalResult(
   const isApproved = result === 'approved' || result === true;
   const settings = await getAppSettings();
   if (isApproved) {
-    const text = withdrawal.giftCardCode
-      ? `🎉 <b>AMAZON GIFT CARD CODE DELIVERED!</b>\n\n` +
-        `Your <b>₹${withdrawal.amount.toFixed(2)}</b> Amazon Gift Card code is:\n` +
-        `<code>${withdrawal.giftCardCode}</code>\n\n` +
-        `📦 <b>Order ID:</b> <code>${withdrawal.id}</code>\n` +
-        `💡 <b>How to Redeem:</b> Open Amazon App → Amazon Pay → Add Gift Card → Paste code.\n\n` +
-        `Thank you for using TeleEarn! Keep completing tasks to earn more.`
-      : `🎉 <b>CASHBACK PAID SUCCESSFULLY!</b>\n\n` +
-        `Your withdrawal request for <b>₹${withdrawal.amount.toFixed(2)}</b> has been transferred to <code>${withdrawal.upiId || 'your account'}</code>.\n\n` +
-        `📦 <b>Order ID:</b> <code>${withdrawal.id}</code>\n` +
-        `⚡ <b>Status:</b> Completed\n\n` +
-        `Thank you for using TeleEarn! Keep completing tasks to earn more cashback.`;
+    const code = withdrawal.giftCardCode || 'Code Assigned';
+    const text = `🎉 <b>AMAZON GIFT CARD CODE DELIVERED!</b>\n\n` +
+      `Your <b>₹${withdrawal.amount.toFixed(2)}</b> Amazon Gift Card code is:\n` +
+      `<code>${code}</code>\n\n` +
+      `📦 <b>Order ID:</b> <code>${withdrawal.id}</code>\n` +
+      `💡 <b>How to Redeem:</b> Open Amazon App → Amazon Pay → Add Gift Card → Paste code.\n\n` +
+      `Thank you for using TeleEarn! Keep completing tasks to earn more.`;
     await sendTelegramMessage(withdrawal.userTelegramId, text);
   } else {
     const text = `⚠️ <b>Withdrawal Request Rejected & Refunded</b>\n\n` +

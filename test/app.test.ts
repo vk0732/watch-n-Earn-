@@ -620,16 +620,8 @@ async function runTests() {
     assert(testModePayoutRes.status === 'processing', 'executePayout: Test Mode executes simulation without transferring real money');
     assert(testModePayoutRes.providerResponse.includes('SANDBOX_TEST_MODE'), 'executePayout: Safe simulation marked as SANDBOX_TEST_MODE');
 
-    // Restore safe default (payouts disabled)
-    await saveGatewayConfig(
-      {
-        provider: 'paynit',
-        environment: 'test',
-        payoutsEnabled: false,
-        apiBaseUrl: 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1',
-      },
-      'admin_tester'
-    );
+    // Clean up test gateway credentials to prevent database pollution
+    await removeGatewayCredentials('test_cleanup');
   }
 
   /* ------------------------------------------------------------------

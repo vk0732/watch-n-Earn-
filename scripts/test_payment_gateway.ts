@@ -277,6 +277,10 @@ async function runTests() {
   }
   console.log('  ✓ Automated UPI payouts verified DISABLED during test / review mode');
 
+  // Clean up test gateway credentials so dummy keys do not remain in database
+  await removeGatewayCredentials('test_cleanup');
+  console.log('  ✓ Stored test credentials cleaned up from database');
+
   console.log('\n====================================================');
   console.log('🎉 ALL PAYMENT GATEWAY TESTS PASSED SUCCESSFULLY!');
   console.log('====================================================');

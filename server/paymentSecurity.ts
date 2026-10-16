@@ -155,41 +155,8 @@ export function maskSecret(value: string | undefined, visibleTrailingChars = 4):
 // In-memory cache of stored gateway settings
 let inMemoryGatewayConfig: StoredGatewayConfig | null = null;
 
-// Supported providers metadata
+// Supported providers metadata (Paynit UPI Payouts is the exclusive gateway)
 export const SUPPORTED_PROVIDERS = [
-  {
-    id: 'cashfree' as GatewayProvider,
-    name: 'Cashfree Payments (Cashfree Payouts)',
-    description: 'Direct Instant UPI Transfers via Cashfree Payouts API v1.2 / v1. Supports Sandbox & Live.',
-    requiresMerchantId: false,
-    merchantIdLabel: 'App ID (Optional)',
-    defaultTestUrl: 'https://sandbox.cashfree.com/payout/v1',
-    defaultLiveUrl: 'https://payout-api.cashfree.com/payout/v1',
-    docsUrl: 'https://docs.cashfree.com/reference/payouts-api',
-    isIntegrated: true,
-  },
-  {
-    id: 'razorpayx' as GatewayProvider,
-    name: 'RazorpayX (Razorpay Payouts)',
-    description: 'Business Banking & Automated UPI Payouts via RazorpayX Payouts API. Supports Test & Live modes.',
-    requiresMerchantId: true,
-    merchantIdLabel: 'RazorpayX Account Number (e.g. 7878780080387615)',
-    defaultTestUrl: 'https://api.razorpay.com/v1',
-    defaultLiveUrl: 'https://api.razorpay.com/v1',
-    docsUrl: 'https://razorpay.com/docs/api/razorpayx/payouts/',
-    isIntegrated: true,
-  },
-  {
-    id: 'paytm' as GatewayProvider,
-    name: 'Paytm Payouts (Paytm Disburse)',
-    description: 'Corporate wallet and bank disbursements via Paytm Bpay Gateway.',
-    requiresMerchantId: true,
-    merchantIdLabel: 'Merchant ID (MID)',
-    defaultTestUrl: 'https://staging-dashboard.paytm.com/bpay/api/v1',
-    defaultLiveUrl: 'https://dashboard.paytm.com/bpay/api/v1',
-    docsUrl: 'https://developer.paytm.com/docs/payouts-api/',
-    isIntegrated: true,
-  },
   {
     id: 'paynit' as GatewayProvider,
     name: 'Paynit UPI Payouts (Supabase Gateway)',
@@ -200,17 +167,6 @@ export const SUPPORTED_PROVIDERS = [
     defaultLiveUrl: 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1',
     docsUrl: 'https://pxqyeonymwlpiklfyjbb.supabase.co',
     isIntegrated: true,
-  },
-  {
-    id: 'custom' as GatewayProvider,
-    name: 'Custom / Other Provider',
-    description: 'Select this to integrate an enterprise or custom banking aggregator.',
-    requiresMerchantId: false,
-    merchantIdLabel: 'Merchant Reference ID',
-    defaultTestUrl: '',
-    defaultLiveUrl: '',
-    docsUrl: '',
-    isIntegrated: false,
   },
 ];
 
@@ -227,16 +183,18 @@ export async function getStoredGatewayConfig(): Promise<StoredGatewayConfig> {
     const snap = await getDoc(docRef);
     if (snap.exists()) {
       inMemoryGatewayConfig = snap.data() as StoredGatewayConfig;
+      // Ensure provider is set to paynit
+      if (!inMemoryGatewayConfig.provider) {
+        inMemoryGatewayConfig.provider = 'paynit';
+      }
       return inMemoryGatewayConfig;
     }
   } catch (err) {
     console.warn('[PaymentSecurity] Firestore config read fallback:', err);
   }
 
-  // Fallback defaults if not yet configured
-  const envProvider =
-    (process.env.PAYOUT_PROVIDER as GatewayProvider) ||
-    (process.env.PAYNIT_CLIENT_ID ? 'paynit' : 'cashfree');
+  // Fallback defaults: Paynit UPI Payouts
+  const envProvider = (process.env.PAYOUT_PROVIDER as GatewayProvider) || 'paynit';
 
   const envApiKey =
     process.env.PAYNIT_CLIENT_ID ||
@@ -257,9 +215,7 @@ export async function getStoredGatewayConfig(): Promise<StoredGatewayConfig> {
     apiBaseUrl:
       process.env.PAYNIT_BASE_URL ||
       process.env.PAYOUT_BASE_URL ||
-      (envProvider === 'paynit'
-        ? 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1'
-        : 'https://sandbox.cashfree.com/payout/v1'),
+      'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1',
     hasApiKey: Boolean(envApiKey && !envApiKey.includes('your_')),
     hasApiSecret: Boolean(envApiSecret && !envApiSecret.includes('your_')),
     hasMerchantId: false,
@@ -350,10 +306,10 @@ export async function saveGatewayConfig(
 
   const updated: StoredGatewayConfig = {
     ...current,
-    provider: input.provider,
+    provider: input.provider || 'paynit',
     environment: input.environment,
     payoutsEnabled: input.payoutsEnabled,
-    apiBaseUrl: input.apiBaseUrl?.trim() || '',
+    apiBaseUrl: input.apiBaseUrl?.trim() || current.apiBaseUrl || 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1',
     updatedAt: new Date().toISOString(),
     updatedBy: adminId,
   };
@@ -437,10 +393,10 @@ export async function saveGatewayConfig(
  */
 export async function removeGatewayCredentials(adminId: string): Promise<StoredGatewayConfig> {
   const updated: StoredGatewayConfig = {
-    provider: '',
+    provider: 'paynit',
     environment: 'test',
     payoutsEnabled: false,
-    apiBaseUrl: '',
+    apiBaseUrl: 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1',
     hasApiKey: false,
     hasApiSecret: false,
     hasMerchantId: false,
@@ -450,7 +406,7 @@ export async function removeGatewayCredentials(adminId: string): Promise<StoredG
     maskedMerchantId: '',
     maskedWebhookSecret: '',
     lastTestStatus: 'not_configured',
-    lastTestMessage: 'Credentials have been completely removed by administrator.',
+    lastTestMessage: 'Credentials have been removed by administrator.',
     lastTestedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     updatedBy: adminId,

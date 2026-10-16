@@ -100,31 +100,23 @@ export class UPIPaymentGatewayAdapter {
    */
   public async testConnection(): Promise<ConnectionTestResult> {
     const creds = await getDecryptedCredentials();
+    const effectiveProvider = creds.provider || 'paynit';
 
-    if (!creds.provider) {
+    if (!creds.apiKey || !creds.apiSecret) {
       const result: ConnectionTestResult = {
         success: false,
-        status: 'not_configured',
-        message: 'No Payment Gateway provider selected. Please select a provider and provide credentials.',
+        status: 'failed',
+        message: 'Missing API credentials. Both Paynit Client ID (X-Client-Id) and Client Secret (X-Client-Secret) are required to test connection.',
         environment: creds.environment,
-        provider: 'none',
+        provider: 'Paynit UPI Payouts',
         timestamp: new Date().toISOString(),
       };
       await recordConnectionTestResult(result.status, result.message);
       return result;
     }
 
-    if (!creds.apiKey || !creds.apiSecret) {
-      const result: ConnectionTestResult = {
-        success: false,
-        status: 'failed',
-        message: 'Missing API credentials. Both API Key / Client ID and API Secret are required to test connection.',
-        environment: creds.environment,
-        provider: creds.provider,
-        timestamp: new Date().toISOString(),
-      };
-      await recordConnectionTestResult(result.status, result.message);
-      return result;
+    if (effectiveProvider === 'paynit') {
+      return await this.testPaynitConnection(creds);
     }
 
     if (creds.provider === 'cashfree') {
@@ -139,17 +131,13 @@ export class UPIPaymentGatewayAdapter {
       return await this.testPaytmConnection(creds);
     }
 
-    if (creds.provider === 'paynit') {
-      return await this.testPaynitConnection(creds);
-    }
-
     // Custom or Unintegrated Provider
     const result: ConnectionTestResult = {
       success: false,
       status: 'integration_required',
       message: 'Provider integration required. Implementation specifications and driver adapter are needed for this provider.',
       environment: creds.environment,
-      provider: creds.provider,
+      provider: creds.provider || 'Paynit UPI Payouts',
       timestamp: new Date().toISOString(),
     };
     await recordConnectionTestResult(result.status, result.message);
@@ -402,11 +390,13 @@ export class UPIPaymentGatewayAdapter {
    */
   private async testPaynitConnection(creds: DecryptedGatewayCredentials): Promise<ConnectionTestResult> {
     const baseUrl =
-      creds.apiBaseUrl ||
+      creds.apiBaseUrl?.trim() ||
       process.env.PAYNIT_BASE_URL ||
       'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1';
 
     const statusUrl = process.env.PAYNIT_STATUS_URL || `${baseUrl.replace(/\/$/, '')}/check-order-status`;
+    const cleanApiKey = creds.apiKey?.trim();
+    const cleanApiSecret = creds.apiSecret?.trim();
 
     try {
       const controller = new AbortController();
@@ -416,8 +406,8 @@ export class UPIPaymentGatewayAdapter {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Client-Id': creds.apiKey,
-          'X-Client-Secret': creds.apiSecret,
+          'X-Client-Id': cleanApiKey,
+          'X-Client-Secret': cleanApiSecret,
           'User-Agent': 'TeleEarn-Admin/1.0',
         },
         body: JSON.stringify({ order_id: 'probe_test_connection' }),
@@ -439,9 +429,10 @@ export class UPIPaymentGatewayAdapter {
         status === 401 ||
         status === 403 ||
         data.error?.toString().toLowerCase().includes('unauthorized') ||
+        data.message?.toString().toLowerCase().includes('invalid api credentials') ||
         data.message?.toString().toLowerCase().includes('invalid client')
       ) {
-        const fullMsg = `Paynit Authentication Failed (HTTP ${status}): ${data.message || data.error || 'Invalid X-Client-Id or X-Client-Secret.'}`;
+        const fullMsg = `Paynit Authentication Failed (HTTP ${status}): ${data.message || data.error || 'Invalid API credentials'}. Please verify and update your X-Client-Id and X-Client-Secret in Gateway Settings.`;
         await recordConnectionTestResult('failed', fullMsg);
         return {
           success: false,
@@ -455,8 +446,13 @@ export class UPIPaymentGatewayAdapter {
         };
       }
 
-      // If response is OK or returns authenticated order check (even 404 for nonexistent probe order)
-      if (response.ok || status === 404 || data.status !== undefined || data.message !== undefined) {
+      // If response is OK, or probe returns order-level message (even 404 for nonexistent probe order)
+      if (
+        response.ok ||
+        status === 404 ||
+        data.status !== undefined ||
+        (data.success === false && data.message && !data.message.toLowerCase().includes('credential'))
+      ) {
         const msg = `Successfully authenticated with Paynit UPI Gateway (${creds.environment.toUpperCase()} Mode). Provider API credentials verified.`;
         await recordConnectionTestResult('connected', msg);
         return {
@@ -555,16 +551,17 @@ export class UPIPaymentGatewayAdapter {
     }
 
     // 4. LIVE MODE EXECUTION
+    const effectiveProvider = creds.provider || 'paynit';
+    if (effectiveProvider === 'paynit') {
+      return await this.executePaynitLivePayout(withdrawal, creds);
+    }
+
     if (creds.provider === 'cashfree') {
       return await this.executeCashfreeLivePayout(withdrawal, creds);
     }
 
     if (creds.provider === 'razorpayx') {
       return await this.executeRazorpayXLivePayout(withdrawal, creds);
-    }
-
-    if (creds.provider === 'paynit') {
-      return await this.executePaynitLivePayout(withdrawal, creds);
     }
 
     return {
@@ -834,6 +831,8 @@ export class UPIPaymentGatewayAdapter {
 
     const payoutUrl = process.env.PAYNIT_PAYOUT_URL || `${baseUrl.replace(/\/$/, '')}/merchant-paynit-payout`;
     const idempotencyKey = `payout_${withdrawal.id}`;
+    const cleanApiKey = creds.apiKey?.trim();
+    const cleanApiSecret = creds.apiSecret?.trim();
 
     try {
       const controller = new AbortController();
@@ -851,8 +850,8 @@ export class UPIPaymentGatewayAdapter {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Client-Id': creds.apiKey,
-          'X-Client-Secret': creds.apiSecret,
+          'X-Client-Id': cleanApiKey,
+          'X-Client-Secret': cleanApiSecret,
           'X-Idempotency-Key': idempotencyKey,
         },
         body: JSON.stringify(payload),
@@ -951,6 +950,8 @@ export class UPIPaymentGatewayAdapter {
       'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1';
 
     const statusUrl = process.env.PAYNIT_STATUS_URL || `${baseUrl.replace(/\/$/, '')}/check-order-status`;
+    const cleanApiKey = creds.apiKey?.trim();
+    const cleanApiSecret = creds.apiSecret?.trim();
 
     try {
       const controller = new AbortController();
@@ -960,8 +961,8 @@ export class UPIPaymentGatewayAdapter {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Client-Id': creds.apiKey,
-          'X-Client-Secret': creds.apiSecret,
+          'X-Client-Id': cleanApiKey,
+          'X-Client-Secret': cleanApiSecret,
         },
         body: JSON.stringify({ order_id: withdrawal.id }),
         signal: controller.signal,

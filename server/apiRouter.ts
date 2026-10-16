@@ -1418,8 +1418,8 @@ apiRouter.post('/admin/gateway/config', extractTelegramUser, requireAdmin, async
       webhookSecret,
     } = req.body;
 
-    // Validate provider
-    const allowedProviders = ['cashfree', 'razorpayx', 'paytm', 'custom', ''];
+    // Validate provider (Paynit is the primary supported gateway)
+    const allowedProviders = ['paynit', 'cashfree', 'razorpayx', 'paytm', 'custom', ''];
     if (provider !== undefined && !allowedProviders.includes(provider)) {
       return res.status(400).json({ error: 'Invalid provider selected.' });
     }
@@ -1440,13 +1440,13 @@ apiRouter.post('/admin/gateway/config', extractTelegramUser, requireAdmin, async
       });
     }
 
-    // Save with encryption
+    // Save with encryption (defaulting provider to 'paynit')
     await saveGatewayConfig(
       {
-        provider: provider || '',
+        provider: provider || 'paynit',
         environment: environment || 'test',
         payoutsEnabled: Boolean(payoutsEnabled),
-        apiBaseUrl: apiBaseUrl || '',
+        apiBaseUrl: apiBaseUrl || 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1',
         apiKey,
         apiSecret,
         merchantId,

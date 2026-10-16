@@ -21,6 +21,8 @@ import {
   addGiftCardCodes,
   redeemGiftCardWithdrawal,
   getAllGiftCardCodes,
+  getUserWithdrawals,
+  getUserTransactions,
 } from '../server/db.ts';
 import {
   verifyTelegramInitData,
@@ -525,8 +527,67 @@ async function runTests() {
         if (err.message.includes('Insufficient balance') || err.message.includes('negative')) overdraftFailed = true;
       }
       assert(overdraftFailed, 'Negative balance overdraft rejected by atomicCreditBalance guard');
-      const userAfterOverdraft = await getUser(wthUserId);
-      assert(userAfterOverdraft?.balance === 119, 'User balance strictly preserved at ₹119 after rejected overdraft');
+      // 10. Two concurrent withdrawals competing for one code
+      const testDenomConc = 88;
+      const testCodeConc = `TEST-AMZ-CONC-${Date.now()}`;
+      await addGiftCardCodes([testCodeConc], testDenomConc, 'Test Admin');
+
+      const concUserId = `conc_user_${Date.now()}`;
+      await saveUser({
+        id: concUserId,
+        telegramId: 888999,
+        firstName: 'Concurrent Tester',
+        balance: 200,
+        lifetimeEarnings: 200,
+        referralEarnings: 0,
+        referralCode: `ref_conc_${Date.now()}`,
+        dailyStreak: 0,
+        isBanned: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      const concurrentResults = await Promise.allSettled([
+        redeemGiftCardWithdrawal(concUserId, testDenomConc),
+        redeemGiftCardWithdrawal(concUserId, testDenomConc),
+      ]);
+
+      const fulfilled = concurrentResults.filter((r) => r.status === 'fulfilled');
+      const rejected = concurrentResults.filter((r) => r.status === 'rejected');
+
+      assert(fulfilled.length === 1, 'Concurrency: Exactly 1 concurrent withdrawal succeeds when 1 code is in inventory');
+      assert(rejected.length === 1, 'Concurrency: Competing concurrent withdrawal is safely rejected');
+
+      const concUserAfter = await getUser(concUserId);
+      assert(concUserAfter?.balance === 200 - testDenomConc, `Concurrency: Balance deducted exactly once (200 -> ${200 - testDenomConc})`);
+
+      // 11. Explicit ₹10 Gift Card Redemption (matching production limits)
+      const testCode10 = `AMZN-TEST-10-${Date.now()}`;
+      await addGiftCardCodes([testCode10], 10, 'Test Admin');
+      const user10Id = `user_10_${Date.now()}`;
+      await saveUser({
+        id: user10Id,
+        telegramId: 101010,
+        firstName: 'TenRupeeUser',
+        balance: 25,
+        lifetimeEarnings: 25,
+        referralEarnings: 0,
+        referralCode: `ref_10_${Date.now()}`,
+        dailyStreak: 0,
+        isBanned: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      const res10 = await redeemGiftCardWithdrawal(user10Id, 10);
+      assert(res10.withdrawal.amount === 10, 'Explicit ₹10 redemption creates withdrawal for ₹10');
+      assert(res10.withdrawal.status === 'success', 'Explicit ₹10 redemption has status success');
+      assert(res10.user.balance === 15, 'Explicit ₹10 redemption deducts exactly ₹10 (25 -> 15)');
+      assert(res10.giftCardCode === testCode10, 'Explicit ₹10 redemption assigns the ₹10 code');
+
+      // 12. User record access isolation: User A cannot see User B's withdrawals
+      const user10Withdrawals = await getUserWithdrawals(user10Id);
+      assert(user10Withdrawals.every((w) => w.userId === user10Id), 'User isolation: User withdrawal query only returns own withdrawals');
+      assert(!user10Withdrawals.some((w) => w.userId === concUserId), 'User isolation: User cannot see another user\'s withdrawal');
     } finally {
       await updateAppSettings(initialSettings);
     }

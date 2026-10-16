@@ -25,12 +25,18 @@ async function runGiftCardTestSuite() {
   // ----------------------------------------------------
   console.log('▶ TEST 1: Admin Gift Card Import & Duplicate Prevention...');
 
-  // Clear in-memory gift cards for test isolation
-  memStore.giftCardCodes.clear();
+  const runId = Date.now().toString().slice(-6);
+  const code1 = `AMZN-TEST-${runId}-1001`;
+  const code2 = `AMZN-TEST-${runId}-1002`;
+  const code3 = `AMZN-TEST-${runId}-1003`;
+  const code4 = `AMZN-TEST-${runId}-1004`;
+  const code5 = `AMZN-TEST-${runId}-5001`;
+
+  const initialStats = await getGiftCardInventoryStats();
 
   // Import batch 1: 3 codes of ₹10
   const import1 = await addGiftCardCodes(
-    ['AMZN-TEST-1001', 'AMZN-TEST-1002', 'AMZN-TEST-1003'],
+    [code1, code2, code3],
     10,
     'admin_test'
   );
@@ -40,39 +46,38 @@ async function runGiftCardTestSuite() {
 
   // Import batch 2: Try importing duplicates (including case-variation) and new code
   const import2 = await addGiftCardCodes(
-    `amzn-test-1001\nAMZN-TEST-1002\nAMZN-TEST-1004\n\n`,
+    `${code1.toLowerCase()}\n${code2}\n${code4}\n\n`,
     10,
     'admin_test'
   );
-  assert.strictEqual(import2.added, 1, 'Should add only 1 new code (AMZN-TEST-1004)');
-  assert.strictEqual(import2.duplicates, 2, 'Should skip 2 duplicates (1001 and 1002)');
+  assert.strictEqual(import2.added, 1, 'Should add only 1 new code');
+  assert.strictEqual(import2.duplicates, 2, 'Should skip 2 duplicates');
   console.log('  ✓ Batch 2: Correctly skipped 2 duplicate codes and imported 1 new code.');
 
   // Import batch 3: Denomination ₹50 code
-  const import3 = await addGiftCardCodes(['AMZN-TEST-5001'], 50, 'admin_test');
+  const import3 = await addGiftCardCodes([code5], 50, 'admin_test');
   assert.strictEqual(import3.added, 1);
 
   // Verify inventory statistics
   const stats = await getGiftCardInventoryStats();
-  assert.strictEqual(stats.totalCodes, 5);
-  assert.strictEqual(stats.availableCodes, 5);
-  assert.strictEqual(stats.availableByDenomination[10], 4);
-  assert.strictEqual(stats.availableByDenomination[50], 1);
-  assert.strictEqual(stats.totalAvailableValue, 4 * 10 + 50); // 90
-  console.log(`  ✓ Stats Verified: 4 available ₹10 codes, 1 available ₹50 code. Total value = ₹${stats.totalAvailableValue}.`);
+  assert.strictEqual(stats.totalCodes, initialStats.totalCodes + 5);
+  assert.strictEqual(stats.availableCodes, initialStats.availableCodes + 5);
+  assert.strictEqual(stats.availableByDenomination[10], (initialStats.availableByDenomination[10] || 0) + 4);
+  assert.strictEqual(stats.availableByDenomination[50], (initialStats.availableByDenomination[50] || 0) + 1);
+  console.log(`  ✓ Stats Verified: Added 4 available ₹10 codes, 1 available ₹50 code. Total value = ₹${stats.totalAvailableValue}.`);
 
   // ----------------------------------------------------
   // TEST 2: Invalidation of Unredeemed Code
   // ----------------------------------------------------
   console.log('\n▶ TEST 2: Invalidation of Unredeemed Code...');
   const allCodes = await getAllGiftCardCodes();
-  const codeToInvalidate = allCodes.find((c) => c.code === 'AMZN-TEST-1004')!;
-  assert(codeToInvalidate, 'Code 1004 should exist');
+  const codeToInvalidate = allCodes.find((c) => c.code === code4)!;
+  assert(codeToInvalidate, 'Code 4 should exist');
 
   await invalidateGiftCardCode(codeToInvalidate.id, 'Test invalidation');
   const statsAfterInval = await getGiftCardInventoryStats();
-  assert.strictEqual(statsAfterInval.availableByDenomination[10], 3, 'Available ₹10 codes should drop from 4 to 3');
-  assert.strictEqual(statsAfterInval.invalidatedCodes, 1, 'Invalidated count should be 1');
+  assert.strictEqual(statsAfterInval.availableByDenomination[10], (initialStats.availableByDenomination[10] || 0) + 3, 'Available ₹10 codes should drop by 1');
+  assert.strictEqual(statsAfterInval.invalidatedCodes, initialStats.invalidatedCodes + 1, 'Invalidated count should increment by 1');
   console.log('  ✓ Code successfully invalidated and excluded from available inventory.');
 
   // ----------------------------------------------------

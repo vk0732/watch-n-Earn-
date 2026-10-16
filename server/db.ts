@@ -365,47 +365,58 @@ export async function atomicCreditBalance(
   description: string,
   referenceId?: string
 ): Promise<{ user: UserProfile; transaction: Transaction }> {
-  let user = await getUser(userId);
-  if (!user) throw new Error('User not found');
-  if (user.isBanned) throw new Error('User account is suspended');
-
-  const newBalance = Math.round((user.balance + amount) * 100) / 100;
-  const newLifetime = amount > 0 ? Math.round((user.lifetimeEarnings + amount) * 100) / 100 : user.lifetimeEarnings;
-  const newReferral = type === 'referral_reward' ? Math.round((user.referralEarnings + amount) * 100) / 100 : user.referralEarnings;
-
-  user = {
-    ...user,
-    balance: newBalance,
-    lifetimeEarnings: newLifetime,
-    referralEarnings: newReferral,
-    updatedAt: new Date().toISOString(),
-  };
-
-  const txId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const transaction: Transaction = {
-    id: txId,
-    userId,
-    type,
-    amount,
-    description,
-    balanceAfter: newBalance,
-    referenceId,
-    createdAt: new Date().toISOString(),
-  };
-
-  memStore.users.set(userId, user);
-  memStore.transactions.set(txId, transaction);
-
+  const releaseLock = await acquireLock(`lock_balance_${userId}`);
   try {
-    const userDocRef = doc(db, 'users', userId);
-    const txDocRef = doc(db, 'transactions', txId);
-    await setDoc(userDocRef, cleanDocData(user), { merge: true });
-    await setDoc(txDocRef, cleanDocData(transaction));
-  } catch (err) {
-    console.warn('[DB] atomicCreditBalance Firestore sync fallback:', err);
-  }
+    let user = await getUser(userId);
+    if (!user) throw new Error('User not found');
+    if (user.isBanned) throw new Error('User account is suspended');
 
-  return { user, transaction };
+    const newBalance = Math.round((user.balance + amount) * 100) / 100;
+    if (newBalance < 0) {
+      throw new Error(
+        `Insufficient balance. Current balance is ₹${user.balance.toFixed(2)}, cannot deduct ₹${Math.abs(amount).toFixed(2)}.`
+      );
+    }
+
+    const newLifetime = amount > 0 ? Math.round((user.lifetimeEarnings + amount) * 100) / 100 : user.lifetimeEarnings;
+    const newReferral = type === 'referral_reward' ? Math.round((user.referralEarnings + amount) * 100) / 100 : user.referralEarnings;
+
+    user = {
+      ...user,
+      balance: newBalance,
+      lifetimeEarnings: newLifetime,
+      referralEarnings: newReferral,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const txId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const transaction: Transaction = {
+      id: txId,
+      userId,
+      type,
+      amount,
+      description,
+      balanceAfter: newBalance,
+      referenceId,
+      createdAt: new Date().toISOString(),
+    };
+
+    memStore.users.set(userId, user);
+    memStore.transactions.set(txId, transaction);
+
+    try {
+      const userDocRef = doc(db, 'users', userId);
+      const txDocRef = doc(db, 'transactions', txId);
+      await setDoc(userDocRef, cleanDocData(user), { merge: true });
+      await setDoc(txDocRef, cleanDocData(transaction));
+    } catch (err) {
+      console.warn('[DB] atomicCreditBalance Firestore sync fallback:', err);
+    }
+
+    return { user, transaction };
+  } finally {
+    releaseLock();
+  }
 }
 
 export async function getUserTransactions(userId: string, limit = 50): Promise<Transaction[]> {
@@ -1055,9 +1066,10 @@ export async function recordReferral(referral: ReferralRecord): Promise<Referral
 export async function createWithdrawalRequest(
   userId: string,
   amount: number,
-  _deprecatedUpiId?: string
+  _deprecatedUpiId?: string,
+  idempotencyKey?: string
 ): Promise<{ withdrawal: Withdrawal; transaction: Transaction; user: UserProfile; giftCardCode: string }> {
-  return await redeemGiftCardWithdrawal(userId, amount);
+  return await redeemGiftCardWithdrawal(userId, amount, idempotencyKey);
 }
 
 export async function getUserWithdrawals(userId: string): Promise<Withdrawal[]> {
@@ -1342,7 +1354,8 @@ export async function deleteGiftCardCode(id: string): Promise<boolean> {
  */
 export async function redeemGiftCardWithdrawal(
   userId: string,
-  requestedAmount?: number
+  requestedAmount?: number,
+  idempotencyKey?: string
 ): Promise<{
   withdrawal: Withdrawal;
   transaction: Transaction;
@@ -1357,6 +1370,34 @@ export async function redeemGiftCardWithdrawal(
     const user = await getUser(userId);
     if (!user) throw new Error('User not found');
     if (user.isBanned) throw new Error('Account suspended');
+
+    // 0. Idempotency Check: if user previously submitted a withdrawal with this idempotency key, return existing record
+    if (idempotencyKey && idempotencyKey.trim()) {
+      const cleanKey = idempotencyKey.trim();
+      const existingWithdrawal = Array.from(memStore.withdrawals.values()).find(
+        (w) => w.userId === userId && w.idempotencyKey === cleanKey
+      );
+      if (existingWithdrawal) {
+        const existingTx = Array.from(memStore.transactions.values()).find(
+          (t) => t.referenceId === existingWithdrawal.id
+        );
+        return {
+          withdrawal: existingWithdrawal,
+          transaction: existingTx || {
+            id: `tx_${existingWithdrawal.id}`,
+            userId,
+            type: 'withdrawal_deduct',
+            amount: -existingWithdrawal.amount,
+            description: `Amazon Gift Card ₹${existingWithdrawal.amount} Code Redeemed (${existingWithdrawal.id})`,
+            balanceAfter: user.balance,
+            referenceId: existingWithdrawal.id,
+            createdAt: existingWithdrawal.createdAt,
+          },
+          user,
+          giftCardCode: existingWithdrawal.giftCardCode || '',
+        };
+      }
+    }
 
     const settings = await getAppSettings();
 
@@ -1471,6 +1512,7 @@ export async function redeemGiftCardWithdrawal(
       giftCardDenomination: selectedCode.denomination,
       giftCardId: selectedCode.id,
       giftCardRedeemedAt: redeemedAt,
+      idempotencyKey: idempotencyKey ? idempotencyKey.trim() : undefined,
       createdAt: redeemedAt,
       processedAt: redeemedAt,
     };

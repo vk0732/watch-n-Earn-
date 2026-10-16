@@ -149,6 +149,7 @@ export interface Withdrawal {
   giftCardDenomination?: number;
   giftCardId?: string;
   giftCardRedeemedAt?: string;
+  idempotencyKey?: string;
   createdAt: string;
   processedAt?: string | null;
 }

@@ -110,16 +110,25 @@ const taskStartTimestamps = new Map<string, number>();
  */
 async function extractTelegramUser(req: Request, res: Response, next: NextFunction) {
   const initData = (req.headers['x-telegram-init-data'] as string) || (req.query.initData as string);
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const hasLiveBot = Boolean(botToken && !botToken.includes('ABCdefGHIjklMNOpqrSTUvwxYZ'));
 
   if (!initData) {
     // In preview mode or when running inside iframe without full Telegram wrapper,
     // allow testing with demo mode user header
     const mockUserId = req.headers['x-mock-user-id'] as string;
     if (mockUserId) {
+      if (hasLiveBot && process.env.NODE_ENV === 'production') {
+        return res.status(401).json({ error: 'Missing Telegram authentication (x-telegram-init-data)' });
+      }
       const user = await getUser(mockUserId);
       if (user) {
+        if (user.isBanned) {
+          return res.status(403).json({ error: 'Your account is suspended. Contact support.' });
+        }
         (req as any).user = user;
-        (req as any).isAdmin = isTelegramAdmin(user.telegramId);
+        (req as any).isAdmin = isTelegramAdmin(user.telegramId) && !hasLiveBot;
+        (req as any).isSimulatedAuth = true;
         return next();
       }
     }
@@ -148,28 +157,26 @@ async function extractTelegramUser(req: Request, res: Response, next: NextFuncti
       referralCode: `ref_${result.user.id}_${Math.random().toString(36).substring(2, 6)}`,
       dailyStreak: 0,
       isBanned: false,
+      signupBonusClaimed: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     user = await saveUser(newUser);
 
     if (settings.signupBonus > 0) {
-      const bonusRes = await atomicCreditBalance(
-        user.id,
-        settings.signupBonus,
-        'signup_bonus',
-        'Welcome signup reward'
-      );
-      user = bonusRes.user;
+      const bonusRes = await atomicClaimSignupBonus({
+        userId: user.id,
+        telegramId: user.telegramId,
+      });
+      if (bonusRes.user) {
+        user = bonusRes.user;
+      }
     }
   }
 
   if (user.isBanned) {
     return res.status(403).json({ error: 'Your account is suspended. Contact support.' });
   }
-
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  const hasLiveBot = Boolean(botToken && !botToken.includes('ABCdefGHIjklMNOpqrSTUvwxYZ'));
 
   (req as any).user = user;
   (req as any).isAdmin = isTelegramAdmin(user.telegramId) && (!hasLiveBot || !result.isSimulated);
@@ -492,8 +499,11 @@ apiRouter.get('/auth/me', extractTelegramUser, async (req, res) => {
    DAILY CHECK-IN REWARD
    ======================================================== */
 apiRouter.post('/rewards/daily-checkin', extractTelegramUser, requireLiveChannelMembership, async (req, res) => {
+  const reqUser = (req as any).user as UserProfile;
+  const releaseLock = await acquireLock(`lock_daily_checkin_${reqUser.id}`);
+
   try {
-    const user = (req as any).user as UserProfile;
+    const user = (await getUser(reqUser.id)) || reqUser;
     const settings = await getAppSettings();
 
     const todayUTC = new Date().toISOString().split('T')[0];
@@ -541,6 +551,8 @@ apiRouter.post('/rewards/daily-checkin', extractTelegramUser, requireLiveChannel
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  } finally {
+    releaseLock();
   }
 });
 
@@ -740,9 +752,13 @@ apiRouter.post('/task-bots/:id/start', extractTelegramUser, async (req, res) => 
 });
 
 apiRouter.post('/task-bots/:id/complete', extractTelegramUser, async (req, res) => {
+  const user = (req as any).user as UserProfile;
+  const botId = req.params.id;
+  const lockKey = `lock_bot_claim_${user.id}_${botId}`;
+  const releaseLock = await acquireLock(lockKey);
+
   try {
-    const user = (req as any).user as UserProfile;
-    const bot = await getTaskBotById(req.params.id);
+    const bot = await getTaskBotById(botId);
     if (!bot || !bot.isEnabled) return res.status(404).json({ error: 'Task Bot not found or disabled' });
 
     const existingComp = await getTaskCompletion(user.id, `bot_${bot.id}`);
@@ -793,6 +809,8 @@ apiRouter.post('/task-bots/:id/complete', extractTelegramUser, async (req, res) 
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  } finally {
+    releaseLock();
   }
 });
 
@@ -833,7 +851,9 @@ apiRouter.get('/referrals/stats', extractTelegramUser, async (req, res) => {
 apiRouter.post('/withdrawals/create', extractTelegramUser, requireLiveChannelMembership, async (req, res) => {
   try {
     const user = (req as any).user as UserProfile;
-    const { amount } = req.body;
+    const { amount, idempotencyKey } = req.body;
+    const headerKey = req.headers['x-idempotency-key'] as string;
+    const effectiveKey = (idempotencyKey || headerKey || '').trim();
 
     const numAmount = amount !== undefined && amount !== null && amount !== '' ? Number(amount) : undefined;
     if (numAmount !== undefined && (isNaN(numAmount) || numAmount <= 0)) {
@@ -841,7 +861,7 @@ apiRouter.post('/withdrawals/create', extractTelegramUser, requireLiveChannelMem
     }
 
     // Every withdrawal is fulfilled instantly via Amazon Gift Card Code redemption
-    const result = await redeemGiftCardWithdrawal(user.id, numAmount);
+    const result = await redeemGiftCardWithdrawal(user.id, numAmount, effectiveKey || undefined);
     return res.json({
       success: true,
       orderId: result.withdrawal.id,

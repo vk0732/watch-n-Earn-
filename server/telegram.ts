@@ -755,7 +755,10 @@ export async function sendTelegramMessage(
 ): Promise<{ success: boolean; messageId?: number; error?: string }> {
   const token = customToken || process.env.TELEGRAM_BOT_TOKEN;
   if (!token || token.includes('ABCdefGHIjklMNOpqrSTUvwxYZ')) {
-    console.log(`[Bot Mock Message to ${chatId}]: ${text}`);
+    const maskedText = text
+      .replace(/((?:gift card|card|voucher)\s+code\s*(?:is)?:\s*<code>)[^<]+(<\/code>)/gi, '$1****$2')
+      .replace(/\b([A-Z0-9]{4}-[A-Z0-9]{4,6}-[A-Z0-9]{4})\b/g, '****');
+    console.log(`[Bot Mock Message to ${chatId}]: ${maskedText}`);
     return { success: true, messageId: Math.floor(Math.random() * 1000000) };
   }
 

@@ -422,81 +422,114 @@ async function runTests() {
      ------------------------------------------------------------------ */
   console.log('\nTest Suite 6: Instant Amazon Gift Card Redemption & Atomic Allocation');
   {
-    const wthUserId = `wth_user_${Date.now()}`;
-    await saveUser({
-      id: wthUserId,
-      telegramId: 111222,
-      firstName: 'Charlie',
-      balance: 150, // Available balance
-      lifetimeEarnings: 150,
-      referralEarnings: 0,
-      referralCode: `ref_${wthUserId}`,
-      dailyStreak: 0,
-      isBanned: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
+    const initialSettings = await getAppSettings();
+    await updateAppSettings({ minWithdrawalAmount: 10, maxWithdrawalAmount: 100 });
 
-    // 1. Insufficient balance test
-    let failedInsufficient = false;
     try {
-      await redeemGiftCardWithdrawal(wthUserId, 500);
-    } catch {
-      failedInsufficient = true;
+      const testDenom = 77;
+      const wthUserId = `wth_user_${Date.now()}`;
+      await saveUser({
+        id: wthUserId,
+        telegramId: 111222,
+        firstName: 'Charlie',
+        balance: 350, // Available balance
+        lifetimeEarnings: 350,
+        referralEarnings: 0,
+        referralCode: `ref_${wthUserId}`,
+        dailyStreak: 0,
+        isBanned: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      // 1. Insufficient balance test
+      let failedInsufficient = false;
+      try {
+        await redeemGiftCardWithdrawal(wthUserId, 500);
+      } catch {
+        failedInsufficient = true;
+      }
+      assert(failedInsufficient, 'Redemption request exceeding available balance rejected');
+
+      // 2. Below minimum threshold rejection (min is ₹10)
+      let minFailed = false;
+      try {
+        await redeemGiftCardWithdrawal(wthUserId, 5);
+      } catch {
+        minFailed = true;
+      }
+      assert(minFailed, 'Redemption below minimum threshold (₹10) rejected');
+
+      // 3. Out of stock condition (no codes of testDenom exist in inventory)
+      let outOfStock = false;
+      try {
+        await redeemGiftCardWithdrawal(wthUserId, testDenom);
+      } catch (err: any) {
+        if (err.message.includes('out of stock')) outOfStock = true;
+      }
+      assert(outOfStock, 'Redemption when inventory has no codes throws "out of stock"');
+
+      // Check user balance wasn't touched
+      const untouchedUser = await getUser(wthUserId);
+      assert(untouchedUser?.balance === 350, 'Balance untouched (₹350) when out of stock');
+
+      // 4. Add codes to inventory
+      const testCode1 = `TEST-AMZ1-${Date.now()}`;
+      const testCode2 = `TEST-AMZ2-${Date.now()}`;
+      const addResult = await addGiftCardCodes([testCode1, testCode2], testDenom, 'Test Admin');
+      assert(addResult.added === 2, 'Admin successfully added 2 Amazon Gift Card codes to inventory');
+
+      // 5. Successful redemption
+      const redeemRes = await redeemGiftCardWithdrawal(wthUserId, testDenom);
+      assert(redeemRes.withdrawal.amount === testDenom, `Withdrawal created for ₹${testDenom}`);
+      assert(redeemRes.withdrawal.status === 'success', 'Fulfillment is instant with status: success');
+      assert(redeemRes.withdrawal.payoutMode === 'gift_card', 'Payout mode is gift_card');
+      assert(redeemRes.giftCardCode === testCode1 || redeemRes.giftCardCode === testCode2, 'Valid Amazon Gift Card code assigned');
+      assert(redeemRes.user.balance === 273, 'Balance atomically decremented from ₹350 to ₹273');
+
+      // 6. Second redemption gets second code
+      const redeemRes2 = await redeemGiftCardWithdrawal(wthUserId, testDenom);
+      assert(redeemRes2.giftCardCode !== redeemRes.giftCardCode, 'Unique second gift card code assigned without duplicate allocation');
+      assert(redeemRes2.user.balance === 196, 'Balance decremented to ₹196');
+
+      // 7. Third redemption now fails with out of stock
+      let outOfStock2 = false;
+      try {
+        await redeemGiftCardWithdrawal(wthUserId, testDenom);
+      } catch (err: any) {
+        if (err.message.includes('out of stock')) outOfStock2 = true;
+      }
+      assert(outOfStock2, 'Third redemption fails because stock (2 codes) was depleted');
+      const finalUser = await getUser(wthUserId);
+      assert(finalUser?.balance === 196, 'Balance strictly preserved at ₹196 when depleted');
+
+      // 8. Idempotency Key: Repeat requests return identical withdrawal without double deduction
+      const testCode3 = `TEST-AMZ3-${Date.now()}`;
+      await addGiftCardCodes([testCode3], testDenom, 'Test Admin');
+      const idemKey = `idem_test_${Date.now()}`;
+      const idemFirst = await redeemGiftCardWithdrawal(wthUserId, testDenom, idemKey);
+      assert(idemFirst.withdrawal.idempotencyKey === idemKey, 'Idempotency key recorded on initial withdrawal');
+      assert(idemFirst.user.balance === 119, 'Balance decremented from ₹196 to ₹119');
+
+      // Repeat request with the exact same idempotency key
+      const idemRepeat = await redeemGiftCardWithdrawal(wthUserId, testDenom, idemKey);
+      assert(idemRepeat.withdrawal.id === idemFirst.withdrawal.id, 'Idempotent retry returns identical withdrawal order ID');
+      assert(idemRepeat.giftCardCode === idemFirst.giftCardCode, 'Idempotent retry returns identical gift card code');
+      assert(idemRepeat.user.balance === 119, 'Idempotent retry does NOT deduct balance a second time');
+
+      // 9. Negative Balance Overdraft Guard in atomicCreditBalance
+      let overdraftFailed = false;
+      try {
+        await atomicCreditBalance(wthUserId, -500, 'withdrawal_deduct', 'Illegal Overdraft Attempt');
+      } catch (err: any) {
+        if (err.message.includes('Insufficient balance') || err.message.includes('negative')) overdraftFailed = true;
+      }
+      assert(overdraftFailed, 'Negative balance overdraft rejected by atomicCreditBalance guard');
+      const userAfterOverdraft = await getUser(wthUserId);
+      assert(userAfterOverdraft?.balance === 119, 'User balance strictly preserved at ₹119 after rejected overdraft');
+    } finally {
+      await updateAppSettings(initialSettings);
     }
-    assert(failedInsufficient, 'Redemption request exceeding available balance rejected');
-
-    // 2. Below minimum threshold rejection (min is ₹10)
-    let minFailed = false;
-    try {
-      await redeemGiftCardWithdrawal(wthUserId, 5);
-    } catch {
-      minFailed = true;
-    }
-    assert(minFailed, 'Redemption below minimum threshold (₹10) rejected');
-
-    // 3. Out of stock condition (no ₹45 codes exist in inventory)
-    let outOfStock = false;
-    try {
-      await redeemGiftCardWithdrawal(wthUserId, 45);
-    } catch (err: any) {
-      if (err.message.includes('out of stock')) outOfStock = true;
-    }
-    assert(outOfStock, 'Redemption when inventory has no codes throws "out of stock"');
-
-    // Check user balance wasn't touched
-    const untouchedUser = await getUser(wthUserId);
-    assert(untouchedUser?.balance === 150, 'Balance untouched (₹150) when out of stock');
-
-    // 4. Add codes to inventory
-    const testCode1 = `TEST-AMZ1-${Date.now()}`;
-    const testCode2 = `TEST-AMZ2-${Date.now()}`;
-    const addResult = await addGiftCardCodes([testCode1, testCode2], 45, 'Test Admin');
-    assert(addResult.added === 2, 'Admin successfully added 2 Amazon Gift Card codes to inventory');
-
-    // 5. Successful redemption
-    const redeemRes = await redeemGiftCardWithdrawal(wthUserId, 45);
-    assert(redeemRes.withdrawal.amount === 45, 'Withdrawal created for ₹45');
-    assert(redeemRes.withdrawal.status === 'success', 'Fulfillment is instant with status: success');
-    assert(redeemRes.withdrawal.payoutMode === 'gift_card', 'Payout mode is gift_card');
-    assert(redeemRes.giftCardCode === testCode1 || redeemRes.giftCardCode === testCode2, 'Valid Amazon Gift Card code assigned');
-    assert(redeemRes.user.balance === 105, 'Balance atomically decremented from ₹150 to ₹105');
-
-    // 6. Second redemption gets second code
-    const redeemRes2 = await redeemGiftCardWithdrawal(wthUserId, 45);
-    assert(redeemRes2.giftCardCode !== redeemRes.giftCardCode, 'Unique second gift card code assigned without duplicate allocation');
-    assert(redeemRes2.user.balance === 60, 'Balance decremented to ₹60');
-
-    // 7. Third redemption now fails with out of stock
-    let outOfStock2 = false;
-    try {
-      await redeemGiftCardWithdrawal(wthUserId, 45);
-    } catch (err: any) {
-      if (err.message.includes('out of stock')) outOfStock2 = true;
-    }
-    assert(outOfStock2, 'Third redemption fails because stock (2 codes) was depleted');
-    const finalUser = await getUser(wthUserId);
-    assert(finalUser?.balance === 60, 'Balance strictly preserved at ₹60 when depleted');
   }
 
   /* ------------------------------------------------------------------

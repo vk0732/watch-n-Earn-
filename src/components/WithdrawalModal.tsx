@@ -80,7 +80,8 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
     setLoading(true);
     try {
-      const res = await api.redeemGiftCard(numAmount);
+      const idempotencyKey = 'wth_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      const res = await api.redeemGiftCard(numAmount, idempotencyKey);
       setSuccessResult({
         orderId: res.orderId,
         code: res.giftCardCode,

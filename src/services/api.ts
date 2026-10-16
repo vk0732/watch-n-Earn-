@@ -146,7 +146,7 @@ export const api = {
     }>('/referrals/stats'),
 
   // Withdrawals & Gift Card Code Redemption
-  requestWithdrawal: (amount?: number) =>
+  requestWithdrawal: (amount?: number, idempotencyKey?: string) =>
     request<{
       success: boolean;
       orderId: string;
@@ -157,10 +157,10 @@ export const api = {
       message: string;
     }>('/withdrawals/create', {
       method: 'POST',
-      body: JSON.stringify({ amount }),
+      body: JSON.stringify({ amount, idempotencyKey }),
     }),
 
-  redeemGiftCard: (amount?: number) =>
+  redeemGiftCard: (amount?: number, idempotencyKey?: string) =>
     request<{
       success: boolean;
       orderId: string;
@@ -171,7 +171,7 @@ export const api = {
       message: string;
     }>('/withdrawals/create', {
       method: 'POST',
-      body: JSON.stringify({ amount }),
+      body: JSON.stringify({ amount, idempotencyKey }),
     }),
 
   getMyWithdrawals: () => request<{ withdrawals: Withdrawal[] }>('/withdrawals/my'),

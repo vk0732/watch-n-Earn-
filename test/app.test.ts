@@ -507,6 +507,7 @@ async function runTests() {
      ------------------------------------------------------------------ */
   console.log('\nTest Suite 8: Payout Gateway Safety Rules & Paynit Integration');
   {
+    await removeGatewayCredentials('test_admin');
     process.env.PAYOUT_LIVE_ENABLED = 'false';
     const status = await payoutGateway.getStatus();
     assert(status.isLiveEnabled === false, 'Live payouts are disabled by default');
@@ -520,7 +521,6 @@ async function runTests() {
     assert(Boolean(paynitProvider?.defaultTestUrl.includes('supabase.co')), 'Paynit default API URL points to Supabase Edge functions');
 
     // 2. Encryption and Environment Fallback
-    await removeGatewayCredentials('test_admin');
     process.env.PAYNIT_CLIENT_ID = 'test_paynit_client_id_123';
     process.env.PAYNIT_CLIENT_SECRET = 'test_paynit_client_secret_456';
     const creds = await getDecryptedCredentials();

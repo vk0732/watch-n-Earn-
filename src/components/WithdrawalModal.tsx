@@ -83,32 +83,32 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-2xl relative">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+      <div className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl relative animate-in fade-in zoom-in-95 duration-150">
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+          className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition"
         >
           <X className="w-5 h-5" />
         </button>
 
         {successResult ? (
           <div className="text-center py-4 space-y-4">
-            <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-400">
+            <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center mx-auto text-emerald-600 shadow-xs">
               <CheckCircle2 className="w-8 h-8" />
             </div>
-            <h3 className="text-xl font-bold text-white">Withdrawal Submitted!</h3>
-            <p className="text-sm text-slate-300 leading-relaxed">
-              Your request for <span className="font-bold text-emerald-400">₹{amount}</span> has been received.
+            <h3 className="text-lg font-bold text-slate-900">Withdrawal Submitted!</h3>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Your request for <span className="font-bold text-emerald-700">₹{amount}</span> has been received.
             </p>
-            <div className="p-3 bg-slate-800 rounded-xl text-xs text-slate-400 space-y-1">
-              <div>Order ID: <span className="text-white font-mono">{successResult.orderId}</span></div>
-              <div>UPI Destination: <span className="text-white font-mono">{upiId}</span></div>
-              <div>Status: <span className="text-amber-400 font-bold">Pending Review</span></div>
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-600 space-y-1.5 text-left">
+              <div className="flex justify-between">Order ID: <span className="text-slate-900 font-mono font-semibold">{successResult.orderId}</span></div>
+              <div className="flex justify-between">UPI Destination: <span className="text-slate-900 font-mono font-medium">{upiId}</span></div>
+              <div className="flex justify-between">Status: <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded font-bold">Pending Review</span></div>
             </div>
             <button
               onClick={onClose}
-              className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg transition"
+              className="w-full py-3 px-4 tg-btn-primary font-bold text-xs rounded-xl shadow-md transition"
             >
               Done & Return to Wallet
             </button>
@@ -116,20 +116,20 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-lg">
+              <div className="w-10 h-10 rounded-2xl bg-sky-50 border border-sky-100 flex items-center justify-center text-[#0088cc] font-black text-lg">
                 ₹
               </div>
               <div>
-                <h3 className="text-xl font-bold text-white">Withdraw Funds</h3>
-                <p className="text-xs text-slate-400">
+                <h3 className="text-base font-bold text-slate-900">Withdraw Funds</h3>
+                <p className="text-xs text-slate-500">
                   Available Balance:{' '}
-                  <span className="text-emerald-400 font-bold">₹{availableBalance.toFixed(2)}</span>
+                  <span className="text-[#0088cc] font-bold">₹{availableBalance.toFixed(2)}</span>
                 </p>
               </div>
             </div>
 
             {error && (
-              <div className="p-3 bg-red-950/70 border border-red-500/30 text-red-300 rounded-xl text-xs flex items-center gap-2">
+              <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>{error}</span>
               </div>
@@ -137,7 +137,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
             <div>
               <div className="flex justify-between items-center mb-1.5">
-                <label className="block text-xs font-semibold text-slate-300">
+                <label className="block text-xs font-semibold text-slate-700">
                   Amount (Min: ₹{minWithdrawal}{maxWithdrawal ? ` • Max: ₹${maxWithdrawal}` : ''})
                 </label>
                 {maxWithdrawal && (
@@ -145,7 +145,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                 )}
               </div>
               <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₹</span>
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">₹</span>
                 <input
                   type="number"
                   min={minWithdrawal}
@@ -154,7 +154,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
                   placeholder={`Min ${minWithdrawal}${maxWithdrawal ? ` - Max ${maxWithdrawal}` : ''}`}
-                  className="w-full pl-8 pr-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-bold focus:border-emerald-500 focus:outline-none transition"
+                  className="w-full pl-8 pr-4 py-2.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-[#0088cc] rounded-xl text-slate-900 font-bold text-sm focus:outline-none transition"
                   required
                 />
               </div>
@@ -165,7 +165,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                     key={q}
                     type="button"
                     onClick={() => handleQuickAmount(q)}
-                    className="flex-1 py-1 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg transition"
+                    className="flex-1 py-1 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg transition"
                   >
                     ₹{q}
                   </button>
@@ -173,7 +173,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                 <button
                   type="button"
                   onClick={handleMaxAmount}
-                  className="flex-1 py-1 text-xs font-bold bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 border border-emerald-500/30 rounded-lg transition"
+                  className="flex-1 py-1 text-xs font-bold bg-sky-50 text-[#0088cc] hover:bg-sky-100 border border-sky-200 rounded-lg transition"
                 >
                   MAX
                 </button>
@@ -181,7 +181,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 Recipient UPI ID (VPA)
               </label>
               <input
@@ -189,7 +189,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                 value={upiId}
                 onChange={(e) => setUpiId(e.target.value)}
                 placeholder="e.g. yourname@okhdfcbank or 9876543210@paytm"
-                className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-medium focus:border-emerald-500 focus:outline-none transition placeholder:text-slate-500 text-sm"
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-[#0088cc] rounded-xl text-slate-900 font-medium text-xs focus:outline-none transition placeholder:text-slate-400"
                 required
               />
               <p className="text-[11px] text-slate-400 mt-1">
@@ -197,17 +197,17 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               </p>
             </div>
 
-            <div className="p-3 bg-slate-800/60 border border-slate-700/60 rounded-xl text-xs space-y-1.5 text-slate-300">
+            <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl text-xs space-y-1.5 text-slate-600">
               <div className="flex justify-between">
                 <span className="text-slate-400">Processing Fee:</span>
-                <span className="text-emerald-400 font-semibold">₹0.00 (Free)</span>
+                <span className="text-emerald-700 font-semibold">₹0.00 (Free)</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Transfer Method:</span>
-                <span className="font-semibold text-white">Instant UPI</span>
+                <span className="font-semibold text-slate-900">Instant UPI</span>
               </div>
-              <div className="flex items-center gap-1.5 text-slate-400 text-[11px] pt-1 border-t border-slate-700/50">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <div className="flex items-center gap-1.5 text-slate-400 text-[11px] pt-1 border-t border-slate-200">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                 <span>Protected by atomic balance reservation & transaction logging</span>
               </div>
             </div>
@@ -215,7 +215,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
             <button
               type="submit"
               disabled={loading || availableBalance < minWithdrawal}
-              className="w-full py-3.5 px-4 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-bold rounded-xl shadow-lg shadow-emerald-500/20 transition flex items-center justify-center gap-2 disabled:opacity-50"
+              className="w-full py-3.5 px-4 tg-btn-primary font-bold text-xs uppercase tracking-wider rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 active:scale-98"
             >
               {loading ? (
                 'Submitting Request...'

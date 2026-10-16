@@ -28,14 +28,14 @@ export class ErrorBoundary extends Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <div className="p-6 my-4 bg-slate-900 border border-red-500/30 rounded-2xl text-center space-y-3">
-          <div className="w-10 h-10 mx-auto rounded-xl bg-red-500/20 text-red-400 flex items-center justify-center text-lg">
+        <div className="p-6 my-4 bg-white border border-red-200 rounded-3xl text-center space-y-3 shadow-xs">
+          <div className="w-10 h-10 mx-auto rounded-2xl bg-red-50 text-red-600 flex items-center justify-center text-lg border border-red-100">
             ⚠️
           </div>
-          <h3 className="text-sm font-bold text-white">
+          <h3 className="text-sm font-bold text-slate-900">
             {this.props.fallbackTitle || 'Something went wrong displaying this section'}
           </h3>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-500">
             {this.state.error?.message || 'An unexpected error occurred.'}
           </p>
           <button
@@ -44,7 +44,7 @@ export class ErrorBoundary extends Component<Props, State> {
               this.setState({ hasError: false, error: null });
               if (this.props.onReset) this.props.onReset();
             }}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition"
+            className="px-4 py-2 bg-[#0088cc] hover:bg-[#0077b5] text-white rounded-xl text-xs font-bold transition shadow-2xs"
           >
             Reload Section
           </button>

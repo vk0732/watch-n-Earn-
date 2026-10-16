@@ -736,19 +736,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   return (
     <div className="space-y-4 pb-24">
       {/* Admin Header */}
-      <div className="p-5 bg-gradient-to-r from-red-950/60 via-slate-900 to-slate-900 border border-red-500/30 rounded-2xl flex items-center justify-between">
+      <div className="p-5 bg-white border border-slate-200/80 rounded-2xl flex items-center justify-between shadow-xs">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-red-500/15 border border-red-500/30 flex items-center justify-center text-red-400">
+          <div className="w-10 h-10 rounded-xl bg-red-50 border border-red-200 flex items-center justify-center text-red-600 shadow-2xs">
             <ShieldAlert className="w-6 h-6" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-lg font-bold text-white">Administrator Control Panel</h2>
+              <h2 className="text-base font-bold text-slate-900">Administrator Control Panel</h2>
               <span className="px-2 py-0.5 bg-red-500/20 text-red-400 text-[10px] font-mono rounded">
                 SECURE
               </span>
             </div>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-500">
               Logged in as Telegram ID: <span className="font-mono text-white">{currentUser.id}</span>
             </p>
           </div>
@@ -756,7 +756,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
         <button
           onClick={loadTabContent}
-          className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition"
+          className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition"
           title="Refresh"
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -802,7 +802,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
               className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 ${
                 activeTab === t.id
                   ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-                  : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
+                  : 'bg-slate-900 text-slate-500 border border-slate-200/80 hover:text-white'
               }`}
             >
               <Icon className="w-3.5 h-3.5" />
@@ -816,33 +816,33 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       {activeTab === 'stats' && stats && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
-              <span className="text-[10px] text-slate-400 uppercase font-semibold">Total Users</span>
-              <p className="text-2xl font-black text-white">{stats.totalUsers}</p>
+            <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
+              <span className="text-[10px] text-slate-500 uppercase font-semibold">Total Users</span>
+              <p className="text-2xl font-black text-slate-900">{stats.totalUsers}</p>
             </div>
-            <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
-              <span className="text-[10px] text-slate-400 uppercase font-semibold">Active Today</span>
+            <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
+              <span className="text-[10px] text-slate-500 uppercase font-semibold">Active Today</span>
               <p className="text-2xl font-black text-emerald-400">{stats.activeUsersToday}</p>
             </div>
-            <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
-              <span className="text-[10px] text-slate-400 uppercase font-semibold">Tasks Completed</span>
-              <p className="text-2xl font-black text-white">{stats.totalTaskCompletions}</p>
+            <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
+              <span className="text-[10px] text-slate-500 uppercase font-semibold">Tasks Completed</span>
+              <p className="text-2xl font-black text-slate-900">{stats.totalTaskCompletions}</p>
             </div>
-            <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
-              <span className="text-[10px] text-slate-400 uppercase font-semibold">Total Rewards Credited</span>
+            <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
+              <span className="text-[10px] text-slate-500 uppercase font-semibold">Total Rewards Credited</span>
               <p className="text-2xl font-black text-emerald-400">₹{stats.totalRewardsCredited.toFixed(2)}</p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
+            <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
               <div className="flex justify-between items-center mb-2">
                 <span className="text-xs font-bold text-amber-400 uppercase">Pending Withdrawals</span>
                 <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 font-bold">
                   {stats.pendingWithdrawalsCount} Requests
                 </span>
               </div>
-              <p className="text-3xl font-black text-white">₹{stats.pendingWithdrawalsAmount.toFixed(2)}</p>
+              <p className="text-3xl font-black text-slate-900">₹{stats.pendingWithdrawalsAmount.toFixed(2)}</p>
               <button
                 onClick={() => setActiveTab('withdrawals')}
                 className="mt-3 text-xs text-amber-400 hover:underline font-bold"
@@ -851,24 +851,24 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
               </button>
             </div>
 
-            <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
+            <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
               <div className="flex justify-between items-center mb-2">
                 <span className="text-xs font-bold text-emerald-400 uppercase">Settled Payouts</span>
                 <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-bold">
                   {stats.successfulPayoutsCount} Paid
                 </span>
               </div>
-              <p className="text-3xl font-black text-white">₹{stats.successfulPayoutsAmount.toFixed(2)}</p>
-              <p className="text-xs text-slate-400 mt-2">
+              <p className="text-3xl font-black text-slate-900">₹{stats.successfulPayoutsAmount.toFixed(2)}</p>
+              <p className="text-xs text-slate-500 mt-2">
                 Failed / Rejected: <strong className="text-red-400">{stats.failedPayoutsCount}</strong>
               </p>
             </div>
           </div>
 
           {/* Gateway Safety Banner */}
-          <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
+          <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
             <div className="flex items-center justify-between mb-2">
-              <h4 className="text-sm font-bold text-white flex items-center gap-2">
+              <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <CreditCard className="w-4 h-4 text-emerald-400" /> UPI Payout Gateway Status
               </h4>
               <span
@@ -881,14 +881,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 {gatewayStatus?.isLiveEnabled ? 'LIVE GATEWAY CONNECTED' : 'SAFE SANDBOX / MANUAL REVIEW'}
               </span>
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed">{gatewayStatus?.statusMessage}</p>
-            <div className="mt-3 pt-3 border-t border-slate-800 flex items-center justify-between">
-              <span className="text-[11px] text-slate-400">
+            <p className="text-xs text-slate-700 leading-relaxed">{gatewayStatus?.statusMessage}</p>
+            <div className="mt-3 pt-3 border-t border-slate-200/80 flex items-center justify-between">
+              <span className="text-[11px] text-slate-500">
                 Provider: <strong className="text-white uppercase">{gatewayStatus?.providerName || 'None'}</strong> • Environment: <strong className={gatewayStatus?.isLiveEnabled ? 'text-emerald-400' : 'text-amber-400'}>{gatewayStatus?.environment?.toUpperCase() || 'TEST'}</strong>
               </span>
               <button
                 onClick={() => setActiveTab('gateway')}
-                className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-bold rounded-lg transition"
+                className="px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold rounded-lg transition"
               >
                 Payment Gateway Settings →
               </button>
@@ -903,23 +903,23 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
           {/* Gamification Statistics Overview */}
           {gamStats && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
-                <span className="text-[10px] text-slate-400 uppercase font-semibold">Spins Earned</span>
-                <p className="text-2xl font-black text-white">{gamStats.spinsEarned}</p>
+              <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
+                <span className="text-[10px] text-slate-500 uppercase font-semibold">Spins Earned</span>
+                <p className="text-2xl font-black text-slate-900">{gamStats.spinsEarned}</p>
                 <p className="text-[10px] text-slate-500 mt-0.5">Used: {gamStats.spinsUsed}</p>
               </div>
-              <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
-                <span className="text-[10px] text-slate-400 uppercase font-semibold">Spin Rewards Paid</span>
+              <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
+                <span className="text-[10px] text-slate-500 uppercase font-semibold">Spin Rewards Paid</span>
                 <p className="text-2xl font-black text-purple-400">₹{gamStats.spinTotalCost.toFixed(2)}</p>
                 <p className="text-[10px] text-slate-500 mt-0.5">{gamStats.spinRewardsGranted} winning spins</p>
               </div>
-              <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
-                <span className="text-[10px] text-slate-400 uppercase font-semibold">Scratch Cards</span>
+              <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
+                <span className="text-[10px] text-slate-500 uppercase font-semibold">Scratch Cards</span>
                 <p className="text-2xl font-black text-teal-400">{gamStats.scratchCardsIssued}</p>
                 <p className="text-[10px] text-slate-500 mt-0.5">Revealed: {gamStats.scratchCardsRevealed}</p>
               </div>
-              <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
-                <span className="text-[10px] text-slate-400 uppercase font-semibold">Scratch Rewards Paid</span>
+              <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
+                <span className="text-[10px] text-slate-500 uppercase font-semibold">Scratch Rewards Paid</span>
                 <p className="text-2xl font-black text-emerald-400">₹{gamStats.scratchTotalCost.toFixed(2)}</p>
                 <p className="text-[10px] text-slate-500 mt-0.5">{gamStats.scratchRewardsGranted} winning cards</p>
               </div>
@@ -928,13 +928,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
           <form onSubmit={handleSaveGamification} className="space-y-4">
             {/* 1. Spin Wheel Configuration Card */}
-            <div className="p-5 bg-slate-900 border border-slate-800 rounded-2xl space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200/80">
                 <div className="flex items-center gap-2.5">
                   <span className="text-xl">🎡</span>
                   <div>
-                    <h3 className="text-sm font-bold text-white">Task Completion → Spin Wheel</h3>
-                    <p className="text-xs text-slate-400">
+                    <h3 className="text-sm font-bold text-slate-900">Task Completion → Spin Wheel</h3>
+                    <p className="text-xs text-slate-500">
                       Users unlock 1 spin after completing a threshold of verified tasks
                     </p>
                   </div>
@@ -944,9 +944,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     type="checkbox"
                     checked={gamSettings.spinWheelEnabled}
                     onChange={(e) => setGamSettings({ ...gamSettings, spinWheelEnabled: e.target.checked })}
-                    className="w-4 h-4 text-purple-600 rounded bg-slate-800 border-slate-700"
+                    className="w-4 h-4 text-purple-600 rounded bg-slate-800 border-slate-200"
                   />
-                  <span className="text-xs font-bold text-white">
+                  <span className="text-xs font-bold text-slate-900">
                     {gamSettings.spinWheelEnabled ? 'ENABLED' : 'DISABLED'}
                   </span>
                 </label>
@@ -955,7 +955,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
               {/* Tasks Required Per Spin (2, 3, or 4) */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Tasks Required Per Spin (Default 3) <span className="text-red-400">*</span>
                   </label>
                   <select
@@ -966,7 +966,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         tasksRequiredPerSpin: Number(e.target.value) as 2 | 3 | 4,
                       })
                     }
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-bold"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-bold"
                   >
                     <option value={2}>2 Tasks Completed</option>
                     <option value={3}>3 Tasks Completed (Recommended)</option>
@@ -976,7 +976,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Daily Spin Limit (0 = Unlimited)
                   </label>
                   <input
@@ -990,13 +990,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         dailySpinLimit: Number(e.target.value),
                       })
                     }
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                   />
                   <p className="text-[10px] text-slate-500 mt-1">Cap maximum spins allowed per user per day</p>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Max Daily Spin Budget (₹)
                   </label>
                   <input
@@ -1009,16 +1009,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         maxDailySpinRewardBudget: Number(e.target.value),
                       })
                     }
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                   />
                   <p className="text-[10px] text-slate-500 mt-1">Financial ceiling limit for spin payouts</p>
                 </div>
               </div>
 
               {/* Spin Segments Editor */}
-              <div className="space-y-2 pt-2 border-t border-slate-800">
+              <div className="space-y-2 pt-2 border-t border-slate-200/80">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                  <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
                     Wheel Reward Segments & Probabilities
                   </h4>
                   <button
@@ -1039,7 +1039,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         spinSegments: [...gamSettings.spinSegments, newSeg],
                       });
                     }}
-                    className="py-1 px-2.5 bg-slate-800 hover:bg-slate-700 text-purple-300 text-xs font-bold rounded-lg border border-slate-700"
+                    className="py-1 px-2.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold rounded-lg border border-slate-200"
                   >
                     + Add Segment
                   </button>
@@ -1049,10 +1049,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   {gamSettings.spinSegments.map((seg, idx) => (
                     <div
                       key={seg.id || idx}
-                      className="p-3 bg-slate-850 border border-slate-800 rounded-xl grid grid-cols-1 sm:grid-cols-5 gap-2 items-center text-xs"
+                      className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl grid grid-cols-1 sm:grid-cols-5 gap-2 items-center text-xs"
                     >
                       <div className="sm:col-span-2">
-                        <label className="text-[10px] text-slate-400 block mb-0.5">Label</label>
+                        <label className="text-[10px] text-slate-500 block mb-0.5">Label</label>
                         <input
                           type="text"
                           value={seg.label}
@@ -1061,12 +1061,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                             updated[idx].label = e.target.value;
                             setGamSettings({ ...gamSettings, spinSegments: updated });
                           }}
-                          className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-xs"
+                          className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                         />
                       </div>
 
                       <div>
-                        <label className="text-[10px] text-slate-400 block mb-0.5">Amount (₹)</label>
+                        <label className="text-[10px] text-slate-500 block mb-0.5">Amount (₹)</label>
                         <input
                           type="number"
                           min={0}
@@ -1078,12 +1078,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                             if (amt === 0) updated[idx].rewardType = 'no_reward';
                             setGamSettings({ ...gamSettings, spinSegments: updated });
                           }}
-                          className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-xs"
+                          className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                         />
                       </div>
 
                       <div>
-                        <label className="text-[10px] text-slate-400 block mb-0.5">Chance / Weight</label>
+                        <label className="text-[10px] text-slate-500 block mb-0.5">Chance / Weight</label>
                         <input
                           type="number"
                           min={1}
@@ -1094,7 +1094,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                             updated[idx].probability = Number(e.target.value);
                             setGamSettings({ ...gamSettings, spinSegments: updated });
                           }}
-                          className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-xs font-mono"
+                          className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
                         />
                       </div>
 
@@ -1130,13 +1130,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             </div>
 
             {/* 2. Referral Scratch Card Configuration Card */}
-            <div className="p-5 bg-slate-900 border border-slate-800 rounded-2xl space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200/80">
                 <div className="flex items-center gap-2.5">
                   <span className="text-xl">🎁</span>
                   <div>
-                    <h3 className="text-sm font-bold text-white">Successful Referral → Scratch Card</h3>
-                    <p className="text-xs text-slate-400">
+                    <h3 className="text-sm font-bold text-slate-900">Successful Referral → Scratch Card</h3>
+                    <p className="text-xs text-slate-500">
                       Grant a unique scratch-to-reveal card when an invited user qualifies
                     </p>
                   </div>
@@ -1146,9 +1146,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     type="checkbox"
                     checked={gamSettings.scratchCardEnabled}
                     onChange={(e) => setGamSettings({ ...gamSettings, scratchCardEnabled: e.target.checked })}
-                    className="w-4 h-4 text-teal-600 rounded bg-slate-800 border-slate-700"
+                    className="w-4 h-4 text-teal-600 rounded bg-slate-800 border-slate-200"
                   />
-                  <span className="text-xs font-bold text-white">
+                  <span className="text-xs font-bold text-slate-900">
                     {gamSettings.scratchCardEnabled ? 'ENABLED' : 'DISABLED'}
                   </span>
                 </label>
@@ -1157,7 +1157,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
               {/* Referral Eligibility Conditions */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Scratch Card Grant Condition <span className="text-red-400">*</span>
                   </label>
                   <select
@@ -1168,7 +1168,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         scratchCondition: e.target.value as any,
                       })
                     }
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-bold"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-bold"
                   >
                     <option value="registration">Immediate on Verified Referral Signup</option>
                     <option value="channel_verification">After Referee Joins Mandatory Channels</option>
@@ -1179,7 +1179,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
                 {gamSettings.scratchCondition === 'task_completion' && (
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
                       Tasks Required by Referee
                     </label>
                     <input
@@ -1193,7 +1193,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                           scratchTasksRequired: Number(e.target.value),
                         })
                       }
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                     />
                     <p className="text-[10px] text-slate-500 mt-1">Number of tasks referee must complete first</p>
                   </div>
@@ -1201,9 +1201,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
               </div>
 
               {/* Scratch Rewards Options Editor */}
-              <div className="space-y-2 pt-2 border-t border-slate-800">
+              <div className="space-y-2 pt-2 border-t border-slate-200/80">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                  <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
                     Scratch Card Reward Probabilities
                   </h4>
                   <button
@@ -1222,7 +1222,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         scratchRewardOptions: [...gamSettings.scratchRewardOptions, newOpt],
                       });
                     }}
-                    className="py-1 px-2.5 bg-slate-800 hover:bg-slate-700 text-teal-300 text-xs font-bold rounded-lg border border-slate-700"
+                    className="py-1 px-2.5 bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 text-xs font-bold rounded-lg border border-slate-200"
                   >
                     + Add Reward Option
                   </button>
@@ -1232,10 +1232,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   {gamSettings.scratchRewardOptions.map((opt, idx) => (
                     <div
                       key={opt.id || idx}
-                      className="p-3 bg-slate-850 border border-slate-800 rounded-xl grid grid-cols-1 sm:grid-cols-4 gap-2 items-center text-xs"
+                      className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl grid grid-cols-1 sm:grid-cols-4 gap-2 items-center text-xs"
                     >
                       <div className="sm:col-span-2">
-                        <label className="text-[10px] text-slate-400 block mb-0.5">Label</label>
+                        <label className="text-[10px] text-slate-500 block mb-0.5">Label</label>
                         <input
                           type="text"
                           value={opt.label}
@@ -1244,12 +1244,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                             updated[idx].label = e.target.value;
                             setGamSettings({ ...gamSettings, scratchRewardOptions: updated });
                           }}
-                          className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-xs"
+                          className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                         />
                       </div>
 
                       <div>
-                        <label className="text-[10px] text-slate-400 block mb-0.5">Reward (₹)</label>
+                        <label className="text-[10px] text-slate-500 block mb-0.5">Reward (₹)</label>
                         <input
                           type="number"
                           min={0}
@@ -1261,7 +1261,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                             if (val === 0) updated[idx].rewardType = 'no_reward';
                             setGamSettings({ ...gamSettings, scratchRewardOptions: updated });
                           }}
-                          className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-xs"
+                          className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                         />
                       </div>
 
@@ -1276,7 +1276,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                             updated[idx].probability = Number(e.target.value);
                             setGamSettings({ ...gamSettings, scratchRewardOptions: updated });
                           }}
-                          className="w-16 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-xs font-mono"
+                          className="w-16 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
                           title="Weight / Chance"
                         />
                         <button
@@ -1315,18 +1315,18 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       {activeTab === 'gateway' && (
         <div className="space-y-4">
           {/* Section Header & Configuration Status Indicator */}
-          <div className="p-5 bg-slate-900 border border-slate-800 rounded-2xl space-y-3">
+          <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2">
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                     <CreditCard className="w-5 h-5 text-red-500" /> Payment Gateway Settings
                   </h3>
                   <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-mono font-bold flex items-center gap-1">
                     <Lock className="w-3 h-3" /> AES-256-GCM Encrypted
                   </span>
                 </div>
-                <p className="text-xs text-slate-400 mt-1">
+                <p className="text-xs text-slate-500 mt-1">
                   Configure automated UPI payout provider credentials and integration settings. Secrets are encrypted at rest and never exposed to the frontend.
                 </p>
               </div>
@@ -1372,9 +1372,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             </div>
 
             {/* Status Information Details Box */}
-            <div className="p-3.5 bg-slate-950/70 border border-slate-800/80 rounded-xl space-y-1.5 text-xs">
-              <div className="flex items-center justify-between text-slate-400 text-[11px]">
-                <span className="font-semibold text-slate-300">Configuration Status</span>
+            <div className="p-3.5 bg-slate-50/70 border border-slate-200/80/80 rounded-xl space-y-1.5 text-xs">
+              <div className="flex items-center justify-between text-slate-500 text-[11px]">
+                <span className="font-semibold text-slate-700">Configuration Status</span>
                 <span>
                   Last Tested:{' '}
                   {gatewayConfig?.status.lastTestedAt
@@ -1382,25 +1382,25 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     : 'Never'}
                 </span>
               </div>
-              <p className="text-slate-300 leading-relaxed font-mono text-[11px]">
+              <p className="text-slate-700 leading-relaxed font-mono text-[11px]">
                 {gatewayConfig?.status.message || 'No connection test performed yet. Configure credentials and click Test Connection.'}
               </p>
               <div className="flex flex-wrap gap-2 pt-1 text-[11px]">
-                <span className="text-slate-400">
+                <span className="text-slate-500">
                   Payouts:{' '}
-                  <strong className={gwPayoutsEnabled ? 'text-emerald-400' : 'text-slate-400'}>
+                  <strong className={gwPayoutsEnabled ? 'text-emerald-400' : 'text-slate-500'}>
                     {gwPayoutsEnabled ? 'ENABLED' : 'DISABLED'}
                   </strong>
                 </span>
                 <span className="text-slate-500">•</span>
-                <span className="text-slate-400">
+                <span className="text-slate-500">
                   Key:{' '}
                   <strong className={gatewayConfig?.hasApiKey ? 'text-emerald-400 font-mono' : 'text-slate-500'}>
                     {gatewayConfig?.hasApiKey ? (gatewayConfig.maskedApiKey || '****SAVED') : 'Not Set'}
                   </strong>
                 </span>
                 <span className="text-slate-500">•</span>
-                <span className="text-slate-400">
+                <span className="text-slate-500">
                   Secret:{' '}
                   <strong className={gatewayConfig?.hasApiSecret ? 'text-emerald-400 font-mono' : 'text-slate-500'}>
                     {gatewayConfig?.hasApiSecret ? (gatewayConfig.maskedApiSecret || '********') : 'Not Set'}
@@ -1409,7 +1409,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 {gatewayConfig?.hasMerchantId && (
                   <>
                     <span className="text-slate-500">•</span>
-                    <span className="text-slate-400">
+                    <span className="text-slate-500">
                       Merchant ID: <strong className="text-emerald-400 font-mono">{gatewayConfig.maskedMerchantId}</strong>
                     </span>
                   </>
@@ -1419,20 +1419,20 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
           </div>
 
           {/* Configuration Form */}
-          <form onSubmit={handleSaveGatewayConfig} className="p-5 bg-slate-900 border border-slate-800 rounded-2xl space-y-4">
-            <h4 className="text-sm font-bold text-white flex items-center gap-2">
-              <Settings className="w-4 h-4 text-slate-400" /> Gateway Provider Configuration
+          <form onSubmit={handleSaveGatewayConfig} className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-4">
+            <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <Settings className="w-4 h-4 text-slate-500" /> Gateway Provider Configuration
             </h4>
 
             {/* Field 1: Gateway Provider */}
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 Gateway Provider <span className="text-red-400">*</span>
               </label>
               <select
                 value={gwProvider}
                 onChange={(e) => handleProviderChange(e.target.value)}
-                className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-medium focus:outline-none focus:border-red-500 transition"
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-medium focus:outline-none focus:border-red-500 transition"
               >
                 {gatewayConfig?.supportedProviders?.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -1453,7 +1453,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 const provInfo = gatewayConfig?.supportedProviders?.find((p) => p.id === gwProvider);
                 if (!provInfo) return null;
                 return (
-                  <div className="mt-2 p-2.5 bg-slate-950/50 border border-slate-800 rounded-xl text-[11px] text-slate-400 flex items-start justify-between gap-2">
+                  <div className="mt-2 p-2.5 bg-slate-50/50 border border-slate-200/80 rounded-xl text-[11px] text-slate-500 flex items-start justify-between gap-2">
                     <div>
                       <p>{provInfo.description}</p>
                       {!provInfo.isIntegrated && (
@@ -1479,7 +1479,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
             {/* Field 7: Environment (Test Mode vs Live Mode) */}
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 Environment Mode <span className="text-red-400">*</span>
               </label>
               <div className="grid grid-cols-2 gap-2">
@@ -1489,12 +1489,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   className={`p-3 rounded-xl border text-xs font-bold text-left transition flex items-center justify-between ${
                     gwEnv === 'test'
                       ? 'bg-blue-950/40 border-blue-500/50 text-blue-300'
-                      : 'bg-slate-800/60 border-slate-700/60 text-slate-400 hover:text-white'
+                      : 'bg-slate-800/60 border-slate-200/60 text-slate-500 hover:text-white'
                   }`}
                 >
                   <div>
                     <p className="font-bold">Test Mode (Sandbox)</p>
-                    <p className="text-[10px] text-slate-400 font-normal mt-0.5">Safe simulation, no real funds moved</p>
+                    <p className="text-[10px] text-slate-500 font-normal mt-0.5">Safe simulation, no real funds moved</p>
                   </div>
                   {gwEnv === 'test' && <Check className="w-4 h-4 text-blue-400" />}
                 </button>
@@ -1505,12 +1505,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   className={`p-3 rounded-xl border text-xs font-bold text-left transition flex items-center justify-between ${
                     gwEnv === 'live'
                       ? 'bg-red-950/40 border-red-500/50 text-red-300'
-                      : 'bg-slate-800/60 border-slate-700/60 text-slate-400 hover:text-white'
+                      : 'bg-slate-800/60 border-slate-200/60 text-slate-500 hover:text-white'
                   }`}
                 >
                   <div>
                     <p className="font-bold">Live Mode (Production)</p>
-                    <p className="text-[10px] text-slate-400 font-normal mt-0.5">Executes real UPI bank transfers</p>
+                    <p className="text-[10px] text-slate-500 font-normal mt-0.5">Executes real UPI bank transfers</p>
                   </div>
                   {gwEnv === 'live' && <Check className="w-4 h-4 text-red-400" />}
                 </button>
@@ -1529,7 +1529,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             {/* Field 2: API Key / Client ID */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-slate-300">
+                <label className="text-xs font-semibold text-slate-700">
                   {gwProvider === 'cashfree'
                     ? 'Cashfree Client ID (App ID)'
                     : gwProvider === 'razorpayx'
@@ -1542,7 +1542,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   <span className="text-red-400">*</span>
                 </label>
                 {gatewayConfig?.hasApiKey && (
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-700">
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-200">
                     Saved: {gatewayConfig.maskedApiKey || '****••••'}
                   </span>
                 )}
@@ -1558,14 +1558,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     ? 'Enter Paynit Client ID'
                     : 'e.g. CF1234567890 or rzp_test_123456'
                 }
-                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono focus:outline-none focus:border-red-500 transition"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono focus:outline-none focus:border-red-500 transition"
               />
             </div>
 
             {/* Field 3: API Secret / Client Secret */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-slate-300">
+                <label className="text-xs font-semibold text-slate-700">
                   {gwProvider === 'cashfree'
                     ? 'Cashfree Client Secret'
                     : gwProvider === 'razorpayx'
@@ -1578,7 +1578,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   <span className="text-red-400">*</span>
                 </label>
                 {gatewayConfig?.hasApiSecret && (
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-700">
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-200">
                     Saved: {gatewayConfig.maskedApiSecret || '••••••••'}
                   </span>
                 )}
@@ -1593,12 +1593,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                       ? `Leave blank to keep saved (${gatewayConfig.maskedApiSecret})`
                       : 'Enter provider API Secret'
                   }
-                  className="w-full px-3 py-2 pr-10 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono focus:outline-none focus:border-red-500 transition"
+                  className="w-full px-3 py-2 pr-10 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono focus:outline-none focus:border-red-500 transition"
                 />
                 <button
                   type="button"
                   onClick={() => setShowSecretKey(!showSecretKey)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
                 >
                   {showSecretKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
@@ -1611,7 +1611,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             {/* Field 4: Merchant ID (if required) */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-slate-300">
+                <label className="text-xs font-semibold text-slate-700">
                   {gwProvider === 'razorpayx'
                     ? 'RazorpayX Account Number (Required, e.g. 7878780080387615)'
                     : gwProvider === 'paytm'
@@ -1621,7 +1621,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     : 'Merchant ID (Optional)'}
                 </label>
                 {gatewayConfig?.hasMerchantId && (
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-700">
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-200">
                     Saved: {gatewayConfig.maskedMerchantId}
                   </span>
                 )}
@@ -1637,14 +1637,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     ? 'e.g. 7878780080387615'
                     : 'Enter Merchant ID if required by provider'
                 }
-                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono focus:outline-none focus:border-red-500 transition"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono focus:outline-none focus:border-red-500 transition"
               />
             </div>
 
             {/* Field 5: API Base URL */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-slate-300">API Base URL</label>
+                <label className="text-xs font-semibold text-slate-700">API Base URL</label>
                 <button
                   type="button"
                   onClick={() => {
@@ -1663,18 +1663,18 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 value={gwApiBaseUrl}
                 onChange={(e) => setGwApiBaseUrl(e.target.value)}
                 placeholder="https://sandbox.cashfree.com/payout/v1"
-                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono focus:outline-none focus:border-red-500 transition"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono focus:outline-none focus:border-red-500 transition"
               />
             </div>
 
             {/* Field 6: Webhook Secret & Webhook Callback URL */}
             <div className="space-y-2">
               <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-semibold text-slate-300">
+                <label className="text-xs font-semibold text-slate-700">
                   Webhook Secret (For HMAC signature verification)
                 </label>
                 {gatewayConfig?.hasWebhookSecret && (
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-700">
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-200">
                     Saved: {gatewayConfig.maskedWebhookSecret || '••••••••'}
                   </span>
                 )}
@@ -1689,21 +1689,21 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                       ? `Leave blank to keep saved (${gatewayConfig.maskedWebhookSecret})`
                       : 'Enter Webhook Secret key'
                   }
-                  className="w-full px-3 py-2 pr-10 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono focus:outline-none focus:border-red-500 transition"
+                  className="w-full px-3 py-2 pr-10 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono focus:outline-none focus:border-red-500 transition"
                 />
                 <button
                   type="button"
                   onClick={() => setShowWebhookSecret(!showWebhookSecret)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
                 >
                   {showWebhookSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
               </div>
 
               {/* Webhook Callback URL Display with One-Click Copy */}
-              <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl space-y-1.5">
+              <div className="p-3 bg-slate-50/70 border border-slate-200/80 rounded-xl space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-slate-300">Webhook Endpoint URL</span>
+                  <span className="text-[11px] font-semibold text-slate-700">Webhook Endpoint URL</span>
                   <button
                     type="button"
                     onClick={handleCopyWebhookUrl}
@@ -1713,7 +1713,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     <span>{copiedWebhook ? 'Copied!' : 'Copy URL'}</span>
                   </button>
                 </div>
-                <div className="px-2.5 py-1.5 bg-slate-900 rounded-lg text-white font-mono text-[11px] select-all break-all border border-slate-800">
+                <div className="px-2.5 py-1.5 bg-slate-900 rounded-lg text-white font-mono text-[11px] select-all break-all border border-slate-200/80">
                   {gatewayConfig?.webhookUrl || `${window.location.origin}/api/payouts/webhook`}
                 </div>
                 <p className="text-[10px] text-slate-500">
@@ -1723,19 +1723,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             </div>
 
             {/* Field 8: Enable / Disable Payouts */}
-            <div className="pt-2 border-t border-slate-800">
-              <label className="flex items-start gap-3 p-3 bg-slate-950/50 border border-slate-800/80 rounded-xl cursor-pointer">
+            <div className="pt-2 border-t border-slate-200/80">
+              <label className="flex items-start gap-3 p-3 bg-slate-50/50 border border-slate-200/80/80 rounded-xl cursor-pointer">
                 <input
                   type="checkbox"
                   checked={gwPayoutsEnabled}
                   onChange={(e) => setGwPayoutsEnabled(e.target.checked)}
-                  className="mt-0.5 w-4 h-4 text-emerald-600 rounded bg-slate-800 border-slate-700"
+                  className="mt-0.5 w-4 h-4 text-emerald-600 rounded bg-slate-800 border-slate-200"
                 />
                 <div>
-                  <span className="text-xs font-bold text-white block">
+                  <span className="text-xs font-bold text-slate-900 block">
                     Enable Automated UPI Gateway Payouts
                   </span>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
+                  <p className="text-[11px] text-slate-500 mt-0.5">
                     When enabled, withdrawals dispatched by administrators will trigger automated UPI payout execution. If disabled, orders require manual approval.
                   </p>
                 </div>
@@ -1761,7 +1761,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 type="button"
                 onClick={handleTestGatewayConnection}
                 disabled={gwTesting}
-                className="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-emerald-400 border border-emerald-500/30 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2"
+                className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-emerald-400 border border-emerald-500/30 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${gwTesting ? 'animate-spin' : ''}`} />
                 <span>{gwTesting ? 'Testing...' : 'Test Connection'}</span>
@@ -1809,12 +1809,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                       : 'Connection Test Failed'}
                   </h4>
                 </div>
-                <span className="text-[10px] text-slate-400 font-mono">
+                <span className="text-[10px] text-slate-500 font-mono">
                   {new Date(gwTestResult.timestamp).toLocaleTimeString()}
                 </span>
               </div>
               <p className="text-xs leading-relaxed">{gwTestResult.message}</p>
-              <div className="text-[10px] text-slate-400 flex items-center gap-3 pt-1 border-t border-slate-800">
+              <div className="text-[10px] text-slate-500 flex items-center gap-3 pt-1 border-t border-slate-200/80">
                 <span>Provider: <strong className="text-white">{gwTestResult.provider}</strong></span>
                 <span>Environment: <strong className="text-white uppercase">{gwTestResult.environment}</strong></span>
                 {gwTestResult.httpStatus && (
@@ -1826,20 +1826,20 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
           {/* Wipe Credentials Modal */}
           {showWipeCredsModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-              <div className="w-full max-w-sm bg-slate-900 border border-slate-700 rounded-2xl p-5 space-y-3">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+              <div className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl p-6 space-y-3 shadow-2xl">
                 <div className="flex items-center gap-2 text-red-400">
                   <AlertTriangle className="w-5 h-5 shrink-0" />
-                  <h4 className="text-sm font-bold text-white">Remove Saved Credentials?</h4>
+                  <h4 className="text-sm font-bold text-slate-900">Remove Saved Credentials?</h4>
                 </div>
-                <p className="text-xs text-slate-300 leading-relaxed">
+                <p className="text-xs text-slate-700 leading-relaxed">
                   This will securely erase encrypted API keys, secrets, and merchant identifiers from the server database. Automated payouts will be disabled until new credentials are configured.
                 </p>
                 <div className="flex gap-2 pt-2">
                   <button
                     type="button"
                     onClick={() => setShowWipeCredsModal(false)}
-                    className="flex-1 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
+                    className="flex-1 py-2 bg-slate-800 text-slate-700 rounded-xl text-xs font-bold"
                   >
                     Cancel
                   </button>
@@ -1861,14 +1861,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       {activeTab === 'bot' && (
         <div className="space-y-4">
           {/* Header & Refresh */}
-          <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-between">
+          <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
                 <Bot className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-white">Live Telegram Bot Integration</h3>
-                <p className="text-[11px] text-slate-400">
+                <h3 className="text-sm font-bold text-slate-900">Live Telegram Bot Integration</h3>
+                <p className="text-[11px] text-slate-500">
                   Real-time connectivity status verified with official Telegram Bot API (getMe)
                 </p>
               </div>
@@ -1876,7 +1876,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             <button
               onClick={refreshTelegramStatus}
               disabled={checkingBot}
-              className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl flex items-center gap-1.5 transition disabled:opacity-50"
+              className="py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-xl flex items-center gap-1.5 transition disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${checkingBot ? 'animate-spin' : ''}`} />
               <span>Verify Now</span>
@@ -1884,9 +1884,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
           </div>
 
           {/* Status Card */}
-          <div className="p-5 bg-slate-900 border border-slate-800 rounded-2xl space-y-4">
+          <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
                 Connection Status
               </span>
               <span
@@ -1911,9 +1911,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             </div>
 
             {botStatus?.ok && botStatus.bot && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-850 p-4 rounded-xl border border-slate-800 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200/80 text-xs">
                 <div>
-                  <span className="text-slate-400 block text-[11px]">Bot Username:</span>
+                  <span className="text-slate-500 block text-[11px]">Bot Username:</span>
                   <a
                     href={`https://t.me/${botStatus.bot.username}`}
                     target="_blank"
@@ -1924,26 +1924,26 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   </a>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-[11px]">Bot Display Name:</span>
-                  <span className="font-bold text-white mt-0.5 block">{botStatus.bot.first_name}</span>
+                  <span className="text-slate-500 block text-[11px]">Bot Display Name:</span>
+                  <span className="font-bold text-slate-900 mt-0.5 block">{botStatus.bot.first_name}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-[11px]">Telegram Bot ID:</span>
-                  <span className="font-mono text-slate-300 mt-0.5 block">{botStatus.bot.id}</span>
+                  <span className="text-slate-500 block text-[11px]">Telegram Bot ID:</span>
+                  <span className="font-mono text-slate-700 mt-0.5 block">{botStatus.bot.id}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-[11px]">Active Mode:</span>
+                  <span className="text-slate-500 block text-[11px]">Active Mode:</span>
                   <span className="font-bold text-amber-300 mt-0.5 block">
                     {botStatus.webhook?.url ? 'Webhook Mode' : botStatus.polling?.isPolling ? 'Long Polling Mode' : 'Idle (No Listener)'}
                   </span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-[11px]">Token Source:</span>
+                  <span className="text-slate-500 block text-[11px]">Token Source:</span>
                   <span className="font-mono text-emerald-400 mt-0.5 block">Server Secrets (Secure)</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-[11px]">Pending Updates:</span>
-                  <span className="font-bold text-slate-200 mt-0.5 block">
+                  <span className="text-slate-500 block text-[11px]">Pending Updates:</span>
+                  <span className="font-bold text-slate-800 mt-0.5 block">
                     {botStatus.webhook?.pending_update_count ?? 0} queued
                   </span>
                 </div>
@@ -1955,7 +1955,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 <p className="text-xs text-red-300 font-medium">
                   <strong>API Error:</strong> {botStatus?.error || 'TELEGRAM_BOT_TOKEN is missing or unauthorized.'}
                 </p>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
+                <p className="text-[11px] text-slate-500 leading-relaxed">
                   To connect your real bot, obtain your API token from <strong>@BotFather</strong> on Telegram, and set it as the server secret <strong>TELEGRAM_BOT_TOKEN</strong> in project Settings.
                 </p>
               </div>
@@ -1965,23 +1965,23 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
           {/* Webhook vs Long Polling Switcher */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Mode 1: Long Polling */}
-            <div className="p-5 bg-slate-900 border border-slate-800 rounded-2xl space-y-3">
+            <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Zap className="w-4 h-4 text-amber-400" />
-                  <h4 className="text-sm font-bold text-white">Long Polling (Preview & Local)</h4>
+                  <h4 className="text-sm font-bold text-slate-900">Long Polling (Preview & Local)</h4>
                 </div>
                 <span
                   className={`text-[10px] font-bold px-2 py-0.5 rounded ${
                     botStatus?.polling?.isPolling
                       ? 'bg-emerald-500/20 text-emerald-400'
-                      : 'bg-slate-800 text-slate-400'
+                      : 'bg-slate-800 text-slate-500'
                   }`}
                 >
                   {botStatus?.polling?.isPolling ? 'POLLING ACTIVE' : 'STOPPED'}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 leading-relaxed">
+              <p className="text-xs text-slate-500 leading-relaxed">
                 Ideal for testing inside browser previews or local dev where Telegram cannot send inbound HTTPS webhooks. Polling calls Telegram getUpdates directly from the backend.
               </p>
 
@@ -1990,7 +1990,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   <button
                     onClick={handleStopPolling}
                     disabled={botActionLoading}
-                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-red-400 font-bold text-xs rounded-xl transition"
+                    className="w-full py-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold text-xs rounded-xl transition"
                   >
                     Stop Polling Mode
                   </button>
@@ -2007,28 +2007,28 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             </div>
 
             {/* Mode 2: Webhook Mode */}
-            <div className="p-5 bg-slate-900 border border-slate-800 rounded-2xl space-y-3">
+            <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Globe className="w-4 h-4 text-blue-400" />
-                  <h4 className="text-sm font-bold text-white">Webhook Mode (Production)</h4>
+                  <h4 className="text-sm font-bold text-slate-900">Webhook Mode (Production)</h4>
                 </div>
                 <span
                   className={`text-[10px] font-bold px-2 py-0.5 rounded ${
                     botStatus?.webhook?.url
                       ? 'bg-blue-500/20 text-blue-400'
-                      : 'bg-slate-800 text-slate-400'
+                      : 'bg-slate-800 text-slate-500'
                   }`}
                 >
                   {botStatus?.webhook?.url ? 'WEBHOOK SET' : 'NO WEBHOOK'}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 leading-relaxed">
+              <p className="text-xs text-slate-500 leading-relaxed">
                 Used for persistent deployments (Cloud Run / VPS / custom domain). Telegram pushes updates instantly via HTTPS POST to <code>/api/telegram/webhook</code>.
               </p>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                   Target HTTPS Webhook URL:
                 </label>
                 <input
@@ -2036,12 +2036,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   value={customWebhookInput}
                   onChange={(e) => setCustomWebhookInput(e.target.value)}
                   placeholder="https://your-domain.com/api/telegram/webhook"
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
                 />
               </div>
 
               {botStatus?.webhook?.url && (
-                <div className="p-2.5 bg-slate-850 rounded-xl text-[11px] text-slate-300 space-y-1">
+                <div className="p-2.5 bg-slate-50 rounded-xl text-[11px] text-slate-700 space-y-1">
                   <div>Current Webhook: <span className="font-mono text-emerald-400 break-all">{botStatus.webhook.url}</span></div>
                   {botStatus.webhook.last_error_message && (
                     <div className="text-red-400">Last Error: {botStatus.webhook.last_error_message}</div>
@@ -2071,18 +2071,18 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
           </div>
 
           {/* Test Live Message Delivery */}
-          <div className="p-5 bg-slate-900 border border-slate-800 rounded-2xl space-y-3">
-            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+          <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-3">
+            <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
               <Send className="w-4 h-4 text-emerald-400" /> Send Live Test Message
             </h4>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-500">
               Trigger a test message from your bot to your personal Telegram account to verify message delivery.
             </p>
 
             <form onSubmit={handleSendTestMessage} className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Recipient Telegram Chat ID:
                   </label>
                   <input
@@ -2090,11 +2090,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     value={testChatIdInput}
                     onChange={(e) => setTestChatIdInput(e.target.value)}
                     placeholder={`e.g. ${currentUser.telegramId} (Default: Admin)`}
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Custom Message (HTML supported):
                   </label>
                   <input
@@ -2102,7 +2102,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     value={testMessageInput}
                     onChange={(e) => setTestMessageInput(e.target.value)}
                     placeholder="Hello from TeleEarn server!"
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                   />
                 </div>
               </div>
@@ -2124,7 +2124,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       {activeTab === 'channels' && (
         <div className="space-y-4">
           <div className="flex justify-between items-center">
-            <h3 className="text-sm font-bold text-white">Configured Force Join Channels</h3>
+            <h3 className="text-sm font-bold text-slate-900">Configured Force Join Channels</h3>
             <button
               onClick={() =>
                 setEditingChannel({
@@ -2147,11 +2147,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             {channels.map((ch) => (
               <div
                 key={ch.id}
-                className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-between gap-3"
+                className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs flex items-center justify-between gap-3"
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-bold text-white truncate">{ch.title}</span>
+                    <span className="text-sm font-bold text-slate-900 truncate">{ch.title}</span>
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded ${
                         ch.isEnabled ? 'bg-emerald-500/15 text-emerald-400' : 'bg-slate-800 text-slate-500'
@@ -2165,22 +2165,22 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-slate-400 truncate">
-                    ID: <span className="font-mono text-slate-300">{ch.channelId}</span> • Link: {ch.inviteLink}
+                  <p className="text-xs text-slate-500 truncate">
+                    ID: <span className="font-mono text-slate-700">{ch.channelId}</span> • Link: {ch.inviteLink}
                   </p>
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     onClick={() => handleTestChannelDiagnostic(ch.id)}
-                    className="p-2 bg-slate-800 hover:bg-slate-700 text-blue-400 rounded-lg text-xs font-semibold"
+                    className="p-2 bg-slate-100 hover:bg-slate-200 text-blue-400 rounded-lg text-xs font-semibold"
                     title="Test Bot API Membership Verification"
                   >
                     Test Diagnostic
                   </button>
                   <button
                     onClick={() => setEditingChannel(ch)}
-                    className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg"
+                    className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg"
                     title="Edit"
                   >
                     <Edit3 className="w-3.5 h-3.5" />
@@ -2199,28 +2199,28 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
           {/* Edit/Add Channel Modal */}
           {editingChannel && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
               <form
                 onSubmit={handleSaveChannel}
-                className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4 shadow-2xl"
+                className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl space-y-4 shadow-2xl"
               >
-                <h3 className="text-base font-bold text-white">
+                <h3 className="text-base font-bold text-slate-900">
                   {editingChannel.id ? 'Edit Force Join Channel' : 'Add Force Join Channel'}
                 </h3>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Channel Title</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Channel Title</label>
                   <input
                     type="text"
                     value={editingChannel.title || ''}
                     onChange={(e) => setEditingChannel({ ...editingChannel, title: e.target.value })}
                     placeholder="e.g. Official Announcements"
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                     required
                   />
                 </div>
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-semibold text-slate-300">
+                    <label className="text-xs font-semibold text-slate-700">
                       Channel ID / Username
                     </label>
                     <button
@@ -2237,15 +2237,15 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     value={editingChannel.channelId || ''}
                     onChange={(e) => setEditingChannel({ ...editingChannel, channelId: e.target.value })}
                     placeholder="@mychannel or -100..."
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
                     required
                   />
-                  <p className="text-[10px] text-slate-400 mt-1">
+                  <p className="text-[10px] text-slate-500 mt-1">
                     For private channels: Enter numeric ID starting with <code className="text-amber-400 font-mono">-100...</code>
                   </p>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Invite Link (Join URL)
                   </label>
                   <input
@@ -2253,14 +2253,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     value={editingChannel.inviteLink || ''}
                     onChange={(e) => setEditingChannel({ ...editingChannel, inviteLink: e.target.value })}
                     placeholder="https://t.me/..."
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
                     required
                   />
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    For private channels, paste invite link (e.g. <code className="text-slate-300 font-mono">https://t.me/+...</code>)
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    For private channels, paste invite link (e.g. <code className="text-slate-700 font-mono">https://t.me/+...</code>)
                   </p>
                 </div>
-                <div className="flex items-center gap-4 text-xs text-slate-300">
+                <div className="flex items-center gap-4 text-xs text-slate-700">
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
@@ -2282,7 +2282,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   <button
                     type="button"
                     onClick={() => setEditingChannel(null)}
-                    className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl"
+                    className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl"
                   >
                     Cancel
                   </button>
@@ -2303,7 +2303,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       {activeTab === 'tasks' && (
         <div className="space-y-4">
           <div className="flex justify-between items-center">
-            <h3 className="text-sm font-bold text-white">Configured Watch & Earn Tasks</h3>
+            <h3 className="text-sm font-bold text-slate-900">Configured Watch & Earn Tasks</h3>
             <button
               onClick={() =>
                 setEditingTask({
@@ -2328,11 +2328,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             {tasks.map((t) => (
               <div
                 key={t.id}
-                className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-between gap-3"
+                className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs flex items-center justify-between gap-3"
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-bold text-white truncate">{t.title}</span>
+                    <span className="text-sm font-bold text-slate-900 truncate">{t.title}</span>
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400">
                       +₹{t.rewardAmount.toFixed(2)}
                     </span>
@@ -2344,7 +2344,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                       {t.isActive ? 'ACTIVE' : 'INACTIVE'}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-500">
                     Type: <strong className="text-white uppercase">{t.taskType}</strong> • Timer: {t.timerSeconds}s
                   </p>
                 </div>
@@ -2354,7 +2354,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     <button
                       type="button"
                       onClick={() => handleTestTaskDiagnostic(t.id)}
-                      className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-blue-400 rounded-lg text-xs font-semibold"
+                      className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-blue-400 rounded-lg text-xs font-semibold"
                       title="Test Bot API Membership Verification for this Task"
                     >
                       Test Diagnostic
@@ -2362,7 +2362,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   )}
                   <button
                     onClick={() => setEditingTask(t)}
-                    className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg"
+                    className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg"
                     title="Edit"
                   >
                     <Edit3 className="w-3.5 h-3.5" />
@@ -2381,20 +2381,20 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
           {/* Edit/Create Task Modal */}
           {editingTask && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto">
               <form
                 onSubmit={handleSaveTask}
-                className="w-full max-w-md max-h-[92vh] sm:max-h-[88vh] flex flex-col bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden my-auto"
+                className="w-full max-w-md max-h-[92vh] sm:max-h-[88vh] flex flex-col bg-white border border-slate-200 rounded-3xl shadow-2xl shadow-2xl overflow-hidden my-auto"
               >
                 {/* Modal Header */}
-                <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-900">
-                  <h3 className="text-sm sm:text-base font-bold text-white">
+                <div className="px-5 py-3.5 border-b border-slate-200/80 flex items-center justify-between shrink-0 bg-slate-900">
+                  <h3 className="text-sm sm:text-base font-bold text-slate-900">
                     {editingTask.id ? 'Edit Task' : 'Create Watch & Earn Task'}
                   </h3>
                   <button
                     type="button"
                     onClick={() => setEditingTask(null)}
-                    className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
+                    className="text-slate-500 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
                     aria-label="Close"
                   >
                     <XCircle className="w-5 h-5" />
@@ -2404,39 +2404,39 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 {/* Modal Scrollable Body */}
                 <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Title</label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Title</label>
                     <input
                       type="text"
                       value={editingTask.title || ''}
                       onChange={(e) => setEditingTask({ ...editingTask, title: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                       required
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Description</label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Description</label>
                     <textarea
                       value={editingTask.description || ''}
                       onChange={(e) => setEditingTask({ ...editingTask, description: e.target.value })}
                       rows={2}
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Reward (₹ Coins)</label>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Reward (₹ Coins)</label>
                       <input
                         type="number"
                         step="1"
                         min="1"
                         value={editingTask.rewardAmount || ''}
                         onChange={(e) => setEditingTask({ ...editingTask, rewardAmount: Number(e.target.value) })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                         required
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Task Type</label>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Task Type</label>
                       <select
                         value={editingTask.taskType || 'video'}
                         onChange={(e) => {
@@ -2451,7 +2451,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                                 : editingTask.destinationUrl,
                           });
                         }}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-bold"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-bold"
                       >
                         <option value="video">Video</option>
                         <option value="website">Website</option>
@@ -2462,7 +2462,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   </div>
 
                   <div>
-                    <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                    <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={Boolean(editingTask.isActive)}
@@ -2475,7 +2475,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   {/* ================= TYPE-SPECIFIC FIELDS ================= */}
                   {/* 1. CHANNEL TASK FIELDS */}
                   {editingTask.taskType === 'channel' && (
-                    <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-700/80 rounded-xl">
+                    <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-200/80 rounded-xl">
                       <div>
                         <div className="flex items-center justify-between mb-1">
                           <label className="text-xs font-semibold text-emerald-400">
@@ -2495,15 +2495,15 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                           placeholder="e.g. @teleearnofficial or -1001234567890"
                           value={editingTask.channelId || ''}
                           onChange={(e) => setEditingTask({ ...editingTask, channelId: e.target.value })}
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
                           required
                         />
-                        <p className="text-[10px] text-slate-400 mt-1">
+                        <p className="text-[10px] text-slate-500 mt-1">
                           For private channels: Enter numeric ID starting with <code className="text-amber-400 font-mono">-100...</code>
                         </p>
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">
                           Telegram Join URL (Public link or Private Invite Link)
                         </label>
                         <input
@@ -2511,10 +2511,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                           placeholder="https://t.me/teleearnofficial or https://t.me/+inviteCode"
                           value={editingTask.destinationUrl === 'https://' ? '' : (editingTask.destinationUrl || '')}
                           onChange={(e) => setEditingTask({ ...editingTask, destinationUrl: e.target.value })}
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
                         />
-                        <p className="text-[10px] text-slate-400 mt-1">
-                          For private channels, paste the full invite link (e.g. <code className="text-slate-300 font-mono">https://t.me/+...</code>)
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          For private channels, paste the full invite link (e.g. <code className="text-slate-700 font-mono">https://t.me/+...</code>)
                         </p>
                       </div>
                       <div className="text-[11px] text-amber-400/90 bg-amber-500/10 p-2.5 rounded-lg border border-amber-500/20 leading-relaxed">
@@ -2525,7 +2525,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
                   {/* 2. VIDEO TASK FIELDS */}
                   {editingTask.taskType === 'video' && (
-                    <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-700/80 rounded-xl">
+                    <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-200/80 rounded-xl">
                       <div>
                         <label className="block text-xs font-semibold text-red-400 mb-1">Video URL</label>
                         <input
@@ -2533,12 +2533,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                           placeholder="https://youtube.com/watch?v=..."
                           value={editingTask.destinationUrl || ''}
                           onChange={(e) => setEditingTask({ ...editingTask, destinationUrl: e.target.value })}
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
                           required
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">
                           Required Watch Timer (Seconds)
                         </label>
                         <input
@@ -2547,7 +2547,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                           min="1"
                           value={editingTask.timerSeconds || 15}
                           onChange={(e) => setEditingTask({ ...editingTask, timerSeconds: Number(e.target.value) })}
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                           required
                         />
                       </div>
@@ -2556,7 +2556,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
                   {/* 3. WEBSITE TASK FIELDS */}
                   {editingTask.taskType === 'website' && (
-                    <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-700/80 rounded-xl">
+                    <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-200/80 rounded-xl">
                       <div>
                         <label className="block text-xs font-semibold text-blue-400 mb-1">Website URL</label>
                         <input
@@ -2564,12 +2564,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                           placeholder="https://example.com"
                           value={editingTask.destinationUrl || ''}
                           onChange={(e) => setEditingTask({ ...editingTask, destinationUrl: e.target.value })}
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
                           required
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">
                           Required Visit Timer (Seconds)
                         </label>
                         <input
@@ -2578,7 +2578,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                           min="1"
                           value={editingTask.timerSeconds || 15}
                           onChange={(e) => setEditingTask({ ...editingTask, timerSeconds: Number(e.target.value) })}
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                           required
                         />
                       </div>
@@ -2587,14 +2587,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
                   {/* 4. SOCIAL TASK FIELDS */}
                   {editingTask.taskType === 'social' && (
-                    <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-700/80 rounded-xl">
+                    <div className="space-y-3 p-3.5 bg-slate-800/40 border border-slate-200/80 rounded-xl">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs font-semibold text-pink-400 mb-1">Social Platform</label>
                           <select
                             value={editingTask.socialPlatform || 'youtube'}
                             onChange={(e) => setEditingTask({ ...editingTask, socialPlatform: e.target.value as any })}
-                            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-semibold"
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-semibold"
                           >
                             <option value="youtube">YouTube</option>
                             <option value="twitter">X / Twitter</option>
@@ -2606,11 +2606,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                           </select>
                         </div>
                         <div>
-                          <label className="block text-xs font-semibold text-slate-300 mb-1">Verification Method</label>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">Verification Method</label>
                           <select
                             value={editingTask.verificationMethod || ''}
                             onChange={(e) => setEditingTask({ ...editingTask, verificationMethod: e.target.value as any })}
-                            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                           >
                             <option value="">Direct Action Confirmation (Instant)</option>
                             <option value="manual_review">Manual Review (User Handle)</option>
@@ -2621,13 +2621,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                       </div>
 
                       <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Target Social URL</label>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Target Social URL</label>
                         <input
                           type="url"
                           placeholder="https://x.com/... or https://instagram.com/..."
                           value={editingTask.destinationUrl || ''}
                           onChange={(e) => setEditingTask({ ...editingTask, destinationUrl: e.target.value })}
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
                           required
                         />
                       </div>
@@ -2642,7 +2642,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                             placeholder="e.g. SECRET2025"
                             value={editingTask.verificationCode || ''}
                             onChange={(e) => setEditingTask({ ...editingTask, verificationCode: e.target.value })}
-                            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
                             required
                           />
                         </div>
@@ -2650,7 +2650,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
                       {editingTask.verificationMethod === 'timer' && (
                         <div>
-                          <label className="block text-xs font-semibold text-slate-300 mb-1">
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
                             Engagement Timer (Seconds)
                           </label>
                           <input
@@ -2659,7 +2659,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                             min="1"
                             value={editingTask.timerSeconds || 15}
                             onChange={(e) => setEditingTask({ ...editingTask, timerSeconds: Number(e.target.value) })}
-                            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                             required
                           />
                         </div>
@@ -2675,11 +2675,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 </div>
 
                 {/* Modal Fixed/Sticky Footer */}
-                <div className="p-3.5 sm:p-4 bg-slate-900 border-t border-slate-800 flex gap-2 shrink-0 sticky bottom-0 z-10 shadow-lg">
+                <div className="p-3.5 sm:p-4 bg-slate-900 border-t border-slate-200/80 flex gap-2 shrink-0 sticky bottom-0 z-10 shadow-lg">
                   <button
                     type="button"
                     onClick={() => setEditingTask(null)}
-                    className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition"
+                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-700 text-slate-700 font-bold text-xs rounded-xl transition"
                   >
                     Cancel
                   </button>
@@ -2700,17 +2700,17 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       {activeTab === 'withdrawals' && (
         <div className="space-y-4">
           <div className="flex justify-between items-center">
-            <h3 className="text-sm font-bold text-white">All Withdrawal Orders ({withdrawals.length})</h3>
+            <h3 className="text-sm font-bold text-slate-900">All Withdrawal Orders ({withdrawals.length})</h3>
             <button
               onClick={loadTabContent}
-              className="text-xs text-slate-400 hover:text-white flex items-center gap-1"
+              className="text-xs text-slate-500 hover:text-white flex items-center gap-1"
             >
               <RefreshCw className="w-3 h-3" /> Refresh
             </button>
           </div>
 
           {withdrawals.length === 0 ? (
-            <div className="p-8 text-center bg-slate-900 border border-slate-800 rounded-2xl text-slate-400 text-xs">
+            <div className="p-8 text-center bg-white border border-slate-200/80 rounded-2xl shadow-xs text-slate-500 text-xs">
               No withdrawal orders found.
             </div>
           ) : (
@@ -2718,12 +2718,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
               {withdrawals.map((w) => (
                 <div
                   key={w.id}
-                  className="p-4 bg-slate-900 border border-slate-800 rounded-2xl space-y-2.5"
+                  className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-2.5"
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <span className="text-base font-black text-white">₹{w.amount.toFixed(2)}</span>
-                      <span className="text-xs text-slate-400 ml-2 font-mono">Order: {w.id}</span>
+                      <span className="text-base font-black text-slate-900">₹{w.amount.toFixed(2)}</span>
+                      <span className="text-xs text-slate-500 ml-2 font-mono">Order: {w.id}</span>
                     </div>
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
@@ -2742,11 +2742,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     </span>
                   </div>
 
-                  <div className="text-xs text-slate-300 grid grid-cols-2 gap-2 bg-slate-850 p-2.5 rounded-xl">
+                  <div className="text-xs text-slate-700 grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-xl">
                     <div>User ID: <span className="font-mono text-white">{w.userId}</span></div>
                     <div>Username: <span className="text-white">@{w.username || 'unknown'}</span></div>
                     <div>UPI Address: <span className="font-mono text-emerald-300 font-bold">{w.upiId}</span></div>
-                    <div>Requested: <span className="text-slate-400">{new Date(w.createdAt).toLocaleString()}</span></div>
+                    <div>Requested: <span className="text-slate-500">{new Date(w.createdAt).toLocaleString()}</span></div>
                     {w.payoutTransactionId && (
                       <div className="col-span-2">
                         UTR / Ref ID: <span className="font-mono text-emerald-400 font-bold">{w.payoutTransactionId}</span>
@@ -2799,28 +2799,28 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
           {/* Reject Reason Modal */}
           {rejectingOrder && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-              <div className="w-full max-w-sm bg-slate-900 border border-slate-700 rounded-2xl p-5 space-y-3">
-                <h4 className="text-sm font-bold text-white">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+              <div className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl p-6 space-y-3 shadow-2xl">
+                <h4 className="text-sm font-bold text-slate-900">
                   Reject & Refund Order {rejectingOrder.id}
                 </h4>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-500">
                   Rejecting will safely restore ₹{rejectingOrder.amount} back to the user's available balance.
                 </p>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Rejection Reason</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Rejection Reason</label>
                   <input
                     type="text"
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
                     placeholder="e.g. Invalid UPI ID / Duplicate request"
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                   />
                 </div>
                 <div className="flex gap-2 pt-2">
                   <button
                     onClick={() => setRejectingOrder(null)}
-                    className="flex-1 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
+                    className="flex-1 py-2 bg-slate-800 text-slate-700 rounded-xl text-xs font-bold"
                   >
                     Cancel
                   </button>
@@ -2842,13 +2842,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
         <div className="space-y-4">
           <div className="flex gap-2">
             <div className="relative flex-1">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={userSearchQuery}
                 onChange={(e) => setUserSearchQuery(e.target.value)}
                 placeholder="Search user by Telegram ID, name, or username..."
-                className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-white text-xs"
+                className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200/80 rounded-xl shadow-xs text-white text-xs"
               />
             </div>
             <button
@@ -2863,22 +2863,22 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             {usersList.map((u) => (
               <div
                 key={u.id}
-                className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-between gap-3"
+                className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs flex items-center justify-between gap-3"
               >
                 <div>
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-bold text-white">
+                    <span className="text-sm font-bold text-slate-900">
                       {u.firstName} {u.lastName || ''}
                     </span>
-                    <span className="text-xs text-slate-400 font-mono">(@{u.username || 'none'})</span>
+                    <span className="text-xs text-slate-500 font-mono">(@{u.username || 'none'})</span>
                     {u.isBanned && (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-500/20 text-red-400">
                         BANNED
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-slate-400">
-                    ID: <span className="font-mono text-slate-300">{u.id}</span> • Balance:{' '}
+                  <p className="text-xs text-slate-500">
+                    ID: <span className="font-mono text-slate-700">{u.id}</span> • Balance:{' '}
                     <strong className="text-emerald-400 font-bold">₹{u.balance.toFixed(2)}</strong> • Earned:{' '}
                     ₹{u.lifetimeEarnings.toFixed(2)}
                   </p>
@@ -2887,7 +2887,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     onClick={() => setAdjustingUser(u)}
-                    className="p-2 bg-slate-800 hover:bg-slate-700 text-emerald-400 rounded-lg text-xs font-bold"
+                    className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold"
                   >
                     Adjust ₹
                   </button>
@@ -2908,19 +2908,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
           {/* Adjust Balance Modal */}
           {adjustingUser && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
               <form
                 onSubmit={handleAdjustBalance}
-                className="w-full max-w-sm bg-slate-900 border border-slate-700 rounded-2xl p-5 space-y-3"
+                className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl p-6 space-y-3 shadow-2xl"
               >
-                <h4 className="text-sm font-bold text-white">
+                <h4 className="text-sm font-bold text-slate-900">
                   Adjust Balance for {adjustingUser.firstName} ({adjustingUser.id})
                 </h4>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-500">
                   Current Balance: <strong className="text-emerald-400">₹{adjustingUser.balance}</strong>
                 </p>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Amount (Use +50 for credit or -50 for debit)
                   </label>
                   <input
@@ -2929,18 +2929,18 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     value={adjustAmount}
                     onChange={(e) => setAdjustAmount(e.target.value)}
                     placeholder="e.g. 50 or -50"
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-bold"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-bold"
                     required
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Audit Reason</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Audit Reason</label>
                   <input
                     type="text"
                     value={adjustReason}
                     onChange={(e) => setAdjustReason(e.target.value)}
                     placeholder="e.g. Campaign contest winner bonus"
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                     required
                   />
                 </div>
@@ -2948,7 +2948,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   <button
                     type="button"
                     onClick={() => setAdjustingUser(null)}
-                    className="flex-1 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
+                    className="flex-1 py-2 bg-slate-800 text-slate-700 rounded-xl text-xs font-bold"
                   >
                     Cancel
                   </button>
@@ -2969,13 +2969,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       {activeTab === 'settings' && (
         <ErrorBoundary fallbackTitle="Settings View Error" onReset={loadTabContent}>
           {loading && !settings ? (
-            <div className="flex flex-col items-center justify-center p-12 space-y-3 bg-slate-900 border border-slate-800 rounded-2xl">
+            <div className="flex flex-col items-center justify-center p-12 space-y-3 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
               <RefreshCw className="w-7 h-7 text-emerald-400 animate-spin" />
-              <p className="text-xs text-slate-400">Loading system settings...</p>
+              <p className="text-xs text-slate-500">Loading system settings...</p>
             </div>
           ) : !settings ? (
-            <div className="p-6 text-center bg-slate-900 border border-slate-800 rounded-2xl space-y-3">
-              <p className="text-xs text-slate-400">Settings could not be loaded from server.</p>
+            <div className="p-6 text-center bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-3">
+              <p className="text-xs text-slate-500">Settings could not be loaded from server.</p>
               <button
                 type="button"
                 onClick={loadTabContent}
@@ -2986,73 +2986,73 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             </div>
           ) : (
             <form onSubmit={handleSaveSettings} className="space-y-4">
-              <div className="p-4 sm:p-5 bg-slate-900 border border-slate-800 rounded-2xl space-y-4">
-                <h3 className="text-sm font-bold text-white">Global Rewards & Operations Settings</h3>
+              <div className="p-4 sm:p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-4">
+                <h3 className="text-sm font-bold text-slate-900">Global Rewards & Operations Settings</h3>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Welcome Signup Bonus (₹)</label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Welcome Signup Bonus (₹)</label>
                     <input
                       type="number"
                       value={settings.signupBonus ?? 20}
                       onChange={(e) => setSettings({ ...settings, signupBonus: Number(e.target.value) })}
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Referral Reward (₹)</label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Referral Reward (₹)</label>
                     <input
                       type="number"
                       value={settings.referralReward ?? 10}
                       onChange={(e) => setSettings({ ...settings, referralReward: Number(e.target.value) })}
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                     />
                   </div>
                 </div>
 
-                <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-xl space-y-3">
+                <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-xl space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                      <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
                         <Wallet className="w-3.5 h-3.5 text-emerald-400" />
                         UPI Withdrawal Limits & Daily Controls
                       </h4>
-                      <p className="text-[11px] text-slate-400">Configure minimum/maximum caps and rolling 24-hour limits</p>
+                      <p className="text-[11px] text-slate-500">Configure minimum/maximum caps and rolling 24-hour limits</p>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Minimum Withdrawal Amount (₹)</label>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Minimum Withdrawal Amount (₹)</label>
                       <input
                         type="number"
                         min="1"
                         value={settings.minWithdrawalAmount ?? 10}
                         onChange={(e) => setSettings({ ...settings, minWithdrawalAmount: Number(e.target.value) })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-semibold"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-semibold"
                       />
                       <p className="text-[10px] text-slate-500 mt-1">Lower threshold per request</p>
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Maximum Withdrawal Amount (₹)</label>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Maximum Withdrawal Amount (₹)</label>
                       <input
                         type="number"
                         min={settings.minWithdrawalAmount || 1}
                         value={settings.maxWithdrawalAmount ?? 5000}
                         onChange={(e) => setSettings({ ...settings, maxWithdrawalAmount: Number(e.target.value) })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-semibold"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-semibold"
                       />
                       <p className="text-[10px] text-slate-500 mt-1">Upper limit per request (≥ min amount)</p>
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-slate-800/80 space-y-3">
-                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-200 cursor-pointer">
+                  <div className="pt-2 border-t border-slate-200/80/80 space-y-3">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={Boolean(settings.dailyWithdrawalLimitEnabled)}
                         onChange={(e) => setSettings({ ...settings, dailyWithdrawalLimitEnabled: e.target.checked })}
-                        className="rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-emerald-500/20"
+                        className="rounded bg-slate-800 border-slate-200 text-emerald-500 focus:ring-emerald-500/20"
                       />
                       <span>Enable 24-Hour Rolling Withdrawal Limit</span>
                     </label>
@@ -3060,7 +3060,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     {settings.dailyWithdrawalLimitEnabled && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-5 border-l-2 border-emerald-500/30 animate-in fade-in duration-200">
                         <div>
-                          <label className="block text-xs font-semibold text-slate-300 mb-1">
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
                             Max Requests per 24 Hours
                           </label>
                           <input
@@ -3068,12 +3068,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                             min="1"
                             value={settings.maxWithdrawalRequestsPer24h ?? 3}
                             onChange={(e) => setSettings({ ...settings, maxWithdrawalRequestsPer24h: Number(e.target.value) })}
-                            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                           />
-                          <p className="text-[10px] text-slate-400 mt-0.5">Maximum payout requests in rolling 24h</p>
+                          <p className="text-[10px] text-slate-500 mt-0.5">Maximum payout requests in rolling 24h</p>
                         </div>
                         <div>
-                          <label className="block text-xs font-semibold text-slate-300 mb-1">
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
                             Max Total Amount per 24 Hours (₹)
                           </label>
                           <input
@@ -3081,9 +3081,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                             min="1"
                             value={settings.maxWithdrawalAmountPer24h ?? 5000}
                             onChange={(e) => setSettings({ ...settings, maxWithdrawalAmountPer24h: Number(e.target.value) })}
-                            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                           />
-                          <p className="text-[10px] text-slate-400 mt-0.5">Maximum cumulative amount in rolling 24h</p>
+                          <p className="text-[10px] text-slate-500 mt-0.5">Maximum cumulative amount in rolling 24h</p>
                         </div>
                       </div>
                     )}
@@ -3092,19 +3092,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Daily Check-In Base (₹)</label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Daily Check-In Base (₹)</label>
                     <input
                       type="number"
                       value={settings.dailyCheckinBaseReward ?? 5}
                       onChange={(e) => setSettings({ ...settings, dailyCheckinBaseReward: Number(e.target.value) })}
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                     />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
                       Telegram Bot Username (for Referral Links)
                     </label>
                     <div className="relative">
@@ -3117,26 +3117,26 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                           setSettings({ ...settings, botUsername: cleaned });
                         }}
                         placeholder="WatchXEarnBot"
-                        className="w-full pl-28 pr-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                        className="w-full pl-28 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
                       />
                     </div>
-                    <p className="text-[10px] text-slate-400 mt-1">Must be without '@' (e.g. WatchXEarnBot)</p>
+                    <p className="text-[10px] text-slate-500 mt-1">Must be without '@' (e.g. WatchXEarnBot)</p>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Support Telegram Username</label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Support Telegram Username</label>
                     <input
                       type="text"
                       value={settings.supportTelegramUsername || ''}
                       onChange={(e) => setSettings({ ...settings, supportTelegramUsername: e.target.value })}
                       placeholder="TeleEarnSupport"
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Telegram Bot Welcome Message (/start)
                   </label>
                   <textarea
@@ -3152,15 +3152,15 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                       })
                     }
                     placeholder="🎁 Welcome to TeleEarn!..."
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
                   />
                   <p className="text-[11px] text-slate-500 mt-1">
                     Displayed when joining channels is required. Supports Telegram HTML formatting.
                   </p>
                 </div>
 
-                <div className="space-y-2 pt-2 border-t border-slate-800">
-                  <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <div className="space-y-2 pt-2 border-t border-slate-200/80">
+                  <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={Boolean(settings.maintenanceMode)}
@@ -3168,7 +3168,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     />
                     <span>Maintenance Mode (Temporarily lock Mini App for users)</span>
                   </label>
-                  <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                  <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={Boolean(settings.payoutLiveEnabled)}
@@ -3183,7 +3183,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     <button
                       type="button"
                       onClick={() => setActiveTab('gateway')}
-                      className="w-full py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition"
+                      className="w-full py-2.5 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 border border-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition"
                     >
                       <CreditCard className="w-3.5 h-3.5" />
                       Configure Payment Gateway Settings
@@ -3200,17 +3200,17 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
               </div>
 
               {/* Telegram Webhook trigger */}
-              <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-between">
+              <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs flex items-center justify-between">
                 <div>
-                  <h4 className="text-xs font-bold text-white">Telegram Bot Webhook Setup</h4>
-                  <p className="text-[11px] text-slate-400">
+                  <h4 className="text-xs font-bold text-slate-900">Telegram Bot Webhook Setup</h4>
+                  <p className="text-[11px] text-slate-500">
                     Register this server's endpoint as your Telegram Bot webhook URL
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={handleSetupWebhook}
-                  className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-lg transition"
+                  className="py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg transition"
                 >
                   Sync Webhook
                 </button>
@@ -3224,13 +3224,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       {activeTab === 'logs' && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-white">Security & Administrator Audit Trail</h3>
+            <h3 className="text-sm font-bold text-slate-900">Security & Administrator Audit Trail</h3>
             <span className="text-[11px] font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-lg">
               Anti-Fraud Protected
             </span>
           </div>
           {auditLogs.length === 0 ? (
-            <div className="p-6 text-center text-slate-500 text-xs bg-slate-900 border border-slate-800 rounded-2xl">
+            <div className="p-6 text-center text-slate-500 text-xs bg-white border border-slate-200/80 rounded-2xl shadow-xs">
               No audit records logged yet.
             </div>
           ) : (
@@ -3242,7 +3242,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   className={`p-3 rounded-xl text-xs space-y-1.5 transition ${
                     isFraudLog
                       ? 'bg-amber-950/30 border border-amber-500/30'
-                      : 'bg-slate-900 border border-slate-800'
+                      : 'bg-white border border-slate-200/80 shadow-xs'
                   }`}
                 >
                   <div className="flex items-center justify-between text-[11px]">
@@ -3250,14 +3250,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                       className={`font-mono font-bold px-1.5 py-0.5 rounded text-[10px] ${
                         isFraudLog
                           ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                          : 'bg-slate-800 text-slate-300'
+                          : 'bg-slate-800 text-slate-700'
                       }`}
                     >
                       {log.action}
                     </span>
                     <span className="text-slate-500">{new Date(log.createdAt).toLocaleString()}</span>
                   </div>
-                  <p className="text-slate-200">{log.details}</p>
+                  <p className="text-slate-800">{log.details}</p>
                   <div className="flex items-center justify-between text-[10px] text-slate-500">
                     <span>Admin/System: {log.adminId}</span>
                     {log.targetUserId && <span>Target User: {log.targetUserId}</span>}

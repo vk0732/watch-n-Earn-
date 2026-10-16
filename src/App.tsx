@@ -252,29 +252,27 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-center">
-        <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 p-0.5 shadow-2xl mb-4 animate-pulse">
-          <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
-            <RefreshCw className="w-7 h-7 text-emerald-400 animate-spin" />
-          </div>
+      <div className="min-h-screen bg-[#f4f6fb] flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto">
+        <div className="w-16 h-16 rounded-2xl bg-white border border-slate-200 shadow-md flex items-center justify-center mb-4">
+          <RefreshCw className="w-8 h-8 text-[#0088cc] animate-spin" />
         </div>
-        <h2 className="text-lg font-bold text-white tracking-wide">Connecting to TeleEarn</h2>
-        <p className="text-xs text-slate-400 mt-1">Verifying Telegram session & database sync...</p>
+        <h2 className="text-base font-bold text-slate-800 tracking-tight">Opening TeleEarn</h2>
+        <p className="text-xs text-slate-500 mt-1 max-w-xs">Connecting securely to Telegram session & balance...</p>
       </div>
     );
   }
 
   if (error || !user) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
-        <div className="w-14 h-14 rounded-2xl bg-red-950/70 border border-red-500/30 flex items-center justify-center text-red-400 mb-4">
+      <div className="min-h-screen bg-[#f4f6fb] flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto">
+        <div className="w-14 h-14 rounded-2xl bg-red-50 border border-red-200 flex items-center justify-center text-red-500 mb-4 shadow-sm">
           <AlertCircle className="w-7 h-7" />
         </div>
-        <h2 className="text-lg font-bold text-white">Connection Issue</h2>
-        <p className="text-xs text-slate-300 max-w-sm mt-2 mb-5 leading-relaxed">{error}</p>
+        <h2 className="text-base font-bold text-slate-900">Connection Issue</h2>
+        <p className="text-xs text-slate-600 max-w-sm mt-2 mb-5 leading-relaxed">{error}</p>
         <button
           onClick={() => initApp()}
-          className="py-2.5 px-6 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg transition"
+          className="py-2.5 px-6 tg-btn-primary text-xs rounded-xl shadow-md transition"
         >
           Retry Connection
         </button>
@@ -283,7 +281,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans max-w-md mx-auto relative shadow-2xl">
+    <div className="min-h-screen bg-[#f4f6fb] text-slate-900 flex flex-col font-sans max-w-md mx-auto relative shadow-xl border-x border-slate-200/60">
       {/* Header */}
       <Header
         user={user}
@@ -295,29 +293,29 @@ export default function App() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 px-4 pt-4">
+      <main className="flex-1 px-4 pt-4 pb-24">
         {deviceWarning && (
-          <div className="mb-4 p-3 bg-amber-500/15 border border-amber-500/30 rounded-2xl flex items-center gap-3 text-xs text-amber-300 font-medium">
-            <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+          <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-3 text-xs text-amber-800 font-medium shadow-2xs">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
             <span>{deviceWarning}</span>
           </div>
         )}
 
         {/* Lucky Spin Unlocked Notification Banner */}
         {gamState && gamState.spinWheelEnabled && gamState.availableSpins > 0 && (
-          <div className="mb-4 p-3 bg-gradient-to-r from-emerald-500/20 via-teal-500/20 to-emerald-500/10 border border-emerald-500/40 rounded-2xl flex items-center justify-between gap-3 text-xs text-emerald-300 shadow-lg animate-in slide-in-from-top-2 duration-300">
+          <div className="mb-4 p-3.5 bg-gradient-to-r from-sky-50 via-blue-50 to-indigo-50 border border-sky-200 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-2xs">
             <div className="flex items-center gap-2.5">
-              <span className="text-xl">🎡</span>
+              <span className="text-2xl">🎡</span>
               <div>
-                <p className="font-bold text-white text-xs">Lucky Spin Unlocked!</p>
-                <p className="text-[11px] text-emerald-400">
-                  You have <strong className="font-black text-white">{gamState.availableSpins}</strong> spin(s) ready to play!
+                <p className="font-bold text-slate-900 text-xs">Lucky Spin Unlocked!</p>
+                <p className="text-[11px] text-[#0088cc] font-medium">
+                  You have <strong className="font-extrabold text-slate-900">{gamState.availableSpins}</strong> spin(s) ready to play!
                 </p>
               </div>
             </div>
             <button
               onClick={() => setShowSpinModal(true)}
-              className="py-1.5 px-3 bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-[11px] rounded-xl shadow-md transition shrink-0"
+              className="py-1.5 px-3 bg-[#0088cc] hover:bg-[#0077b5] text-white font-bold text-[11px] rounded-xl shadow-sm transition shrink-0"
             >
               Spin Now →
             </button>
@@ -410,14 +408,14 @@ export default function App() {
       />
 
       {/* Bottom Mobile Tab Bar */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto z-40 bg-slate-950/95 backdrop-blur-md border-t border-slate-800/80 px-2 py-2">
+      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/80 px-2 py-2 shadow-[0_-4px_20px_rgba(0,0,0,0.04)]">
         <div className="flex items-center justify-around">
           <button
             onClick={() => setActiveTab('home')}
             className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl transition ${
               activeTab === 'home'
-                ? 'text-emerald-400 font-bold'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'text-[#0088cc] font-bold'
+                : 'text-slate-400 hover:text-slate-600'
             }`}
           >
             <Home className="w-5 h-5 mb-0.5" />
@@ -428,8 +426,8 @@ export default function App() {
             onClick={() => setActiveTab('tasks')}
             className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl transition ${
               activeTab === 'tasks'
-                ? 'text-emerald-400 font-bold'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'text-[#0088cc] font-bold'
+                : 'text-slate-400 hover:text-slate-600'
             }`}
           >
             <PlayCircle className="w-5 h-5 mb-0.5" />
@@ -440,8 +438,8 @@ export default function App() {
             onClick={() => setActiveTab('referrals')}
             className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl transition ${
               activeTab === 'referrals'
-                ? 'text-emerald-400 font-bold'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'text-[#0088cc] font-bold'
+                : 'text-slate-400 hover:text-slate-600'
             }`}
           >
             <Users className="w-5 h-5 mb-0.5" />
@@ -452,8 +450,8 @@ export default function App() {
             onClick={() => setActiveTab('wallet')}
             className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl transition ${
               activeTab === 'wallet'
-                ? 'text-emerald-400 font-bold'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'text-[#0088cc] font-bold'
+                : 'text-slate-400 hover:text-slate-600'
             }`}
           >
             <Wallet className="w-5 h-5 mb-0.5" />
@@ -465,8 +463,8 @@ export default function App() {
               onClick={() => setActiveTab('admin')}
               className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl transition ${
                 activeTab === 'admin'
-                  ? 'text-red-400 font-bold'
-                  : 'text-slate-400 hover:text-red-300'
+                  ? 'text-red-600 font-bold'
+                  : 'text-slate-400 hover:text-red-500'
               }`}
             >
               <ShieldAlert className="w-5 h-5 mb-0.5" />

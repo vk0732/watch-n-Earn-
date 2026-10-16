@@ -32,36 +32,67 @@ export function onForceJoinRequired(callback: (unjoined: ForceJoinChannel[]) => 
   forceJoinRequiredCallback = callback;
 }
 
+// In-flight GET request deduplication map to prevent simultaneous duplicate HTTP requests
+const inFlightGetRequests = new Map<string, Promise<any>>();
+
+// Cache for static, non-sensitive app configuration
+let configCache: { data: any; expiry: number } | null = null;
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string>),
+  const method = (options.method || 'GET').toUpperCase();
+  const isGet = method === 'GET';
+
+  // Deduplicate in-flight GET requests
+  if (isGet) {
+    const existing = inFlightGetRequests.get(endpoint);
+    if (existing) {
+      return existing as Promise<T>;
+    }
+  }
+
+  const executeRequest = async (): Promise<T> => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string>),
+    };
+
+    if (currentInitData) {
+      headers['x-telegram-init-data'] = currentInitData;
+    }
+    if (mockUserId) {
+      headers['x-mock-user-id'] = mockUserId;
+    }
+
+    const res = await fetch(`/api${endpoint}`, {
+      ...options,
+      headers,
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      if (data.forceJoinRequired && forceJoinRequiredCallback) {
+        forceJoinRequiredCallback(data.unjoinedChannels || []);
+      }
+      const error: any = new Error(data.error || 'Server request failed');
+      error.forceJoinRequired = data.forceJoinRequired;
+      error.unjoinedChannels = data.unjoinedChannels;
+      throw error;
+    }
+    return data as T;
   };
 
-  if (currentInitData) {
-    headers['x-telegram-init-data'] = currentInitData;
-  }
-  if (mockUserId) {
-    headers['x-mock-user-id'] = mockUserId;
+  if (isGet) {
+    const promise = executeRequest().finally(() => {
+      inFlightGetRequests.delete(endpoint);
+    });
+    inFlightGetRequests.set(endpoint, promise);
+    return promise;
   }
 
-  const res = await fetch(`/api${endpoint}`, {
-    ...options,
-    headers,
-  });
-
-  const data = await res.json();
-  if (!res.ok) {
-    if (data.forceJoinRequired && forceJoinRequiredCallback) {
-      forceJoinRequiredCallback(data.unjoinedChannels || []);
-    }
-    const error: any = new Error(data.error || 'Server request failed');
-    error.forceJoinRequired = data.forceJoinRequired;
-    error.unjoinedChannels = data.unjoinedChannels;
-    throw error;
-  }
-  return data as T;
+  return executeRequest();
 }
+
+let isWithdrawalInProgress = false;
 
 export const api = {
   // Authentication & Session
@@ -94,7 +125,14 @@ export const api = {
       unjoinedChannels: ForceJoinChannel[];
     }>('/auth/me'),
 
-  getConfig: () => request<{ settings: AppSettings }>('/config'),
+  getConfig: async () => {
+    if (configCache && Date.now() < configCache.expiry) {
+      return configCache.data;
+    }
+    const data = await request<{ settings: AppSettings }>('/config');
+    configCache = { data, expiry: Date.now() + 30_000 };
+    return data;
+  },
 
   // Rewards & Tasks
   claimDailyCheckin: () =>
@@ -145,34 +183,52 @@ export const api = {
       history: any[];
     }>('/referrals/stats'),
 
-  // Withdrawals & Gift Card Code Redemption
-  requestWithdrawal: (amount?: number, idempotencyKey?: string) =>
-    request<{
-      success: boolean;
-      orderId: string;
-      giftCardCode: string;
-      denomination?: number;
-      withdrawal: Withdrawal;
-      remainingBalance: number;
-      message: string;
-    }>('/withdrawals/create', {
-      method: 'POST',
-      body: JSON.stringify({ amount, idempotencyKey }),
-    }),
+  // Withdrawals & Gift Card Code Redemption (with Double-Submission Guard)
+  requestWithdrawal: async (amount?: number, idempotencyKey?: string) => {
+    if (isWithdrawalInProgress) {
+      throw new Error('A gift card redemption request is already processing. Please wait.');
+    }
+    isWithdrawalInProgress = true;
+    try {
+      return await request<{
+        success: boolean;
+        orderId: string;
+        giftCardCode: string;
+        denomination?: number;
+        withdrawal: Withdrawal;
+        remainingBalance: number;
+        message: string;
+      }>('/withdrawals/create', {
+        method: 'POST',
+        body: JSON.stringify({ amount, idempotencyKey }),
+      });
+    } finally {
+      isWithdrawalInProgress = false;
+    }
+  },
 
-  redeemGiftCard: (amount?: number, idempotencyKey?: string) =>
-    request<{
-      success: boolean;
-      orderId: string;
-      giftCardCode: string;
-      denomination?: number;
-      withdrawal: Withdrawal;
-      remainingBalance: number;
-      message: string;
-    }>('/withdrawals/create', {
-      method: 'POST',
-      body: JSON.stringify({ amount, idempotencyKey }),
-    }),
+  redeemGiftCard: async (amount?: number, idempotencyKey?: string) => {
+    if (isWithdrawalInProgress) {
+      throw new Error('A gift card redemption request is already processing. Please wait.');
+    }
+    isWithdrawalInProgress = true;
+    try {
+      return await request<{
+        success: boolean;
+        orderId: string;
+        giftCardCode: string;
+        denomination?: number;
+        withdrawal: Withdrawal;
+        remainingBalance: number;
+        message: string;
+      }>('/withdrawals/create', {
+        method: 'POST',
+        body: JSON.stringify({ amount, idempotencyKey }),
+      });
+    } finally {
+      isWithdrawalInProgress = false;
+    }
+  },
 
   getMyWithdrawals: () => request<{ withdrawals: Withdrawal[] }>('/withdrawals/my'),
 

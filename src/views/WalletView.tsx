@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api.ts';
 import type { UserProfile, Withdrawal, Transaction, AppSettings } from '../types/index.ts';
+import { RedemptionListSkeleton, TransactionListSkeleton } from '../components/Skeleton.tsx';
 
 interface WalletViewProps {
   user: UserProfile;
@@ -29,9 +30,10 @@ export const WalletView: React.FC<WalletViewProps> = ({
   onOpenWithdrawal,
 }) => {
   const [tab, setTab] = useState<'withdrawals' | 'transactions'>('withdrawals');
-  const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [withdrawals, setWithdrawals] = useState<Withdrawal[] | null>(null);
+  const [transactions, setTransactions] = useState<Transaction[] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedWithdrawal, setSelectedWithdrawal] = useState<Withdrawal | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
 
@@ -41,6 +43,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
 
   const loadData = async () => {
     setLoading(true);
+    setError(null);
     try {
       const [wRes, tRes] = await Promise.all([
         api.getMyWithdrawals(),
@@ -48,8 +51,9 @@ export const WalletView: React.FC<WalletViewProps> = ({
       ]);
       setWithdrawals(wRes.withdrawals || []);
       setTransactions(tRes.transactions || []);
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error('Wallet load error:', err);
+      setError(err.message || 'Unable to load wallet records. Please check connection.');
     } finally {
       setLoading(false);
     }
@@ -163,7 +167,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
               : 'text-slate-500 hover:text-slate-900'
           }`}
         >
-          <History className="w-3.5 h-3.5" /> Redemption History ({withdrawals.length})
+          <History className="w-3.5 h-3.5" /> Redemption History ({withdrawals ? withdrawals.length : '…'})
         </button>
         <button
           onClick={() => setTab('transactions')}
@@ -173,19 +177,34 @@ export const WalletView: React.FC<WalletViewProps> = ({
               : 'text-slate-500 hover:text-slate-900'
           }`}
         >
-          <FileText className="w-3.5 h-3.5" /> Ledger ({transactions.length})
+          <FileText className="w-3.5 h-3.5" /> Ledger ({transactions ? transactions.length : '…'})
         </button>
       </div>
 
+      {/* Error state with Retry button */}
+      {error && (
+        <div className="p-5 bg-red-50/80 border border-red-200 rounded-2xl text-center space-y-2.5 shadow-xs">
+          <div className="w-9 h-9 rounded-xl bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+            <AlertCircle className="w-5 h-5" />
+          </div>
+          <p className="text-xs font-bold text-red-950">Failed to load records</p>
+          <p className="text-[11px] text-red-700 max-w-xs mx-auto leading-relaxed">{error}</p>
+          <button
+            onClick={loadData}
+            className="py-2 px-4 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-xs transition inline-flex items-center gap-1.5 active:scale-98"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry Loading</span>
+          </button>
+        </div>
+      )}
+
       {/* Withdrawals List */}
-      {tab === 'withdrawals' && (
+      {!error && tab === 'withdrawals' && (
         <div className="space-y-2.5">
-          {loading ? (
-            <div className="p-8 text-center text-slate-500 text-xs bg-white rounded-2xl border border-slate-200/80 shadow-xs">
-              <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-[#0088cc]" />
-              Loading redemptions...
-            </div>
-          ) : withdrawals.length === 0 ? (
+          {loading && withdrawals === null ? (
+            <RedemptionListSkeleton count={3} />
+          ) : withdrawals && withdrawals.length === 0 ? (
             <div className="p-8 text-center bg-white border border-slate-200/80 rounded-2xl shadow-xs">
               <p className="text-sm font-medium text-slate-700">No gift card redemptions yet.</p>
               <p className="text-xs text-slate-400 mt-1">
@@ -193,6 +212,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
               </p>
             </div>
           ) : (
+            withdrawals &&
             withdrawals.map((w) => (
               <div
                 key={w.id}
@@ -225,18 +245,16 @@ export const WalletView: React.FC<WalletViewProps> = ({
       )}
 
       {/* Transactions List */}
-      {tab === 'transactions' && (
+      {!error && tab === 'transactions' && (
         <div className="space-y-2">
-          {loading ? (
-            <div className="p-8 text-center text-slate-500 text-xs bg-white rounded-2xl border border-slate-200/80 shadow-xs">
-              <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-[#0088cc]" />
-              Loading ledger...
-            </div>
-          ) : transactions.length === 0 ? (
+          {loading && transactions === null ? (
+            <TransactionListSkeleton count={4} />
+          ) : transactions && transactions.length === 0 ? (
             <div className="p-8 text-center bg-white border border-slate-200/80 rounded-2xl text-slate-500 text-xs shadow-xs">
               No transactions recorded yet.
             </div>
           ) : (
+            transactions &&
             transactions.map((tx) => (
               <div
                 key={tx.id}

@@ -1,14 +1,20 @@
 import React, { useState } from 'react';
 import { PlayCircle, Globe, MessageSquare, CheckCircle2, Clock, Sparkles, Share2 } from 'lucide-react';
 import type { Task, TaskType } from '../types/index.ts';
+import { TasksViewSkeleton } from '../components/Skeleton.tsx';
 
 interface TasksViewProps {
   tasks: Task[];
+  loading?: boolean;
   onSelectTask: (task: Task) => void;
 }
 
-export const TasksView: React.FC<TasksViewProps> = ({ tasks, onSelectTask }) => {
+export const TasksView: React.FC<TasksViewProps> = ({ tasks, loading = false, onSelectTask }) => {
   const [filter, setFilter] = useState<string>('all');
+
+  if (loading && tasks.length === 0) {
+    return <TasksViewSkeleton />;
+  }
 
   const filteredTasks = tasks.filter((t) => {
     if (filter === 'all') return true;

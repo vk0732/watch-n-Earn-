@@ -26,6 +26,8 @@ async function runPersistenceTests() {
     lifetimeEarnings: 0,
     referralEarnings: 0,
     dailyStreak: 0,
+    referralCode: 'PERSIST99',
+    isBanned: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };

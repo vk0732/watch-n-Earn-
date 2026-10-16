@@ -12,11 +12,13 @@ import {
 } from 'lucide-react';
 import type { UserProfile, Task, AppSettings, UserGamificationState } from '../types/index.ts';
 import { DailyCheckinCard } from '../components/DailyCheckinCard.tsx';
+import { HomeTasksSkeleton } from '../components/Skeleton.tsx';
 
 interface HomeViewProps {
   user: UserProfile;
   settings: AppSettings;
   tasks: Task[];
+  tasksLoading?: boolean;
   gamState: UserGamificationState | null;
   onOpenWithdrawal: () => void;
   onOpenSpinWheel: () => void;
@@ -30,6 +32,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   user,
   settings,
   tasks,
+  tasksLoading = false,
   gamState,
   onOpenWithdrawal,
   onOpenSpinWheel,
@@ -205,7 +208,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </button>
         </div>
 
-        {uncompletedTasks.length === 0 ? (
+        {tasksLoading ? (
+          <HomeTasksSkeleton count={3} />
+        ) : uncompletedTasks.length === 0 ? (
           <div className="p-6 bg-white border border-slate-200/80 rounded-2xl text-center shadow-xs">
             <p className="text-sm font-medium text-slate-700">🎉 You have completed all featured tasks today!</p>
             <p className="text-xs text-slate-400 mt-1">Check back later or invite friends to keep earning.</p>

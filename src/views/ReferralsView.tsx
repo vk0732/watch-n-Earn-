@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Copy, Check, Share2, Award, ShieldAlert, Sparkles, RefreshCw, ChevronRight } from 'lucide-react';
+import { Users, Copy, Check, Share2, Award, ShieldAlert, Sparkles, RefreshCw, ChevronRight, AlertCircle } from 'lucide-react';
 import { api } from '../services/api.ts';
 import type { UserProfile, AppSettings, UserGamificationState } from '../types/index.ts';
+import { ReferralViewSkeleton } from '../components/Skeleton.tsx';
 
 interface ReferralsViewProps {
   user: UserProfile;
@@ -18,6 +19,7 @@ export const ReferralsView: React.FC<ReferralsViewProps> = ({
 }) => {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -26,11 +28,13 @@ export const ReferralsView: React.FC<ReferralsViewProps> = ({
 
   const loadReferralStats = async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await api.getReferralStats();
       setStats(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setError(err?.message || 'Failed to load referral statistics. Please check your connection.');
     } finally {
       setLoading(false);
     }
@@ -76,6 +80,30 @@ export const ReferralsView: React.FC<ReferralsViewProps> = ({
       window.open(shareUrl, '_blank');
     }
   };
+
+  if (loading && !stats) {
+    return <ReferralViewSkeleton />;
+  }
+
+  if (error && !stats) {
+    return (
+      <div className="p-6 bg-white border border-rose-100 rounded-2xl shadow-xs text-center space-y-3">
+        <div className="w-12 h-12 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto">
+          <AlertCircle className="w-6 h-6" />
+        </div>
+        <div>
+          <h3 className="font-bold text-slate-800 text-sm">Failed to Load Referral Stats</h3>
+          <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">{error}</p>
+        </div>
+        <button
+          onClick={loadReferralStats}
+          className="px-4 py-2 bg-[#0088cc] hover:bg-[#0077b5] text-white text-xs font-bold rounded-xl transition shadow-xs"
+        >
+          Retry Connection
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 pb-4">

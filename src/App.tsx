@@ -3,23 +3,34 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
-import { Home, PlayCircle, Users, Wallet, ShieldAlert, RefreshCw, AlertCircle, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
+import { Home, PlayCircle, Users, Wallet, ShieldAlert, AlertTriangle } from 'lucide-react';
 import { api, setApiAuth, onForceJoinRequired } from './services/api.ts';
 import { getClientDeviceFingerprint, getStoredDeviceToken, saveDeviceToken } from './services/device.ts';
 import type { UserProfile, Task, AppSettings, ForceJoinChannel, UserGamificationState } from './types/index.ts';
 import { Header } from './components/Header.tsx';
 import { HomeView } from './views/HomeView.tsx';
-import { TasksView } from './views/TasksView.tsx';
-import { ReferralsView } from './views/ReferralsView.tsx';
-import { WalletView } from './views/WalletView.tsx';
-import { AdminView } from './views/AdminView.tsx';
-import { TaskModal } from './components/TaskModal.tsx';
-import { WithdrawalModal } from './components/WithdrawalModal.tsx';
-import { ForceJoinModal } from './components/ForceJoinModal.tsx';
-import { SpinWheelModal } from './components/SpinWheelModal.tsx';
-import { ScratchCardModal } from './components/ScratchCardModal.tsx';
+import { AppPreloader } from './components/AppPreloader.tsx';
+import {
+  TasksViewSkeleton,
+  ReferralViewSkeleton,
+  WalletHeroSkeleton,
+  RedemptionListSkeleton,
+  AdminViewSkeleton,
+} from './components/Skeleton.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+
+// Code-split heavy views and modals for sub-second first paint & minimal initial bundle
+const TasksView = lazy(() => import('./views/TasksView.tsx').then((m) => ({ default: m.TasksView })));
+const ReferralsView = lazy(() => import('./views/ReferralsView.tsx').then((m) => ({ default: m.ReferralsView })));
+const WalletView = lazy(() => import('./views/WalletView.tsx').then((m) => ({ default: m.WalletView })));
+const AdminView = lazy(() => import('./views/AdminView.tsx').then((m) => ({ default: m.AdminView })));
+
+const TaskModal = lazy(() => import('./components/TaskModal.tsx').then((m) => ({ default: m.TaskModal })));
+const WithdrawalModal = lazy(() => import('./components/WithdrawalModal.tsx').then((m) => ({ default: m.WithdrawalModal })));
+const ForceJoinModal = lazy(() => import('./components/ForceJoinModal.tsx').then((m) => ({ default: m.ForceJoinModal })));
+const SpinWheelModal = lazy(() => import('./components/SpinWheelModal.tsx').then((m) => ({ default: m.SpinWheelModal })));
+const ScratchCardModal = lazy(() => import('./components/ScratchCardModal.tsx').then((m) => ({ default: m.ScratchCardModal })));
 
 declare global {
   interface Window {
@@ -46,6 +57,7 @@ declare global {
 
 export default function App() {
   const [loading, setLoading] = useState(true);
+  const [tasksLoading, setTasksLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Core App State
@@ -90,6 +102,7 @@ export default function App() {
 
   const initApp = async (customMockId?: string, customName?: string) => {
     setLoading(true);
+    setTasksLoading(true);
     setError(null);
 
     try {
@@ -127,6 +140,20 @@ export default function App() {
         setApiAuth(rawInitData);
       }
 
+      // Kick off config fetch early in parallel with device and auth
+      const configPromise = api.getConfig().catch(() => ({
+        settings: {
+          signupBonus: 20,
+          referralReward: 10,
+          dailyCheckinBaseReward: 5,
+          minWithdrawalAmount: 10,
+          supportTelegramUsername: 'TeleEarnSupport',
+          maintenanceMode: false,
+          payoutLiveEnabled: false,
+          botUsername: 'WatchXEarnBot',
+        },
+      }));
+
       // 3. Authenticate with backend and verify device context
       const [deviceFp, storedDeviceToken] = await Promise.all([
         getClientDeviceFingerprint(),
@@ -155,25 +182,19 @@ export default function App() {
       setForceJoinRequired(authRes.forceJoinRequired);
       setUnjoinedChannels(authRes.unjoinedChannels || []);
 
-      // 4. Fetch Tasks, App Settings, and Gamification Status
+      // Unblock primary screen rendering immediately upon auth completion
+      setLoading(false);
+
+      // 4. Concurrently fetch Tasks, Settings and Gamification Status in background
       const [tasksRes, settingsRes, gamRes] = await Promise.all([
         api.getTasks().catch(() => ({ tasks: [] })),
-        api.getConfig().catch(() => ({
-          settings: {
-            signupBonus: 20,
-            referralReward: 10,
-            dailyCheckinBaseReward: 5,
-            minWithdrawalAmount: 10,
-            supportTelegramUsername: 'TeleEarnSupport',
-            maintenanceMode: false,
-            payoutLiveEnabled: false,
-            botUsername: 'WatchXEarnBot',
-          },
-        })),
+        configPromise,
         api.getGamificationStatus().catch(() => null),
       ]);
 
       setTasks(tasksRes.tasks || []);
+      setTasksLoading(false);
+
       if (settingsRes.settings) {
         setSettings(settingsRes.settings);
       }
@@ -186,8 +207,8 @@ export default function App() {
     } catch (err: any) {
       console.error('App init error:', err);
       setError(err.message || 'Unable to connect to TeleEarn servers');
-    } finally {
       setLoading(false);
+      setTasksLoading(false);
     }
   };
 
@@ -251,32 +272,16 @@ export default function App() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-[#f4f6fb] flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto">
-        <div className="w-16 h-16 rounded-2xl bg-white border border-slate-200 shadow-md flex items-center justify-center mb-4">
-          <RefreshCw className="w-8 h-8 text-[#0088cc] animate-spin" />
-        </div>
-        <h2 className="text-base font-bold text-slate-800 tracking-tight">Opening TeleEarn</h2>
-        <p className="text-xs text-slate-500 mt-1 max-w-xs">Connecting securely to Telegram session & balance...</p>
-      </div>
-    );
+    return <AppPreloader />;
   }
 
   if (error || !user) {
     return (
-      <div className="min-h-screen bg-[#f4f6fb] flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto">
-        <div className="w-14 h-14 rounded-2xl bg-red-50 border border-red-200 flex items-center justify-center text-red-500 mb-4 shadow-sm">
-          <AlertCircle className="w-7 h-7" />
-        </div>
-        <h2 className="text-base font-bold text-slate-900">Connection Issue</h2>
-        <p className="text-xs text-slate-600 max-w-sm mt-2 mb-5 leading-relaxed">{error}</p>
-        <button
-          onClick={() => initApp()}
-          className="py-2.5 px-6 tg-btn-primary text-xs rounded-xl shadow-md transition"
-        >
-          Retry Connection
-        </button>
-      </div>
+      <AppPreloader
+        error={error || 'User profile could not be loaded'}
+        onRetry={() => initApp()}
+        onSwitchUser={handleSwitchUser}
+      />
     );
   }
 
@@ -327,6 +332,7 @@ export default function App() {
             user={user}
             settings={settings}
             tasks={tasks}
+            tasksLoading={tasksLoading}
             gamState={gamState}
             onOpenWithdrawal={() => setShowWithdrawalModal(true)}
             onOpenSpinWheel={() => setShowSpinModal(true)}
@@ -338,74 +344,101 @@ export default function App() {
         )}
 
         {activeTab === 'tasks' && (
-          <TasksView tasks={tasks} onSelectTask={setSelectedTask} />
+          <Suspense fallback={<TasksViewSkeleton />}>
+            <TasksView tasks={tasks} loading={tasksLoading} onSelectTask={setSelectedTask} />
+          </Suspense>
         )}
 
         {activeTab === 'referrals' && (
-          <ReferralsView
-            user={user}
-            settings={settings}
-            gamState={gamState}
-            onOpenScratchCards={() => setShowScratchModal(true)}
-          />
+          <Suspense fallback={<ReferralViewSkeleton />}>
+            <ReferralsView
+              user={user}
+              settings={settings}
+              gamState={gamState}
+              onOpenScratchCards={() => setShowScratchModal(true)}
+            />
+          </Suspense>
         )}
 
         {activeTab === 'wallet' && (
-          <WalletView
-            user={user}
-            settings={settings}
-            onOpenWithdrawal={() => setShowWithdrawalModal(true)}
-          />
+          <Suspense
+            fallback={
+              <div className="space-y-4 pb-4">
+                <WalletHeroSkeleton />
+                <RedemptionListSkeleton count={2} />
+              </div>
+            }
+          >
+            <WalletView
+              user={user}
+              settings={settings}
+              onOpenWithdrawal={() => setShowWithdrawalModal(true)}
+            />
+          </Suspense>
         )}
 
         {activeTab === 'admin' && isAdmin && (
           <ErrorBoundary fallbackTitle="Admin Panel Error">
-            <AdminView currentUser={user} />
+            <Suspense fallback={<AdminViewSkeleton />}>
+              <AdminView currentUser={user} />
+            </Suspense>
           </ErrorBoundary>
         )}
       </main>
 
-      {/* Interactive Modals */}
-      <ForceJoinModal
-        isOpen={forceJoinRequired && unjoinedChannels.length > 0}
-        channels={unjoinedChannels}
-        onVerified={handleForceJoinVerified}
-      />
+      {/* Interactive Modals - Lazy Loaded on Demand */}
+      <Suspense fallback={null}>
+        {forceJoinRequired && unjoinedChannels.length > 0 && (
+          <ForceJoinModal
+            isOpen={true}
+            channels={unjoinedChannels}
+            onVerified={handleForceJoinVerified}
+          />
+        )}
 
-      <TaskModal
-        task={selectedTask}
-        onClose={() => setSelectedTask(null)}
-        onSuccess={handleTaskSuccess}
-      />
+        {selectedTask && (
+          <TaskModal
+            task={selectedTask}
+            onClose={() => setSelectedTask(null)}
+            onSuccess={handleTaskSuccess}
+          />
+        )}
 
-      <WithdrawalModal
-        isOpen={showWithdrawalModal}
-        availableBalance={user.balance}
-        minWithdrawal={settings.minWithdrawalAmount}
-        maxWithdrawal={settings.maxWithdrawalAmount}
-        onClose={() => setShowWithdrawalModal(false)}
-        onSuccess={handleWithdrawalSuccess}
-      />
+        {showWithdrawalModal && (
+          <WithdrawalModal
+            isOpen={showWithdrawalModal}
+            availableBalance={user.balance}
+            minWithdrawal={settings.minWithdrawalAmount}
+            maxWithdrawal={settings.maxWithdrawalAmount}
+            onClose={() => setShowWithdrawalModal(false)}
+            onSuccess={handleWithdrawalSuccess}
+          />
+        )}
 
-      <SpinWheelModal
-        isOpen={showSpinModal}
-        onClose={() => setShowSpinModal(false)}
-        gamState={gamState}
-        onSpinSuccess={(newBal) => {
-          if (user) setUser({ ...user, balance: newBal });
-        }}
-        onRefreshGamification={refreshGamification}
-      />
+        {showSpinModal && (
+          <SpinWheelModal
+            isOpen={showSpinModal}
+            onClose={() => setShowSpinModal(false)}
+            gamState={gamState}
+            onSpinSuccess={(newBal) => {
+              if (user) setUser({ ...user, balance: newBal });
+            }}
+            onRefreshGamification={refreshGamification}
+          />
+        )}
 
-      <ScratchCardModal
-        isOpen={showScratchModal}
-        onClose={() => setShowScratchModal(false)}
-        cards={gamState?.scratchCards || []}
-        onScratchSuccess={(newBal) => {
-          if (user) setUser({ ...user, balance: newBal });
-        }}
-        onRefreshCards={refreshGamification}
-      />
+        {showScratchModal && (
+          <ScratchCardModal
+            isOpen={showScratchModal}
+            onClose={() => setShowScratchModal(false)}
+            cards={gamState?.scratchCards || []}
+            onScratchSuccess={(newBal) => {
+              if (user) setUser({ ...user, balance: newBal });
+            }}
+            onRefreshCards={refreshGamification}
+          />
+        )}
+      </Suspense>
 
       {/* Bottom Mobile Tab Bar */}
       <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/80 px-2 py-2 shadow-[0_-4px_20px_rgba(0,0,0,0.04)]">

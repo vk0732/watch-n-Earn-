@@ -31,6 +31,7 @@ import type {
   GiftCardInventoryStats,
 } from '../src/types/index.ts';
 import { formatBotUsername } from './telegram.ts';
+import { isSupabaseEnabled, supabaseRedeemGiftCard, supabaseCreditBalance } from './supabase.ts';
 
 // Initialize Firebase App
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -276,10 +277,6 @@ export async function updateAppSettings(newSettings: Partial<AppSettings>): Prom
    USERS REPOSITORY
    ======================================================== */
 export async function getUser(userId: string): Promise<UserProfile | null> {
-  // Check memory first
-  const memUser = memStore.users.get(userId);
-  if (memUser) return memUser;
-
   try {
     const docRef = doc(db, 'users', userId);
     const snap = await getDoc(docRef);
@@ -291,7 +288,7 @@ export async function getUser(userId: string): Promise<UserProfile | null> {
   } catch (err) {
     console.warn(`[DB] Firestore getUser(${userId}) fallback:`, err);
   }
-  return null;
+  return memStore.users.get(userId) || null;
 }
 
 export async function getUserByReferralCode(code: string): Promise<UserProfile | null> {
@@ -342,6 +339,18 @@ export async function saveUser(user: UserProfile): Promise<UserProfile> {
 }
 
 export async function searchUsers(searchTerm?: string): Promise<UserProfile[]> {
+  try {
+    if (memStore.users.size < 50) {
+      const snap = await getDocs(collection(db, 'users'));
+      snap.forEach((d) => {
+        const u = d.data() as UserProfile;
+        memStore.users.set(u.id || d.id, { ...u, id: u.id || d.id });
+      });
+    }
+  } catch (err) {
+    console.warn('[DB] searchUsers Firestore sync fallback:', err);
+  }
+
   const users = Array.from(memStore.users.values());
   if (!searchTerm) return users.slice(0, 50);
 
@@ -367,59 +376,162 @@ export async function atomicCreditBalance(
 ): Promise<{ user: UserProfile; transaction: Transaction }> {
   const releaseLock = await acquireLock(`lock_balance_${userId}`);
   try {
-    let user = await getUser(userId);
-    if (!user) throw new Error('User not found');
-    if (user.isBanned) throw new Error('User account is suspended');
+    const nowIso = new Date().toISOString();
+    const txId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
-    const newBalance = Math.round((user.balance + amount) * 100) / 100;
-    if (newBalance < 0) {
-      throw new Error(
-        `Insufficient balance. Current balance is ₹${user.balance.toFixed(2)}, cannot deduct ₹${Math.abs(amount).toFixed(2)}.`
-      );
+    // 1. Supabase PostgreSQL Procedure (if configured)
+    if (isSupabaseEnabled()) {
+      const spRes = await supabaseCreditBalance(userId, amount, type, description, referenceId);
+      if (spRes.success) {
+        const freshUser = await getUser(userId);
+        const txObj: Transaction = {
+          id: spRes.data?.transaction_id || txId,
+          userId,
+          type,
+          amount,
+          description,
+          balanceAfter: spRes.data?.balance_after ?? (freshUser?.balance || 0),
+          referenceId,
+          createdAt: nowIso,
+        };
+        memStore.transactions.set(txObj.id, txObj);
+        if (freshUser) memStore.users.set(userId, freshUser);
+        return { user: freshUser || (memStore.users.get(userId) as UserProfile), transaction: txObj };
+      }
     }
 
-    const newLifetime = amount > 0 ? Math.round((user.lifetimeEarnings + amount) * 100) / 100 : user.lifetimeEarnings;
-    const newReferral = type === 'referral_reward' ? Math.round((user.referralEarnings + amount) * 100) / 100 : user.referralEarnings;
-
-    user = {
-      ...user,
-      balance: newBalance,
-      lifetimeEarnings: newLifetime,
-      referralEarnings: newReferral,
-      updatedAt: new Date().toISOString(),
-    };
-
-    const txId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const transaction: Transaction = {
-      id: txId,
-      userId,
-      type,
-      amount,
-      description,
-      balanceAfter: newBalance,
-      referenceId,
-      createdAt: new Date().toISOString(),
-    };
-
-    memStore.users.set(userId, user);
-    memStore.transactions.set(txId, transaction);
-
+    // 2. Firestore ACID Transaction
     try {
       const userDocRef = doc(db, 'users', userId);
       const txDocRef = doc(db, 'transactions', txId);
-      await setDoc(userDocRef, cleanDocData(user), { merge: true });
-      await setDoc(txDocRef, cleanDocData(transaction));
-    } catch (err) {
-      console.warn('[DB] atomicCreditBalance Firestore sync fallback:', err);
-    }
 
-    return { user, transaction };
+      const result = await runTransaction(db, async (txn) => {
+        const userDoc = await txn.get(userDocRef);
+        let currentUser: UserProfile;
+
+        if (!userDoc.exists()) {
+          const mem = memStore.users.get(userId);
+          if (!mem) throw new Error('User not found');
+          currentUser = mem;
+        } else {
+          currentUser = userDoc.data() as UserProfile;
+        }
+
+        if (currentUser.isBanned) throw new Error('User account is suspended');
+
+        const newBalance = Math.round((currentUser.balance + amount) * 100) / 100;
+        if (newBalance < 0) {
+          throw new Error(
+            `Insufficient balance. Current balance is ₹${currentUser.balance.toFixed(2)}, cannot deduct ₹${Math.abs(amount).toFixed(2)}.`
+          );
+        }
+
+        const newLifetime =
+          amount > 0 ? Math.round((currentUser.lifetimeEarnings + amount) * 100) / 100 : currentUser.lifetimeEarnings;
+        const newReferral =
+          type === 'referral_reward'
+            ? Math.round((currentUser.referralEarnings + amount) * 100) / 100
+            : currentUser.referralEarnings;
+
+        const updatedUser: UserProfile = {
+          ...currentUser,
+          balance: newBalance,
+          lifetimeEarnings: newLifetime,
+          referralEarnings: newReferral,
+          updatedAt: nowIso,
+        };
+
+        const txObj: Transaction = {
+          id: txId,
+          userId,
+          type,
+          amount,
+          description,
+          balanceAfter: newBalance,
+          referenceId,
+          createdAt: nowIso,
+        };
+
+        txn.set(userDocRef, cleanDocData(updatedUser), { merge: true });
+        txn.set(txDocRef, cleanDocData(txObj));
+
+        return { user: updatedUser, transaction: txObj };
+      });
+
+      memStore.users.set(userId, result.user);
+      memStore.transactions.set(txId, result.transaction);
+      return result;
+    } catch (err: any) {
+      if (
+        err.message &&
+        (err.message.includes('Insufficient balance') ||
+          err.message.includes('suspended') ||
+          err.message.includes('User not found'))
+      ) {
+        throw err;
+      }
+      console.warn('[DB] atomicCreditBalance Firestore sync fallback:', err);
+      // Fallback
+      let user = memStore.users.get(userId);
+      if (!user) throw err;
+      if (user.isBanned) throw new Error('User account is suspended');
+      const newBalance = Math.round((user.balance + amount) * 100) / 100;
+      if (newBalance < 0) {
+        throw new Error(
+          `Insufficient balance. Current balance is ₹${user.balance.toFixed(2)}, cannot deduct ₹${Math.abs(amount).toFixed(2)}.`
+        );
+      }
+      const newLifetime = amount > 0 ? Math.round((user.lifetimeEarnings + amount) * 100) / 100 : user.lifetimeEarnings;
+      const newReferral =
+        type === 'referral_reward'
+          ? Math.round((user.referralEarnings + amount) * 100) / 100
+          : user.referralEarnings;
+      user = {
+        ...user,
+        balance: newBalance,
+        lifetimeEarnings: newLifetime,
+        referralEarnings: newReferral,
+        updatedAt: nowIso,
+      };
+      const transaction: Transaction = {
+        id: txId,
+        userId,
+        type,
+        amount,
+        description,
+        balanceAfter: newBalance,
+        referenceId,
+        createdAt: nowIso,
+      };
+      memStore.users.set(userId, user);
+      memStore.transactions.set(txId, transaction);
+      return { user, transaction };
+    }
   } finally {
     releaseLock();
   }
 }
 
 export async function getUserTransactions(userId: string, limit = 50): Promise<Transaction[]> {
+  try {
+    const q = query(collection(db, 'transactions'), where('userId', '==', userId));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const items: Transaction[] = [];
+      snap.forEach((d) => {
+        const item = d.data() as Transaction;
+        const tx = { ...item, id: item.id || d.id };
+        memStore.transactions.set(tx.id, tx);
+        items.push(tx);
+      });
+      return items
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, limit);
+    }
+  } catch (err) {
+    console.warn('[DB] Firestore getUserTransactions fallback:', err);
+  }
+
   const list = Array.from(memStore.transactions.values())
     .filter((t) => t.userId === userId)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -1023,6 +1135,21 @@ export async function getTaskCompletion(userId: string, taskId: string): Promise
 
 export async function getUserCompletedTaskIds(userId: string): Promise<Set<string>> {
   const set = new Set<string>();
+  try {
+    const q = query(collection(db, 'task_completions'), where('userId', '==', userId));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      snap.forEach((d) => {
+        const item = d.data() as TaskCompletion;
+        memStore.taskCompletions.set(item.id || d.id, item);
+        if (item.taskId) set.add(item.taskId);
+      });
+      return set;
+    }
+  } catch (err) {
+    console.warn('[DB] Firestore getUserCompletedTaskIds fallback:', err);
+  }
+
   for (const comp of memStore.taskCompletions.values()) {
     if (comp.userId === userId) {
       set.add(comp.taskId);
@@ -1045,6 +1172,23 @@ export async function recordTaskCompletion(completion: TaskCompletion): Promise<
    REFERRALS REPOSITORY
    ======================================================== */
 export async function getReferralsByReferrer(referrerId: string): Promise<ReferralRecord[]> {
+  try {
+    const q = query(collection(db, 'referrals'), where('referrerId', '==', referrerId));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const items: ReferralRecord[] = [];
+      snap.forEach((d) => {
+        const item = d.data() as ReferralRecord;
+        const r = { ...item, id: item.id || d.id };
+        memStore.referrals.set(r.id, r);
+        items.push(r);
+      });
+      return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+  } catch (err) {
+    console.warn('[DB] Firestore getReferralsByReferrer fallback:', err);
+  }
+
   return Array.from(memStore.referrals.values())
     .filter((r) => r.referrerId === referrerId)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -1073,12 +1217,42 @@ export async function createWithdrawalRequest(
 }
 
 export async function getUserWithdrawals(userId: string): Promise<Withdrawal[]> {
+  try {
+    const q = query(collection(db, 'withdrawals'), where('userId', '==', userId));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const items: Withdrawal[] = [];
+      snap.forEach((d) => {
+        const item = d.data() as Withdrawal;
+        const w = { ...item, id: item.id || d.id };
+        memStore.withdrawals.set(w.id, w);
+        items.push(w);
+      });
+      return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+  } catch (err) {
+    console.warn('[DB] Firestore getUserWithdrawals fallback:', err);
+  }
+
   return Array.from(memStore.withdrawals.values())
     .filter((w) => w.userId === userId)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
 export async function getAllWithdrawals(status?: string): Promise<Withdrawal[]> {
+  try {
+    const snap = await getDocs(collection(db, 'withdrawals'));
+    if (!snap.empty) {
+      snap.forEach((d) => {
+        const item = d.data() as Withdrawal;
+        const w = { ...item, id: item.id || d.id };
+        memStore.withdrawals.set(w.id, w);
+      });
+    }
+  } catch (err) {
+    console.warn('[DB] Firestore getAllWithdrawals fallback:', err);
+  }
+
   let list = Array.from(memStore.withdrawals.values());
   if (status && status !== 'all') {
     list = list.filter((w) => w.status === status);
@@ -1091,7 +1265,18 @@ export async function updateWithdrawalStatus(
   newStatus: Withdrawal['status'],
   notes?: { providerResponse?: string; failureReason?: string; adminId?: string }
 ): Promise<Withdrawal> {
-  const withdrawal = memStore.withdrawals.get(orderId);
+  let withdrawal = memStore.withdrawals.get(orderId);
+  if (!withdrawal) {
+    try {
+      const snap = await getDoc(doc(db, 'withdrawals', orderId));
+      if (snap.exists()) {
+        withdrawal = snap.data() as Withdrawal;
+        memStore.withdrawals.set(orderId, withdrawal);
+      }
+    } catch (err) {
+      console.warn('[DB] updateWithdrawalStatus fetch fallback:', err);
+    }
+  }
   if (!withdrawal) throw new Error('Withdrawal request not found');
 
   const prevStatus = withdrawal.status;
@@ -1371,12 +1556,30 @@ export async function redeemGiftCardWithdrawal(
     if (!user) throw new Error('User not found');
     if (user.isBanned) throw new Error('Account suspended');
 
-    // 0. Idempotency Check: if user previously submitted a withdrawal with this idempotency key, return existing record
+    // 0. Persistent Idempotency Check: check memory and persistent DB
     if (idempotencyKey && idempotencyKey.trim()) {
       const cleanKey = idempotencyKey.trim();
-      const existingWithdrawal = Array.from(memStore.withdrawals.values()).find(
+      let existingWithdrawal = Array.from(memStore.withdrawals.values()).find(
         (w) => w.userId === userId && w.idempotencyKey === cleanKey
       );
+
+      if (!existingWithdrawal) {
+        try {
+          const q = query(
+            collection(db, 'withdrawals'),
+            where('userId', '==', userId),
+            where('idempotencyKey', '==', cleanKey)
+          );
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            existingWithdrawal = snap.docs[0].data() as Withdrawal;
+            memStore.withdrawals.set(existingWithdrawal.id, existingWithdrawal);
+          }
+        } catch (err) {
+          console.warn('[DB] Persistent idempotency check fallback:', err);
+        }
+      }
+
       if (existingWithdrawal) {
         const existingTx = Array.from(memStore.transactions.values()).find(
           (t) => t.referenceId === existingWithdrawal.id
@@ -1461,7 +1664,26 @@ export async function redeemGiftCardWithdrawal(
       throw new Error(`Insufficient balance. Available: ₹${user.balance.toFixed(2)}, Requested: ₹${amount}`);
     }
 
-    // 5. Find an available code matching requested denomination
+    // 5. Supabase Row-Level Locking Procedure (if configured)
+    if (isSupabaseEnabled()) {
+      const spRes = await supabaseRedeemGiftCard(userId, amount, idempotencyKey);
+      if (spRes.success && spRes.withdrawal && spRes.transaction) {
+        const freshUser = await getUser(userId);
+        memStore.withdrawals.set(spRes.withdrawal.id, spRes.withdrawal);
+        memStore.transactions.set(spRes.transaction.id, spRes.transaction);
+        return {
+          withdrawal: spRes.withdrawal,
+          transaction: spRes.transaction,
+          user: freshUser || user,
+          giftCardCode: spRes.giftCardCode || '',
+        };
+      }
+      if (spRes.error && spRes.error.includes('out of stock')) {
+        throw new Error('Gift card temporarily out of stock');
+      }
+    }
+
+    // 6. Find an available code matching requested denomination
     await getAllGiftCardCodes();
     const availableCodes = Array.from(memStore.giftCardCodes.values()).filter(
       (c) => c.status === 'available' && c.denomination === amount
@@ -1475,78 +1697,185 @@ export async function redeemGiftCardWithdrawal(
     // Pick first available code
     const selectedCode = availableCodes[0];
 
-    // 6. Atomic Allocation & Ledger Deduction
+    // 7. Atomic Allocation & Ledger Deduction via Firestore ACID Transaction
     const orderId = `WTH-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     const txId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const redeemedAt = new Date().toISOString();
-    const newBalance = Math.round((user.balance - amount) * 100) / 100;
 
-    // A. Mark Code as Redeemed
-    selectedCode.status = 'redeemed';
-    selectedCode.assignedUserId = user.id;
-    selectedCode.assignedTelegramId = user.telegramId;
-    selectedCode.assignedUsername = user.username || '';
-    selectedCode.assignedWithdrawalId = orderId;
-    selectedCode.redeemedAt = redeemedAt;
-    selectedCode.updatedAt = redeemedAt;
-    memStore.giftCardCodes.set(selectedCode.id, selectedCode);
-
-    // B. Deduct User Balance
-    const updatedUser: UserProfile = {
-      ...user,
-      balance: newBalance,
-      updatedAt: redeemedAt,
-    };
-    memStore.users.set(userId, updatedUser);
-
-    // C. Create Withdrawal Record
-    const withdrawal: Withdrawal = {
-      id: orderId,
-      userId,
-      userTelegramId: user.telegramId,
-      username: user.username || '',
-      amount,
-      status: 'success', // Instant fulfillment
-      payoutMode: 'gift_card',
-      giftCardCode: selectedCode.code,
-      giftCardDenomination: selectedCode.denomination,
-      giftCardId: selectedCode.id,
-      giftCardRedeemedAt: redeemedAt,
-      idempotencyKey: idempotencyKey ? idempotencyKey.trim() : undefined,
-      createdAt: redeemedAt,
-      processedAt: redeemedAt,
-    };
-    memStore.withdrawals.set(orderId, withdrawal);
-
-    // D. Create Transaction Record
-    const transaction: Transaction = {
-      id: txId,
-      userId,
-      type: 'withdrawal_deduct',
-      amount: -amount,
-      description: `Amazon Gift Card ₹${amount} Code Redeemed (${orderId})`,
-      balanceAfter: newBalance,
-      referenceId: orderId,
-      createdAt: redeemedAt,
-    };
-    memStore.transactions.set(txId, transaction);
-
-    // E. Persist to Firestore
     try {
-      await setDoc(doc(db, 'gift_card_codes', selectedCode.id), cleanDocData(selectedCode), { merge: true });
-      await setDoc(doc(db, 'users', userId), cleanDocData(updatedUser), { merge: true });
-      await setDoc(doc(db, 'withdrawals', orderId), cleanDocData(withdrawal));
-      await setDoc(doc(db, 'transactions', txId), cleanDocData(transaction));
-    } catch (err) {
-      console.warn('[DB] redeemGiftCardWithdrawal Firestore sync fallback:', err);
-    }
+      const userDocRef = doc(db, 'users', userId);
+      const codeDocRef = doc(db, 'gift_card_codes', selectedCode.id);
+      const wthDocRef = doc(db, 'withdrawals', orderId);
+      const txDocRef = doc(db, 'transactions', txId);
 
-    return {
-      withdrawal,
-      transaction,
-      user: updatedUser,
-      giftCardCode: selectedCode.code,
-    };
+      const txnResult = await runTransaction(db, async (txn) => {
+        // A. Re-read user inside transaction for fresh ground-truth balance
+        const uSnap = await txn.get(userDocRef);
+        let freshUser: UserProfile;
+        if (!uSnap.exists()) {
+          const mem = memStore.users.get(userId);
+          if (!mem) throw new Error('User not found');
+          freshUser = mem;
+        } else {
+          freshUser = uSnap.data() as UserProfile;
+        }
+
+        if (freshUser.isBanned) throw new Error('Account suspended');
+        if (freshUser.balance < amount) {
+          throw new Error(
+            `Insufficient balance. Available: ₹${freshUser.balance.toFixed(2)}, Requested: ₹${amount}`
+          );
+        }
+
+        // B. Re-read gift card code inside transaction to guarantee it was not claimed concurrently
+        const cSnap = await txn.get(codeDocRef);
+        let freshCode: GiftCardCode;
+        if (!cSnap.exists()) {
+          const memC = memStore.giftCardCodes.get(selectedCode.id);
+          if (!memC || memC.status !== 'available') throw new Error('Gift card temporarily out of stock');
+          freshCode = memC;
+        } else {
+          freshCode = cSnap.data() as GiftCardCode;
+          if (freshCode.status !== 'available') {
+            throw new Error('Gift card temporarily out of stock');
+          }
+        }
+
+        const newBalance = Math.round((freshUser.balance - amount) * 100) / 100;
+
+        const updatedCodeDoc: GiftCardCode = {
+          ...freshCode,
+          status: 'redeemed',
+          assignedUserId: freshUser.id,
+          assignedTelegramId: freshUser.telegramId,
+          assignedUsername: freshUser.username || '',
+          assignedWithdrawalId: orderId,
+          redeemedAt,
+          updatedAt: redeemedAt,
+        };
+
+        const updatedUserDoc: UserProfile = {
+          ...freshUser,
+          balance: newBalance,
+          updatedAt: redeemedAt,
+        };
+
+        const wthDoc: Withdrawal = {
+          id: orderId,
+          userId,
+          userTelegramId: freshUser.telegramId,
+          username: freshUser.username || '',
+          amount,
+          status: 'success',
+          payoutMode: 'gift_card',
+          giftCardCode: freshCode.code,
+          giftCardDenomination: freshCode.denomination,
+          giftCardId: freshCode.id,
+          giftCardRedeemedAt: redeemedAt,
+          idempotencyKey: idempotencyKey ? idempotencyKey.trim() : undefined,
+          createdAt: redeemedAt,
+          processedAt: redeemedAt,
+        };
+
+        const txDoc: Transaction = {
+          id: txId,
+          userId,
+          type: 'withdrawal_deduct',
+          amount: -amount,
+          description: `Amazon Gift Card ₹${amount} Code Redeemed (${orderId})`,
+          balanceAfter: newBalance,
+          referenceId: orderId,
+          createdAt: redeemedAt,
+        };
+
+        txn.set(codeDocRef, cleanDocData(updatedCodeDoc), { merge: true });
+        txn.set(userDocRef, cleanDocData(updatedUserDoc), { merge: true });
+        txn.set(wthDocRef, cleanDocData(wthDoc));
+        txn.set(txDocRef, cleanDocData(txDoc));
+
+        return {
+          user: updatedUserDoc,
+          withdrawal: wthDoc,
+          transaction: txDoc,
+          giftCardCode: freshCode.code,
+        };
+      });
+
+      memStore.giftCardCodes.set(selectedCode.id, {
+        ...selectedCode,
+        status: 'redeemed',
+        assignedUserId: userId,
+        assignedWithdrawalId: orderId,
+        redeemedAt,
+      });
+      memStore.users.set(userId, txnResult.user);
+      memStore.withdrawals.set(orderId, txnResult.withdrawal);
+      memStore.transactions.set(txId, txnResult.transaction);
+
+      return txnResult;
+    } catch (txnErr: any) {
+      if (
+        txnErr.message &&
+        (txnErr.message.includes('Insufficient balance') ||
+          txnErr.message.includes('Account suspended') ||
+          txnErr.message.includes('out of stock') ||
+          txnErr.message.includes('User not found'))
+      ) {
+        throw txnErr;
+      }
+      console.warn('[DB] runTransaction failed, checking memory fallback:', txnErr);
+
+      // In-memory dual-lock fallback
+      const newBalance = Math.round((user.balance - amount) * 100) / 100;
+      selectedCode.status = 'redeemed';
+      selectedCode.assignedUserId = user.id;
+      selectedCode.assignedTelegramId = user.telegramId;
+      selectedCode.assignedUsername = user.username || '';
+      selectedCode.assignedWithdrawalId = orderId;
+      selectedCode.redeemedAt = redeemedAt;
+      selectedCode.updatedAt = redeemedAt;
+      memStore.giftCardCodes.set(selectedCode.id, selectedCode);
+
+      const updatedUser: UserProfile = { ...user, balance: newBalance, updatedAt: redeemedAt };
+      memStore.users.set(userId, updatedUser);
+
+      const withdrawal: Withdrawal = {
+        id: orderId,
+        userId,
+        userTelegramId: user.telegramId,
+        username: user.username || '',
+        amount,
+        status: 'success',
+        payoutMode: 'gift_card',
+        giftCardCode: selectedCode.code,
+        giftCardDenomination: selectedCode.denomination,
+        giftCardId: selectedCode.id,
+        giftCardRedeemedAt: redeemedAt,
+        idempotencyKey: idempotencyKey ? idempotencyKey.trim() : undefined,
+        createdAt: redeemedAt,
+        processedAt: redeemedAt,
+      };
+      memStore.withdrawals.set(orderId, withdrawal);
+
+      const transaction: Transaction = {
+        id: txId,
+        userId,
+        type: 'withdrawal_deduct',
+        amount: -amount,
+        description: `Amazon Gift Card ₹${amount} Code Redeemed (${orderId})`,
+        balanceAfter: newBalance,
+        referenceId: orderId,
+        createdAt: redeemedAt,
+      };
+      memStore.transactions.set(txId, transaction);
+
+      return {
+        withdrawal,
+        transaction,
+        user: updatedUser,
+        giftCardCode: selectedCode.code,
+      };
+    }
   } finally {
     releaseInvLock();
     releaseUserLock();
@@ -1630,6 +1959,32 @@ export async function getAdminAuditLogs(limit = 50): Promise<AdminAuditLog[]> {
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
+  try {
+    if (memStore.users.size < 50) {
+      const snap = await getDocs(collection(db, 'users'));
+      snap.forEach((d) => {
+        const u = d.data() as UserProfile;
+        memStore.users.set(u.id || d.id, { ...u, id: u.id || d.id });
+      });
+    }
+    if (memStore.withdrawals.size < 20) {
+      const snap = await getDocs(collection(db, 'withdrawals'));
+      snap.forEach((d) => {
+        const w = d.data() as Withdrawal;
+        memStore.withdrawals.set(w.id || d.id, { ...w, id: w.id || d.id });
+      });
+    }
+    if (memStore.transactions.size < 50) {
+      const snap = await getDocs(collection(db, 'transactions'));
+      snap.forEach((d) => {
+        const t = d.data() as Transaction;
+        memStore.transactions.set(t.id || d.id, { ...t, id: t.id || d.id });
+      });
+    }
+  } catch (err) {
+    console.warn('[DB] getDashboardStats Firestore sync fallback:', err);
+  }
+
   const users = Array.from(memStore.users.values());
   const today = new Date().toISOString().split('T')[0];
   const activeToday = users.filter((u) => u.lastDailyCheckIn === today || u.updatedAt.startsWith(today)).length;

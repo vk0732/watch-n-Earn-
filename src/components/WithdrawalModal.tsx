@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Send, ShieldCheck, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { X, Gift, ShieldCheck, AlertCircle, CheckCircle2, Copy, Check, Sparkles } from 'lucide-react';
 import { api } from '../services/api.ts';
 
 interface WithdrawalModalProps {
@@ -20,24 +20,26 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   onSuccess,
 }) => {
   const [amount, setAmount] = useState<string>(minWithdrawal.toString());
-  const [upiId, setUpiId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [successResult, setSuccessResult] = useState<{ orderId: string; message: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [successResult, setSuccessResult] = useState<{
+    orderId: string;
+    code: string;
+    denomination: number;
+    message: string;
+  } | null>(null);
 
   if (!isOpen) return null;
 
-  const quickAmounts = [minWithdrawal, 250, 500, 1000].filter(
-    (q) => !maxWithdrawal || q <= maxWithdrawal
-  );
+  const isFixedAmount = maxWithdrawal && maxWithdrawal === minWithdrawal;
 
-  const handleQuickAmount = (val: number) => {
-    setAmount(val.toString());
-  };
-
-  const handleMaxAmount = () => {
-    const effectiveCap = maxWithdrawal ? Math.min(availableBalance, maxWithdrawal) : availableBalance;
-    setAmount(Math.floor(effectiveCap).toString());
+  const handleCopyCode = () => {
+    if (successResult?.code) {
+      navigator.clipboard.writeText(successResult.code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -60,23 +62,18 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       return;
     }
 
-    const cleanUpi = upiId.trim();
-    const upiRegex = /^[a-zA-Z0-9.\-_]{2,64}@[a-zA-Z0-9]{2,32}$/;
-    if (!upiRegex.test(cleanUpi)) {
-      setError('Please enter a valid UPI ID (e.g. username@okhdfcbank or 9876543210@paytm)');
-      return;
-    }
-
     setLoading(true);
     try {
-      const res = await api.requestWithdrawal(numAmount, cleanUpi);
+      const res = await api.redeemGiftCard(numAmount);
       setSuccessResult({
         orderId: res.orderId,
-        message: res.message,
+        code: res.giftCardCode,
+        denomination: res.denomination || numAmount,
+        message: res.message || 'Amazon Gift Card Code redeemed successfully!',
       });
       onSuccess(res.orderId, res.remainingBalance);
     } catch (err: any) {
-      setError(err.message || 'Withdrawal submission failed');
+      setError(err.message || 'Gift card redemption failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -93,34 +90,84 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
         </button>
 
         {successResult ? (
-          <div className="text-center py-4 space-y-4">
+          <div className="text-center py-2 space-y-4">
             <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center mx-auto text-emerald-600 shadow-xs">
               <CheckCircle2 className="w-8 h-8" />
             </div>
-            <h3 className="text-lg font-bold text-slate-900">Withdrawal Submitted!</h3>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Your request for <span className="font-bold text-emerald-700">₹{amount}</span> has been received.
-            </p>
-            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-600 space-y-1.5 text-left">
-              <div className="flex justify-between">Order ID: <span className="text-slate-900 font-mono font-semibold">{successResult.orderId}</span></div>
-              <div className="flex justify-between">UPI Destination: <span className="text-slate-900 font-mono font-medium">{upiId}</span></div>
-              <div className="flex justify-between">Status: <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded font-bold">Pending Review</span></div>
+
+            <div>
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-full mb-1.5">
+                <Sparkles className="w-3 h-3 text-amber-500" /> Instant Amazon Gift Card
+              </span>
+              <h3 className="text-xl font-black text-slate-900">Code Redeemed!</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Your ₹{successResult.denomination} Amazon Gift Card code is ready to use.
+              </p>
             </div>
+
+            {/* Gift Card Code Display Box */}
+            <div className="p-4 bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100/60 border border-amber-200/90 rounded-2xl text-left space-y-2.5 shadow-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-900">
+                  Amazon Gift Card Code
+                </span>
+                <span className="text-xs font-black text-amber-800">
+                  ₹{successResult.denomination}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between bg-white border border-amber-300 rounded-xl p-2.5 shadow-inner">
+                <span className="font-mono font-black text-base tracking-wider text-slate-900 select-all break-all">
+                  {successResult.code}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyCode}
+                  className="ml-2 px-3 py-1.5 bg-[#0088cc] hover:bg-[#0077b5] text-white text-xs font-bold rounded-lg transition flex items-center gap-1 shrink-0 active:scale-95 shadow-xs"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" /> Copied!
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" /> Copy Code
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="text-[11px] text-amber-900/80 leading-relaxed pt-1 border-t border-amber-200/60">
+                <span className="font-bold">How to apply:</span> Open Amazon App → Amazon Pay → <strong>Add Gift Card</strong> → Paste this code.
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-600 space-y-1 text-left">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Order Reference:</span>
+                <span className="text-slate-900 font-mono font-semibold">{successResult.orderId}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Saved In:</span>
+                <span className="text-slate-900 font-medium">Wallet History & Transactions</span>
+              </div>
+            </div>
+
             <button
               onClick={onClose}
-              className="w-full py-3 px-4 tg-btn-primary font-bold text-xs rounded-xl shadow-md transition"
+              className="w-full py-3.5 px-4 tg-btn-primary font-bold text-xs uppercase tracking-wider rounded-xl shadow-md transition"
             >
               Done & Return to Wallet
             </button>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-2xl bg-sky-50 border border-sky-100 flex items-center justify-center text-[#0088cc] font-black text-lg">
-                ₹
+            <div className="flex items-center gap-3 mb-1">
+              <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
+                <Gift className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">Withdraw Funds</h3>
+                <h3 className="text-base font-bold text-slate-900">Redeem Amazon Gift Card</h3>
                 <p className="text-xs text-slate-500">
                   Available Balance:{' '}
                   <span className="text-[#0088cc] font-bold">₹{availableBalance.toFixed(2)}</span>
@@ -135,80 +182,65 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               </div>
             )}
 
+            {/* Denomination Card / Input */}
             <div>
               <div className="flex justify-between items-center mb-1.5">
                 <label className="block text-xs font-semibold text-slate-700">
-                  Amount (Min: ₹{minWithdrawal}{maxWithdrawal ? ` • Max: ₹${maxWithdrawal}` : ''})
+                  Gift Card Value (₹)
                 </label>
-                {maxWithdrawal && (
-                  <span className="text-[10px] text-slate-400">Max limit: ₹{maxWithdrawal}</span>
+                {maxWithdrawal && !isFixedAmount && (
+                  <span className="text-[10px] text-slate-400">
+                    Min: ₹{minWithdrawal} • Max: ₹{maxWithdrawal}
+                  </span>
                 )}
               </div>
-              <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">₹</span>
-                <input
-                  type="number"
-                  min={minWithdrawal}
-                  max={maxWithdrawal ? Math.min(availableBalance, maxWithdrawal) : availableBalance}
-                  step="1"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  placeholder={`Min ${minWithdrawal}${maxWithdrawal ? ` - Max ${maxWithdrawal}` : ''}`}
-                  className="w-full pl-8 pr-4 py-2.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-[#0088cc] rounded-xl text-slate-900 font-bold text-sm focus:outline-none transition"
-                  required
-                />
-              </div>
 
-              <div className="flex items-center gap-1.5 mt-2">
-                {quickAmounts.map((q) => (
-                  <button
-                    key={q}
-                    type="button"
-                    onClick={() => handleQuickAmount(q)}
-                    className="flex-1 py-1 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg transition"
-                  >
-                    ₹{q}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={handleMaxAmount}
-                  className="flex-1 py-1 text-xs font-bold bg-sky-50 text-[#0088cc] hover:bg-sky-100 border border-sky-200 rounded-lg transition"
-                >
-                  MAX
-                </button>
-              </div>
+              {isFixedAmount ? (
+                <div className="p-3.5 bg-gradient-to-r from-sky-50 to-blue-50 border border-sky-200 rounded-2xl flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-[#0088cc] text-white flex items-center justify-center font-black text-sm">
+                      ₹
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-slate-900">Amazon Gift Card Voucher</span>
+                      <p className="text-[10px] text-slate-500">Fixed denomination per withdrawal</p>
+                    </div>
+                  </div>
+                  <span className="text-xl font-black text-[#0088cc]">₹{minWithdrawal}</span>
+                </div>
+              ) : (
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">₹</span>
+                  <input
+                    type="number"
+                    min={minWithdrawal}
+                    max={maxWithdrawal ? Math.min(availableBalance, maxWithdrawal) : availableBalance}
+                    step="1"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    placeholder={`Min ${minWithdrawal}${maxWithdrawal ? ` - Max ${maxWithdrawal}` : ''}`}
+                    className="w-full pl-8 pr-4 py-2.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-[#0088cc] rounded-xl text-slate-900 font-bold text-sm focus:outline-none transition"
+                    required
+                  />
+                </div>
+              )}
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Recipient UPI ID (VPA)
-              </label>
-              <input
-                type="text"
-                value={upiId}
-                onChange={(e) => setUpiId(e.target.value)}
-                placeholder="e.g. yourname@okhdfcbank or 9876543210@paytm"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-[#0088cc] rounded-xl text-slate-900 font-medium text-xs focus:outline-none transition placeholder:text-slate-400"
-                required
-              />
-              <p className="text-[11px] text-slate-400 mt-1">
-                Make sure your UPI ID is registered to receive instant payments.
-              </p>
-            </div>
-
+            {/* Fulfillment & Delivery Notice */}
             <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl text-xs space-y-1.5 text-slate-600">
               <div className="flex justify-between">
-                <span className="text-slate-400">Processing Fee:</span>
-                <span className="text-emerald-700 font-semibold">₹0.00 (Free)</span>
+                <span className="text-slate-400">Delivery:</span>
+                <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                  <Sparkles className="w-3 h-3" /> Instant Code on Screen
+                </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Transfer Method:</span>
-                <span className="font-semibold text-slate-900">Instant UPI</span>
+                <span className="text-slate-400">Fulfillment Fee:</span>
+                <span className="text-emerald-700 font-semibold">₹0.00 (Free)</span>
               </div>
               <div className="flex items-center gap-1.5 text-slate-400 text-[11px] pt-1 border-t border-slate-200">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span>Protected by atomic balance reservation & transaction logging</span>
+                <span>One unique code atomically assigned. Stored permanently in your Wallet.</span>
               </div>
             </div>
 
@@ -218,12 +250,12 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               className="w-full py-3.5 px-4 tg-btn-primary font-bold text-xs uppercase tracking-wider rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 active:scale-98"
             >
               {loading ? (
-                'Submitting Request...'
+                'Redeeming Gift Card...'
               ) : availableBalance < minWithdrawal ? (
-                `Need ₹${(minWithdrawal - availableBalance).toFixed(2)} more to withdraw`
+                `Need ₹${(minWithdrawal - availableBalance).toFixed(2)} more to redeem`
               ) : (
                 <>
-                  <Send className="w-4 h-4" /> Request ₹{amount} Withdrawal
+                  <Gift className="w-4 h-4" /> Redeem ₹{amount} Gift Card
                 </>
               )}
             </button>

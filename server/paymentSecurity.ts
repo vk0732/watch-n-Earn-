@@ -183,9 +183,10 @@ export async function getStoredGatewayConfig(): Promise<StoredGatewayConfig> {
     const snap = await getDoc(docRef);
     if (snap.exists()) {
       inMemoryGatewayConfig = snap.data() as StoredGatewayConfig;
-      // Ensure provider is set to paynit
-      if (!inMemoryGatewayConfig.provider) {
-        inMemoryGatewayConfig.provider = 'paynit';
+      // Single-gateway architecture: unconditionally map provider to paynit
+      inMemoryGatewayConfig.provider = 'paynit';
+      if (!inMemoryGatewayConfig.apiBaseUrl) {
+        inMemoryGatewayConfig.apiBaseUrl = 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1';
       }
       return inMemoryGatewayConfig;
     }
@@ -249,21 +250,21 @@ export async function getPublicGatewayConfig(reqHost?: string): Promise<PaymentG
   const webhookUrl = `${host.replace(/\/$/, '')}/api/payouts/webhook`;
 
   return {
-    provider: stored.provider,
+    provider: 'paynit',
     environment: stored.environment,
     payoutsEnabled: stored.payoutsEnabled,
-    apiBaseUrl: stored.apiBaseUrl,
+    apiBaseUrl: stored.apiBaseUrl || 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1',
     maskedApiKey: stored.maskedApiKey || (stored.hasApiKey ? '****••••' : ''),
     maskedApiSecret: stored.maskedApiSecret || (stored.hasApiSecret ? '••••••••' : ''),
-    maskedMerchantId: stored.maskedMerchantId || '',
-    maskedWebhookSecret: stored.maskedWebhookSecret || (stored.hasWebhookSecret ? '••••••••' : ''),
+    maskedMerchantId: '',
+    maskedWebhookSecret: '',
     hasApiKey: stored.hasApiKey,
     hasApiSecret: stored.hasApiSecret,
-    hasMerchantId: stored.hasMerchantId,
-    hasWebhookSecret: stored.hasWebhookSecret,
+    hasMerchantId: false,
+    hasWebhookSecret: false,
     status: {
       connectionStatus: stored.lastTestStatus || 'not_configured',
-      message: stored.lastTestMessage || 'No connection test performed yet.',
+      message: stored.lastTestMessage || 'Paynit UPI Payouts configured.',
       lastTestedAt: stored.lastTestedAt,
       environment: stored.environment,
     },
@@ -279,7 +280,7 @@ export async function getPublicGatewayConfig(reqHost?: string): Promise<PaymentG
  */
 export async function saveGatewayConfig(
   input: {
-    provider: GatewayProvider | '';
+    provider?: GatewayProvider | '';
     environment: GatewayEnvironment;
     payoutsEnabled: boolean;
     apiBaseUrl: string;
@@ -306,7 +307,7 @@ export async function saveGatewayConfig(
 
   const updated: StoredGatewayConfig = {
     ...current,
-    provider: input.provider || 'paynit',
+    provider: 'paynit',
     environment: input.environment,
     payoutsEnabled: input.payoutsEnabled,
     apiBaseUrl: input.apiBaseUrl?.trim() || current.apiBaseUrl || 'https://pxqyeonymwlpiklfyjbb.supabase.co/functions/v1',
@@ -457,10 +458,7 @@ export async function recordConnectionTestResult(
  */
 export async function getDecryptedCredentials(): Promise<DecryptedGatewayCredentials> {
   const stored = await getStoredGatewayConfig();
-  const provider =
-    stored.provider ||
-    (process.env.PAYOUT_PROVIDER as GatewayProvider) ||
-    (process.env.PAYNIT_CLIENT_ID ? 'paynit' : 'cashfree');
+  const provider = 'paynit';
 
   const apiKey =
     decryptSecret(stored.encryptedApiKey) ||

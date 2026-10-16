@@ -27,6 +27,8 @@ import type {
   AdminAuditLog,
   DashboardStats,
   BonusClaimRecord,
+  GiftCardCode,
+  GiftCardInventoryStats,
 } from '../src/types/index.ts';
 import { formatBotUsername } from './telegram.ts';
 
@@ -43,6 +45,7 @@ export const memStore = {
   referrals: new Map<string, ReferralRecord>(),
   transactions: new Map<string, Transaction>(),
   withdrawals: new Map<string, Withdrawal>(),
+  giftCardCodes: new Map<string, GiftCardCode>(),
   channels: new Map<string, ForceJoinChannel>(),
   deviceFingerprints: new Map<string, string>(), // fingerprint -> userId
   ipHashes: new Map<string, string>(), // ipHash -> userId
@@ -1052,8 +1055,12 @@ export async function recordReferral(referral: ReferralRecord): Promise<Referral
 export async function createWithdrawalRequest(
   userId: string,
   amount: number,
-  upiId: string
-): Promise<{ withdrawal: Withdrawal; transaction: Transaction; user: UserProfile }> {
+  upiId?: string
+): Promise<{ withdrawal: Withdrawal; transaction: Transaction; user: UserProfile; giftCardCode?: string }> {
+  if (!upiId) {
+    return await redeemGiftCardWithdrawal(userId, amount);
+  }
+
   // Concurrency isolation: Acquire per-user lock to prevent race conditions & limit bypass
   const releaseLock = await acquireLock(`user_withdrawal_${userId}`);
 
@@ -1239,6 +1246,393 @@ export async function updateWithdrawalStatus(
   }
 
   return withdrawal;
+}
+
+/* ========================================================
+   AMAZON GIFT CARD INVENTORY & INSTANT REDEMPTION
+   ======================================================== */
+
+/**
+ * Fetch all gift card codes from Firestore and cache in memStore
+ */
+export async function getAllGiftCardCodes(filter?: {
+  status?: 'available' | 'redeemed' | 'invalidated';
+  denomination?: number;
+}): Promise<GiftCardCode[]> {
+  try {
+    const snap = await getDocs(collection(db, 'gift_card_codes'));
+    if (!snap.empty) {
+      snap.forEach((d) => {
+        const item = d.data() as GiftCardCode;
+        memStore.giftCardCodes.set(item.id || d.id, { ...item, id: item.id || d.id });
+      });
+    }
+  } catch (err) {
+    // Keep memStore
+  }
+
+  let list = Array.from(memStore.giftCardCodes.values());
+  if (filter?.status) {
+    list = list.filter((c) => c.status === filter.status);
+  }
+  if (filter?.denomination && filter.denomination > 0) {
+    list = list.filter((c) => c.denomination === filter.denomination);
+  }
+  return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+/**
+ * Calculate inventory stats for Admin Panel
+ */
+export async function getGiftCardInventoryStats(): Promise<GiftCardInventoryStats> {
+  const allCodes = await getAllGiftCardCodes();
+  const available = allCodes.filter((c) => c.status === 'available');
+  const redeemed = allCodes.filter((c) => c.status === 'redeemed');
+  const invalidated = allCodes.filter((c) => c.status === 'invalidated');
+
+  const availableByDenomination: Record<number, number> = {};
+  let totalAvailableValue = 0;
+
+  for (const c of available) {
+    const denom = c.denomination || 10;
+    availableByDenomination[denom] = (availableByDenomination[denom] || 0) + 1;
+    totalAvailableValue += denom;
+  }
+
+  return {
+    totalCodes: allCodes.length,
+    availableCodes: available.length,
+    redeemedCodes: redeemed.length,
+    invalidatedCodes: invalidated.length,
+    availableByDenomination,
+    totalAvailableValue,
+  };
+}
+
+/**
+ * Admin: Add gift card codes (single or bulk), with strict duplicate detection
+ */
+export async function addGiftCardCodes(
+  rawInput: string[] | string,
+  denomination: number,
+  createdBy = 'admin'
+): Promise<{ added: number; duplicates: number; codes: GiftCardCode[] }> {
+  const denom = Number(denomination);
+  if (!denom || isNaN(denom) || denom <= 0) {
+    throw new Error('Please enter a valid gift card denomination (e.g. ₹10).');
+  }
+
+  // Parse lines or array
+  let codeStrings: string[] = [];
+  if (Array.isArray(rawInput)) {
+    codeStrings = rawInput;
+  } else if (typeof rawInput === 'string') {
+    codeStrings = rawInput.split(/[\r\n,;]+/);
+  }
+
+  // Clean and filter empty
+  const cleanCodes = codeStrings
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
+
+  if (cleanCodes.length === 0) {
+    throw new Error('No valid gift card codes found to import.');
+  }
+
+  // Acquire concurrency lock on inventory to prevent race conditions during import
+  const releaseLock = await acquireLock('gift_card_inventory');
+  try {
+    const existingList = await getAllGiftCardCodes();
+    const existingCodeSet = new Set(existingList.map((c) => c.code.trim().toUpperCase()));
+
+    let addedCount = 0;
+    let duplicateCount = 0;
+    const addedList: GiftCardCode[] = [];
+    const nowIso = new Date().toISOString();
+
+    for (const rawCode of cleanCodes) {
+      const normalized = rawCode.toUpperCase();
+      if (existingCodeSet.has(normalized)) {
+        duplicateCount++;
+        continue;
+      }
+
+      existingCodeSet.add(normalized);
+      const codeId = `gc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const newCard: GiftCardCode = {
+        id: codeId,
+        code: rawCode,
+        denomination: denom,
+        status: 'available',
+        assignedUserId: null,
+        assignedTelegramId: null,
+        assignedUsername: null,
+        assignedWithdrawalId: null,
+        redeemedAt: null,
+        createdAt: nowIso,
+        createdBy,
+      };
+
+      memStore.giftCardCodes.set(codeId, newCard);
+      addedList.push(newCard);
+      addedCount++;
+
+      try {
+        await setDoc(doc(db, 'gift_card_codes', codeId), cleanDocData(newCard));
+      } catch (err) {
+        console.warn('[DB] addGiftCardCodes Firestore sync fallback:', err);
+      }
+    }
+
+    return {
+      added: addedCount,
+      duplicates: duplicateCount,
+      codes: addedList,
+    };
+  } finally {
+    releaseLock();
+  }
+}
+
+/**
+ * Admin: Invalidate an unredeemed gift card code
+ */
+export async function invalidateGiftCardCode(id: string, reason?: string): Promise<GiftCardCode> {
+  const releaseLock = await acquireLock('gift_card_inventory');
+  try {
+    await getAllGiftCardCodes();
+    const card = memStore.giftCardCodes.get(id);
+    if (!card) {
+      throw new Error('Gift card code not found.');
+    }
+    if (card.status === 'redeemed') {
+      throw new Error('Cannot invalidate an already redeemed gift card code.');
+    }
+
+    card.status = 'invalidated';
+    card.notes = reason || 'Invalidated by admin';
+    card.updatedAt = new Date().toISOString();
+    memStore.giftCardCodes.set(id, card);
+
+    try {
+      await setDoc(doc(db, 'gift_card_codes', id), cleanDocData(card), { merge: true });
+    } catch (err) {
+      console.warn('[DB] invalidateGiftCardCode Firestore sync fallback:', err);
+    }
+
+    return card;
+  } finally {
+    releaseLock();
+  }
+}
+
+/**
+ * Admin: Delete an unredeemed gift card code
+ */
+export async function deleteGiftCardCode(id: string): Promise<boolean> {
+  const releaseLock = await acquireLock('gift_card_inventory');
+  try {
+    await getAllGiftCardCodes();
+    const card = memStore.giftCardCodes.get(id);
+    if (!card) {
+      return false;
+    }
+    if (card.status === 'redeemed') {
+      throw new Error('Cannot delete an already redeemed gift card code.');
+    }
+
+    memStore.giftCardCodes.delete(id);
+    try {
+      await deleteDoc(doc(db, 'gift_card_codes', id));
+    } catch (err) {
+      console.warn('[DB] deleteGiftCardCode Firestore sync fallback:', err);
+    }
+    return true;
+  } finally {
+    releaseLock();
+  }
+}
+
+/**
+ * ONE CODE — ONE USER: Server-side atomic allocation and instant Amazon Gift Card redemption.
+ *
+ * Rules:
+ * 1. Checks minimum & maximum withdrawal settings dynamically.
+ * 2. Checks rolling 24-hour limits (if enabled).
+ * 3. Verifies user balance >= requested amount.
+ * 4. Atomically finds ONE available gift card code matching the denomination.
+ * 5. If no code is available, throws "Gift card temporarily out of stock" and DOES NOT deduct balance.
+ * 6. Atomically marks code redeemed, deducts balance, and writes withdrawal + transaction records.
+ */
+export async function redeemGiftCardWithdrawal(
+  userId: string,
+  requestedAmount?: number
+): Promise<{
+  withdrawal: Withdrawal;
+  transaction: Transaction;
+  user: UserProfile;
+  giftCardCode: string;
+}> {
+  // Dual-lock isolation: per-user lock (prevents multi-click race conditions) + inventory lock (prevents code reuse)
+  const releaseUserLock = await acquireLock(`user_withdrawal_${userId}`);
+  const releaseInvLock = await acquireLock('gift_card_allocation');
+
+  try {
+    const user = await getUser(userId);
+    if (!user) throw new Error('User not found');
+    if (user.isBanned) throw new Error('Account suspended');
+
+    const settings = await getAppSettings();
+
+    // Determine amount dynamically based on settings
+    let amount = Number(requestedAmount);
+    if (!amount || isNaN(amount) || amount <= 0) {
+      amount = settings.minWithdrawalAmount;
+    }
+
+    // 1. Minimum withdrawal check
+    if (amount < settings.minWithdrawalAmount) {
+      throw new Error(`Minimum withdrawal amount is ₹${settings.minWithdrawalAmount}`);
+    }
+
+    // 2. Maximum withdrawal limit check (if configured and > 0)
+    if (settings.maxWithdrawalAmount && settings.maxWithdrawalAmount > 0) {
+      if (amount > settings.maxWithdrawalAmount) {
+        throw new Error(
+          `Withdrawal amount exceeds the allowed maximum limit of ₹${settings.maxWithdrawalAmount}. Please enter an amount up to ₹${settings.maxWithdrawalAmount}.`
+        );
+      }
+    }
+
+    // 3. Rolling 24-Hour Withdrawal Limits
+    if (settings.dailyWithdrawalLimitEnabled) {
+      const nowMs = Date.now();
+      const windowStartMs = nowMs - 24 * 60 * 60 * 1000;
+
+      const userWithdrawals = await getUserWithdrawals(userId);
+      const activeWindowWithdrawals = userWithdrawals.filter((w) => {
+        const isEligibleStatus =
+          w.status === 'pending' || w.status === 'processing' || w.status === 'success';
+        if (!isEligibleStatus) return false;
+        const createdAtMs = new Date(w.createdAt).getTime();
+        return createdAtMs >= windowStartMs;
+      });
+
+      const maxReqs = settings.maxWithdrawalRequestsPer24h;
+      if (maxReqs && maxReqs > 0 && activeWindowWithdrawals.length >= maxReqs) {
+        throw new Error(
+          `Daily withdrawal request limit reached. You can make at most ${maxReqs} withdrawal request(s) in a 24-hour period.`
+        );
+      }
+
+      const maxDailyAmount = settings.maxWithdrawalAmountPer24h;
+      if (maxDailyAmount && maxDailyAmount > 0) {
+        const currentDailySum = activeWindowWithdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
+        if (currentDailySum + amount > maxDailyAmount) {
+          const remainingDailyAllowance = Math.max(0, maxDailyAmount - currentDailySum);
+          throw new Error(
+            `Daily withdrawal amount limit reached. Your 24-hour limit is ₹${maxDailyAmount}. You have already withdrawn/requested ₹${currentDailySum.toFixed(
+              2
+            )} in the past 24 hours (remaining: ₹${remainingDailyAllowance.toFixed(2)}).`
+          );
+        }
+      }
+    }
+
+    // 4. Verify balance
+    if (user.balance < amount) {
+      throw new Error(`Insufficient balance. Available: ₹${user.balance.toFixed(2)}, Requested: ₹${amount}`);
+    }
+
+    // 5. Find an available code matching requested denomination
+    await getAllGiftCardCodes();
+    const availableCodes = Array.from(memStore.giftCardCodes.values()).filter(
+      (c) => c.status === 'available' && c.denomination === amount
+    );
+
+    if (availableCodes.length === 0) {
+      // STRICT REQUIREMENT: If no code is available, throw out of stock and NEVER touch balance
+      throw new Error('Gift card temporarily out of stock');
+    }
+
+    // Pick first available code
+    const selectedCode = availableCodes[0];
+
+    // 6. Atomic Allocation & Ledger Deduction
+    const orderId = `WTH-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    const txId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const redeemedAt = new Date().toISOString();
+    const newBalance = Math.round((user.balance - amount) * 100) / 100;
+
+    // A. Mark Code as Redeemed
+    selectedCode.status = 'redeemed';
+    selectedCode.assignedUserId = user.id;
+    selectedCode.assignedTelegramId = user.telegramId;
+    selectedCode.assignedUsername = user.username || '';
+    selectedCode.assignedWithdrawalId = orderId;
+    selectedCode.redeemedAt = redeemedAt;
+    selectedCode.updatedAt = redeemedAt;
+    memStore.giftCardCodes.set(selectedCode.id, selectedCode);
+
+    // B. Deduct User Balance
+    const updatedUser: UserProfile = {
+      ...user,
+      balance: newBalance,
+      updatedAt: redeemedAt,
+    };
+    memStore.users.set(userId, updatedUser);
+
+    // C. Create Withdrawal Record
+    const withdrawal: Withdrawal = {
+      id: orderId,
+      userId,
+      userTelegramId: user.telegramId,
+      username: user.username || '',
+      amount,
+      status: 'success', // Instant fulfillment
+      payoutMode: 'gift_card',
+      giftCardCode: selectedCode.code,
+      giftCardDenomination: selectedCode.denomination,
+      giftCardId: selectedCode.id,
+      giftCardRedeemedAt: redeemedAt,
+      createdAt: redeemedAt,
+      processedAt: redeemedAt,
+    };
+    memStore.withdrawals.set(orderId, withdrawal);
+
+    // D. Create Transaction Record
+    const transaction: Transaction = {
+      id: txId,
+      userId,
+      type: 'withdrawal_deduct',
+      amount: -amount,
+      description: `Amazon Gift Card ₹${amount} Code Redeemed (${orderId})`,
+      balanceAfter: newBalance,
+      referenceId: orderId,
+      createdAt: redeemedAt,
+    };
+    memStore.transactions.set(txId, transaction);
+
+    // E. Persist to Firestore
+    try {
+      await setDoc(doc(db, 'gift_card_codes', selectedCode.id), cleanDocData(selectedCode), { merge: true });
+      await setDoc(doc(db, 'users', userId), cleanDocData(updatedUser), { merge: true });
+      await setDoc(doc(db, 'withdrawals', orderId), cleanDocData(withdrawal));
+      await setDoc(doc(db, 'transactions', txId), cleanDocData(transaction));
+    } catch (err) {
+      console.warn('[DB] redeemGiftCardWithdrawal Firestore sync fallback:', err);
+    }
+
+    return {
+      withdrawal,
+      transaction,
+      user: updatedUser,
+      giftCardCode: selectedCode.code,
+    };
+  } finally {
+    releaseInvLock();
+    releaseUserLock();
+  }
 }
 
 /* ========================================================

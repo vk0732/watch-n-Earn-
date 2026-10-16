@@ -32,6 +32,7 @@ import {
   Check,
   Gift,
   Disc,
+  Ticket,
 } from 'lucide-react';
 import { api } from '../services/api.ts';
 import { ErrorBoundary } from '../components/ErrorBoundary.tsx';
@@ -49,6 +50,8 @@ import type {
   GamificationStats,
   SpinRewardSegment,
   ScratchRewardOption,
+  GiftCardCode,
+  GiftCardInventoryStats,
 } from '../types/index.ts';
 
 interface AdminViewProps {
@@ -57,7 +60,7 @@ interface AdminViewProps {
 
 export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   const [activeTab, setActiveTab] = useState<
-    'stats' | 'gateway' | 'gamification' | 'withdrawals' | 'bot' | 'channels' | 'tasks' | 'settings' | 'users' | 'logs'
+    'stats' | 'giftcards' | 'gateway' | 'gamification' | 'withdrawals' | 'bot' | 'channels' | 'tasks' | 'settings' | 'users' | 'logs'
   >('stats');
 
   // Gamification & Rewards State
@@ -68,6 +71,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   // State
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [gatewayStatus, setGatewayStatus] = useState<any>(null);
+
+  // Gift Card Inventory State
+  const [gcStats, setGcStats] = useState<GiftCardInventoryStats | null>(null);
+  const [gcCodes, setGcCodes] = useState<GiftCardCode[]>([]);
+  const [gcFilter, setGcFilter] = useState<'all' | 'available' | 'redeemed' | 'invalidated'>('all');
+  const [gcDenomFilter, setGcDenomFilter] = useState<number>(0);
+  const [gcInputMode, setGcInputMode] = useState<'single' | 'bulk'>('bulk');
+  const [gcSingleCode, setGcSingleCode] = useState('');
+  const [gcBulkCodes, setGcBulkCodes] = useState('');
+  const [gcDenomination, setGcDenomination] = useState<number>(10);
+  const [gcSubmitting, setGcSubmitting] = useState(false);
+  const [gcActionId, setGcActionId] = useState<string | null>(null);
+  const [gcCopiedId, setGcCopiedId] = useState<string | null>(null);
 
   // Payment Gateway Settings State
   const [gatewayConfig, setGatewayConfig] = useState<PaymentGatewayPublicConfig | null>(null);
@@ -130,6 +146,79 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     setTimeout(() => setMessage(null), 4000);
   };
 
+  const loadGiftCardsData = async (filter = gcFilter, denom = gcDenomFilter) => {
+    try {
+      const [sRes, cRes] = await Promise.all([
+        api.getAdminGiftCardStats(),
+        api.getAdminGiftCards(filter, denom),
+      ]);
+      setGcStats(sRes.stats);
+      setGcCodes(cRes.codes || []);
+    } catch (err: any) {
+      showNotify(err.message || 'Failed to load gift cards data', 'error');
+    }
+  };
+
+  const handleImportGiftCards = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const codesToImport = gcInputMode === 'single' ? [gcSingleCode.trim()] : gcBulkCodes;
+    if (!codesToImport || (Array.isArray(codesToImport) && !codesToImport[0])) {
+      showNotify('Please enter at least one gift card code.', 'error');
+      return;
+    }
+
+    setGcSubmitting(true);
+    try {
+      const res = await api.addAdminGiftCards(codesToImport, gcDenomination);
+      showNotify(res.message || `Imported ${res.added} code(s).`, 'success');
+      setGcSingleCode('');
+      setGcBulkCodes('');
+      await loadGiftCardsData();
+    } catch (err: any) {
+      showNotify(err.message || 'Failed to import gift card codes.', 'error');
+    } finally {
+      setGcSubmitting(false);
+    }
+  };
+
+  const handleInvalidateGiftCard = async (id: string) => {
+    if (!window.confirm('Are you sure you want to invalidate this gift card code? It will not be assigned to users.')) {
+      return;
+    }
+    setGcActionId(id);
+    try {
+      await api.invalidateAdminGiftCard(id, 'Admin manual invalidation');
+      showNotify('Gift card code invalidated successfully.', 'success');
+      await loadGiftCardsData();
+    } catch (err: any) {
+      showNotify(err.message || 'Failed to invalidate code.', 'error');
+    } finally {
+      setGcActionId(null);
+    }
+  };
+
+  const handleDeleteGiftCard = async (id: string) => {
+    if (!window.confirm('Are you sure you want to permanently delete this unredeemed code from inventory?')) {
+      return;
+    }
+    setGcActionId(id);
+    try {
+      await api.deleteAdminGiftCard(id);
+      showNotify('Gift card code deleted.', 'success');
+      await loadGiftCardsData();
+    } catch (err: any) {
+      showNotify(err.message || 'Failed to delete code.', 'error');
+    } finally {
+      setGcActionId(null);
+    }
+  };
+
+  const handleCopyGcCode = (id: string, code: string) => {
+    navigator.clipboard.writeText(code);
+    setGcCopiedId(id);
+    setTimeout(() => setGcCopiedId(null), 2000);
+  };
+
   const loadTabContent = async () => {
     setLoading(true);
     try {
@@ -138,6 +227,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
         setStats(res.stats);
         setGatewayStatus(res.gatewayStatus);
         setSettings(res.settings);
+      } else if (activeTab === 'giftcards') {
+        await loadGiftCardsData();
       } else if (activeTab === 'bot') {
         await refreshTelegramStatus();
       } else if (activeTab === 'channels') {
@@ -782,6 +873,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
         {[
           { id: 'stats', label: 'Dashboard', icon: Activity },
+          { id: 'giftcards', label: 'Gift Card Inventory', icon: Ticket },
           { id: 'gamification', label: 'Gamification & Rewards', icon: Gift },
           { id: 'gateway', label: 'Payment Gateway', icon: CreditCard },
           { id: 'withdrawals', label: 'Withdrawals', icon: Clock },
@@ -891,6 +983,346 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 Payment Gateway Settings →
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: GIFT CARD INVENTORY */}
+      {activeTab === 'giftcards' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          {/* Header & Refresh */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Ticket className="w-5 h-5 text-amber-500" />
+                Amazon Gift Card Inventory
+              </h3>
+              <p className="text-xs text-slate-500">
+                Manage stock of ₹10 Amazon Gift Card codes for instant withdrawal redemption
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => loadGiftCardsData()}
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Refresh Stock
+            </button>
+          </div>
+
+          {/* Stock KPI Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="p-4 bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200 rounded-2xl shadow-xs">
+              <span className="text-[10px] text-emerald-800 uppercase font-bold tracking-wider block mb-1">
+                Available ₹10 Codes
+              </span>
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl sm:text-3xl font-black text-emerald-700">
+                  {gcStats?.availableByDenomination?.[10] ?? 0}
+                </span>
+                <span className="text-xs font-semibold text-emerald-600">codes</span>
+              </div>
+              <p className="text-[10px] text-emerald-700/80 mt-1">Ready for instant redemption</p>
+            </div>
+
+            <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
+              <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider block mb-1">
+                Total Available Value
+              </span>
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl sm:text-3xl font-black text-slate-900">
+                  ₹{gcStats?.totalAvailableValue ?? 0}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">Sum of active inventory</p>
+            </div>
+
+            <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
+              <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider block mb-1">
+                Redeemed Codes
+              </span>
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl sm:text-3xl font-black text-[#0088cc]">
+                  {gcStats?.redeemedCodes ?? 0}
+                </span>
+                <span className="text-xs font-semibold text-slate-400">delivered</span>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">Claimed by users</p>
+            </div>
+
+            <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
+              <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider block mb-1">
+                Invalidated / Void
+              </span>
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl sm:text-3xl font-black text-slate-400">
+                  {gcStats?.invalidatedCodes ?? 0}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">Blocked from redemption</p>
+            </div>
+          </div>
+
+          {/* Import / Add New Gift Card Codes Card */}
+          <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div>
+                <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Plus className="w-4 h-4 text-emerald-600" />
+                  Add Gift Card Codes to Inventory
+                </h4>
+                <p className="text-xs text-slate-500">
+                  Add a single code or paste multiple codes in bulk. Duplicates are automatically detected and skipped.
+                </p>
+              </div>
+
+              {/* Mode switch */}
+              <div className="flex bg-slate-100 p-1 rounded-xl text-xs font-bold gap-1">
+                <button
+                  type="button"
+                  onClick={() => setGcInputMode('bulk')}
+                  className={`px-3 py-1 rounded-lg transition ${
+                    gcInputMode === 'bulk'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  Bulk Paste (Multiline)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGcInputMode('single')}
+                  className={`px-3 py-1 rounded-lg transition ${
+                    gcInputMode === 'single'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  Single Code
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleImportGiftCards} className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <div className="sm:col-span-1">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Denomination (₹)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">₹</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={gcDenomination}
+                      onChange={(e) => setGcDenomination(Number(e.target.value))}
+                      className="w-full pl-7 pr-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-[#0088cc] rounded-xl text-xs font-bold text-slate-900"
+                      required
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">Default: ₹10</p>
+                </div>
+
+                <div className="sm:col-span-3">
+                  {gcInputMode === 'bulk' ? (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Paste Amazon Gift Card Codes (One code per line)
+                      </label>
+                      <textarea
+                        rows={4}
+                        value={gcBulkCodes}
+                        onChange={(e) => setGcBulkCodes(e.target.value)}
+                        placeholder={`Paste multiple codes here, one per line:\nAMZN-ABCD-1234\nAMZN-EFGH-5678\nAMZN-9988-7766`}
+                        className="w-full p-3 bg-slate-50 border border-slate-200 focus:bg-white focus:border-[#0088cc] rounded-xl text-xs font-mono text-slate-900 placeholder:text-slate-400 resize-y"
+                        required
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Single Amazon Gift Card Code
+                      </label>
+                      <input
+                        type="text"
+                        value={gcSingleCode}
+                        onChange={(e) => setGcSingleCode(e.target.value)}
+                        placeholder="e.g. AMZN-ABCD-1234-EFGH"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-[#0088cc] rounded-xl text-xs font-mono text-slate-900"
+                        required
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="submit"
+                  disabled={gcSubmitting || (gcInputMode === 'bulk' ? !gcBulkCodes.trim() : !gcSingleCode.trim())}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {gcSubmitting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Importing Codes...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-3.5 h-3.5" /> Import to Inventory
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Codes Inventory Table */}
+          <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-100">
+              <div>
+                <h4 className="text-sm font-bold text-slate-900">Inventory Records</h4>
+                <p className="text-xs text-slate-500">
+                  {gcCodes.length} codes listed for current filter
+                </p>
+              </div>
+
+              {/* Filters */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(['all', 'available', 'redeemed', 'invalidated'] as const).map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => {
+                      setGcFilter(st);
+                      loadGiftCardsData(st, gcDenomFilter);
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold capitalize transition ${
+                      gcFilter === st
+                        ? 'bg-[#0088cc] text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {st}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {loading ? (
+              <div className="py-12 text-center text-slate-400 text-xs">
+                <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-[#0088cc]" />
+                Loading inventory codes...
+              </div>
+            ) : gcCodes.length === 0 ? (
+              <div className="py-12 text-center bg-slate-50 rounded-xl border border-slate-100">
+                <Ticket className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p className="text-xs font-bold text-slate-600">No codes found</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Import codes above to start fulfilling instant Amazon Gift Card redemptions.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-[10px] uppercase font-bold text-slate-400">
+                      <th className="py-2.5 px-3">Voucher Code</th>
+                      <th className="py-2.5 px-3">Value</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3">Assigned User / Order</th>
+                      <th className="py-2.5 px-3">Redeemed At</th>
+                      <th className="py-2.5 px-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {gcCodes.map((item) => (
+                      <tr key={item.id} className="hover:bg-slate-50/80 transition">
+                        <td className="py-2.5 px-3">
+                          <div className="flex items-center gap-1.5 font-mono font-bold text-slate-900">
+                            <span>{item.code}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleCopyGcCode(item.id, item.code)}
+                              className="p-1 hover:bg-slate-200 rounded transition text-slate-400 hover:text-slate-700"
+                              title="Copy code"
+                            >
+                              {gcCopiedId === item.id ? (
+                                <Check className="w-3 h-3 text-emerald-600" />
+                              ) : (
+                                <Copy className="w-3 h-3" />
+                              )}
+                            </button>
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 font-bold text-emerald-700">
+                          ₹{item.denomination}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          {item.status === 'available' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <CheckCircle2 className="w-3 h-3" /> Available
+                            </span>
+                          )}
+                          {item.status === 'redeemed' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
+                              Redeemed
+                            </span>
+                          )}
+                          {item.status === 'invalidated' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-50 text-red-700 border border-red-200">
+                              Invalidated
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          {item.assignedUserId ? (
+                            <div>
+                              <span className="font-semibold text-slate-800">
+                                {item.assignedUsername ? `@${item.assignedUsername}` : `User ${item.assignedUserId}`}
+                              </span>
+                              {item.assignedWithdrawalId && (
+                                <p className="font-mono text-[10px] text-slate-400">
+                                  {item.assignedWithdrawalId}
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 text-[11px]">—</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-[11px] text-slate-500">
+                          {item.redeemedAt ? new Date(item.redeemedAt).toLocaleString() : '—'}
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          {item.status === 'available' && (
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                type="button"
+                                disabled={gcActionId === item.id}
+                                onClick={() => handleInvalidateGiftCard(item.id)}
+                                className="px-2 py-1 text-[11px] font-bold text-amber-700 hover:bg-amber-50 rounded-lg border border-amber-200 transition"
+                              >
+                                Invalidate
+                              </button>
+                              <button
+                                type="button"
+                                disabled={gcActionId === item.id}
+                                onClick={() => handleDeleteGiftCard(item.id)}
+                                className="p-1 text-slate-400 hover:text-red-600 rounded transition"
+                                title="Delete code"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -2891,7 +3323,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     <div>
                       <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
                         <Wallet className="w-3.5 h-3.5 text-emerald-400" />
-                        UPI Withdrawal Limits & Daily Controls
+                        Withdrawal Limits & Daily Controls
                       </h4>
                       <p className="text-[11px] text-slate-500">Configure minimum/maximum caps and rolling 24-hour limits</p>
                     </div>

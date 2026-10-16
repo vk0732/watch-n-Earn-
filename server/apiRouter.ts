@@ -22,6 +22,12 @@ import {
   getUserTransactions,
   getReferralsByReferrer,
   createWithdrawalRequest,
+  redeemGiftCardWithdrawal,
+  getAllGiftCardCodes,
+  getGiftCardInventoryStats,
+  addGiftCardCodes,
+  invalidateGiftCardCode,
+  deleteGiftCardCode,
   getUserWithdrawals,
   getAllWithdrawals,
   updateWithdrawalStatus,
@@ -829,26 +835,39 @@ apiRouter.post('/withdrawals/create', extractTelegramUser, requireLiveChannelMem
     const user = (req as any).user as UserProfile;
     const { amount, upiId } = req.body;
 
-    const numAmount = Number(amount);
-    if (!numAmount || isNaN(numAmount) || numAmount <= 0) {
+    const numAmount = amount !== undefined && amount !== null && amount !== '' ? Number(amount) : undefined;
+    if (numAmount !== undefined && (isNaN(numAmount) || numAmount <= 0)) {
       return res.status(400).json({ error: 'Please enter a valid withdrawal amount.' });
     }
 
-    // Validate UPI ID
+    // If no upiId provided: Instant Amazon Gift Card Code redemption
+    if (!upiId) {
+      const result = await redeemGiftCardWithdrawal(user.id, numAmount);
+      return res.json({
+        success: true,
+        orderId: result.withdrawal.id,
+        giftCardCode: result.giftCardCode,
+        denomination: result.withdrawal.giftCardDenomination,
+        withdrawal: result.withdrawal,
+        remainingBalance: result.user.balance,
+        message: 'Amazon Gift Card Code redeemed successfully!',
+      });
+    }
+
+    // If upiId provided (legacy fallback / automated tests):
     const upiCheck = validateUpiId(upiId);
     if (!upiCheck.isValid) {
       return res.status(400).json({ error: upiCheck.error });
     }
 
-    // Atomic withdrawal creation with balance reservation
-    const result = await createWithdrawalRequest(user.id, numAmount, upiId.trim());
+    const result = await createWithdrawalRequest(user.id, numAmount || 10, upiId.trim());
 
     res.json({
       success: true,
       orderId: result.withdrawal.id,
       withdrawal: result.withdrawal,
       remainingBalance: result.user.balance,
-      message: `Withdrawal request for ₹${numAmount} submitted successfully! Your order is Pending review.`,
+      message: `Withdrawal request for ₹${numAmount || 10} submitted successfully! Your order is Pending review.`,
     });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -1385,6 +1404,106 @@ apiRouter.post('/admin/withdrawals/:orderId/reconcile', extractTelegramUser, req
   } catch (err: any) {
     releaseLock();
     res.status(500).json({ error: err.message });
+  }
+});
+
+/* ========================================================
+   ADMIN GIFT CARD INVENTORY ENDPOINTS
+   ======================================================== */
+
+// Get Gift Card Inventory Stats (available counts, redeemed, total value)
+apiRouter.get('/admin/gift-cards/stats', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const stats = await getGiftCardInventoryStats();
+    res.json({ stats });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List Gift Card Codes (with status/denomination filters)
+apiRouter.get('/admin/gift-cards', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const status = req.query.status as any;
+    const denomination = req.query.denomination ? Number(req.query.denomination) : undefined;
+    const codes = await getAllGiftCardCodes({
+      status: status && status !== 'all' ? status : undefined,
+      denomination,
+    });
+    res.json({ codes });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add Gift Card Codes (single code or bulk text/lines)
+apiRouter.post('/admin/gift-cards/add', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const admin = (req as any).user as UserProfile;
+    const { codes, denomination } = req.body;
+
+    const numDenom = Number(denomination);
+    if (!numDenom || isNaN(numDenom) || numDenom <= 0) {
+      return res.status(400).json({ error: 'Please specify a valid gift card denomination (e.g. 10).' });
+    }
+
+    if (!codes || (Array.isArray(codes) && codes.length === 0)) {
+      return res.status(400).json({ error: 'Please enter at least one gift card code.' });
+    }
+
+    const result = await addGiftCardCodes(codes, numDenom, admin.username || admin.id);
+    await recordAdminAudit(
+      admin.id,
+      'IMPORT_GIFT_CARDS',
+      `Imported ${result.added} codes (₹${numDenom}). Skipped ${result.duplicates} duplicates.`
+    );
+
+    res.json({
+      success: true,
+      added: result.added,
+      duplicates: result.duplicates,
+      message: `Successfully imported ${result.added} code(s). ${result.duplicates > 0 ? `${result.duplicates} duplicate(s) skipped.` : ''}`,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Invalidate an unredeemed Gift Card Code
+apiRouter.post('/admin/gift-cards/:id/invalidate', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const admin = (req as any).user as UserProfile;
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    const updated = await invalidateGiftCardCode(id, reason);
+    await recordAdminAudit(
+      admin.id,
+      'INVALIDATE_GIFT_CARD',
+      `Invalidated gift card code ${id} (${updated.code.slice(0, 4)}****). Reason: ${reason || 'Admin action'}`
+    );
+
+    res.json({ success: true, code: updated });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Delete an unredeemed Gift Card Code
+apiRouter.delete('/admin/gift-cards/:id', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const admin = (req as any).user as UserProfile;
+    const { id } = req.params;
+
+    const deleted = await deleteGiftCardCode(id);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Gift card code not found.' });
+    }
+
+    await recordAdminAudit(admin.id, 'DELETE_GIFT_CARD', `Deleted gift card code ${id}`);
+    res.json({ success: true, message: 'Gift card code deleted.' });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
   }
 });
 

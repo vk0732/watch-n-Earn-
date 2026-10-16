@@ -14,6 +14,8 @@ import type {
   ScratchCardItem,
   GamificationSettings,
   GamificationStats,
+  GiftCardCode,
+  GiftCardInventoryStats,
 } from '../types/index.ts';
 
 let currentInitData = '';
@@ -143,17 +145,33 @@ export const api = {
       history: any[];
     }>('/referrals/stats'),
 
-  // Withdrawals & Wallet
-  requestWithdrawal: (amount: number, upiId: string) =>
+  // Withdrawals & Gift Card Code Redemption
+  requestWithdrawal: (amount?: number, upiId?: string) =>
     request<{
       success: boolean;
       orderId: string;
+      giftCardCode?: string;
+      denomination?: number;
       withdrawal: Withdrawal;
       remainingBalance: number;
       message: string;
     }>('/withdrawals/create', {
       method: 'POST',
       body: JSON.stringify({ amount, upiId }),
+    }),
+
+  redeemGiftCard: (amount?: number) =>
+    request<{
+      success: boolean;
+      orderId: string;
+      giftCardCode: string;
+      denomination?: number;
+      withdrawal: Withdrawal;
+      remainingBalance: number;
+      message: string;
+    }>('/withdrawals/create', {
+      method: 'POST',
+      body: JSON.stringify({ amount }),
     }),
 
   getMyWithdrawals: () => request<{ withdrawals: Withdrawal[] }>('/withdrawals/my'),
@@ -273,6 +291,35 @@ export const api = {
   reconcileWithdrawal: (orderId: string) =>
     request<{ success: boolean; withdrawal: Withdrawal; message: string }>(`/admin/withdrawals/${orderId}/reconcile`, {
       method: 'POST',
+    }),
+
+  // Admin Gift Card Inventory
+  getAdminGiftCardStats: () =>
+    request<{ stats: GiftCardInventoryStats }>('/admin/gift-cards/stats'),
+
+  getAdminGiftCards: (status?: string, denomination?: number) => {
+    const params = new URLSearchParams();
+    if (status && status !== 'all') params.append('status', status);
+    if (denomination && denomination > 0) params.append('denomination', denomination.toString());
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return request<{ codes: GiftCardCode[] }>(`/admin/gift-cards${qs}`);
+  },
+
+  addAdminGiftCards: (codes: string[] | string, denomination: number) =>
+    request<{ success: boolean; added: number; duplicates: number; message: string }>('/admin/gift-cards/add', {
+      method: 'POST',
+      body: JSON.stringify({ codes, denomination }),
+    }),
+
+  invalidateAdminGiftCard: (id: string, reason?: string) =>
+    request<{ success: boolean; code: GiftCardCode }>(`/admin/gift-cards/${id}/invalidate`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  deleteAdminGiftCard: (id: string) =>
+    request<{ success: boolean; message: string }>(`/admin/gift-cards/${id}`, {
+      method: 'DELETE',
     }),
 
   getPaymentGatewayConfig: () =>

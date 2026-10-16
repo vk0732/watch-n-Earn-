@@ -72,23 +72,21 @@ export class UPIPaymentGatewayAdapter {
     const hasCreds = Boolean(creds.apiKey && creds.apiSecret);
 
     let statusMessage = '';
-    if (!creds.provider) {
-      statusMessage = 'No Payment Gateway configured. Payouts DISABLED. Please configure in Payment Gateway Settings.';
+    if (!hasCreds) {
+      statusMessage = 'Paynit UPI Payouts API credentials are missing. Live payouts DISABLED.';
     } else if (!creds.payoutsEnabled) {
-      statusMessage = `Payouts are currently DISABLED in Payment Gateway Settings for [${creds.provider}]. All requests require admin manual review.`;
-    } else if (!hasCreds) {
-      statusMessage = `Gateway provider [${creds.provider}] selected, but API credentials are missing. Live payouts DISABLED.`;
+      statusMessage = 'Payouts are currently DISABLED in Payment Gateway Settings. All requests require admin manual review.';
     } else if (creds.environment === 'test') {
-      statusMessage = `Gateway [${creds.provider}] is in TEST MODE (Sandbox). Live payouts DISABLED. Real money will NOT be moved.`;
+      statusMessage = 'Paynit UPI Gateway is in TEST MODE (Sandbox). Live payouts DISABLED. Real money will NOT be moved.';
     } else {
-      statusMessage = `Gateway [${creds.provider}] is LIVE and ACTIVE. Payouts will process through official banking rails.`;
+      statusMessage = 'Paynit UPI Gateway is LIVE and ACTIVE. Payouts will process through official banking rails.';
     }
 
     return {
       isLiveEnabled: creds.environment === 'live' && creds.payoutsEnabled && hasCreds,
       payoutsEnabled: creds.payoutsEnabled,
       environment: creds.environment,
-      providerName: creds.provider || 'none',
+      providerName: 'paynit',
       hasCredentials: hasCreds,
       statusMessage,
     };
@@ -100,7 +98,6 @@ export class UPIPaymentGatewayAdapter {
    */
   public async testConnection(): Promise<ConnectionTestResult> {
     const creds = await getDecryptedCredentials();
-    const effectiveProvider = creds.provider || 'paynit';
 
     if (!creds.apiKey || !creds.apiSecret) {
       const result: ConnectionTestResult = {
@@ -115,33 +112,8 @@ export class UPIPaymentGatewayAdapter {
       return result;
     }
 
-    if (effectiveProvider === 'paynit') {
-      return await this.testPaynitConnection(creds);
-    }
-
-    if (creds.provider === 'cashfree') {
-      return await this.testCashfreeConnection(creds);
-    }
-
-    if (creds.provider === 'razorpayx') {
-      return await this.testRazorpayXConnection(creds);
-    }
-
-    if (creds.provider === 'paytm') {
-      return await this.testPaytmConnection(creds);
-    }
-
-    // Custom or Unintegrated Provider
-    const result: ConnectionTestResult = {
-      success: false,
-      status: 'integration_required',
-      message: 'Provider integration required. Implementation specifications and driver adapter are needed for this provider.',
-      environment: creds.environment,
-      provider: creds.provider || 'Paynit UPI Payouts',
-      timestamp: new Date().toISOString(),
-    };
-    await recordConnectionTestResult(result.status, result.message);
-    return result;
+    // Paynit UPI Payouts is the single exclusive gateway
+    return await this.testPaynitConnection(creds);
   }
 
   /**
@@ -550,25 +522,8 @@ export class UPIPaymentGatewayAdapter {
       };
     }
 
-    // 4. LIVE MODE EXECUTION
-    const effectiveProvider = creds.provider || 'paynit';
-    if (effectiveProvider === 'paynit') {
-      return await this.executePaynitLivePayout(withdrawal, creds);
-    }
-
-    if (creds.provider === 'cashfree') {
-      return await this.executeCashfreeLivePayout(withdrawal, creds);
-    }
-
-    if (creds.provider === 'razorpayx') {
-      return await this.executeRazorpayXLivePayout(withdrawal, creds);
-    }
-
-    return {
-      status: 'failed',
-      providerResponse: JSON.stringify({ error: 'Provider integration required' }),
-      failureReason: `Automated live payouts are not yet supported for provider [${creds.provider}]. Provider integration required.`,
-    };
+    // 4. LIVE MODE EXECUTION - Paynit is the single exclusive gateway
+    return await this.executePaynitLivePayout(withdrawal, creds);
   }
 
   /**
@@ -800,14 +755,7 @@ export class UPIPaymentGatewayAdapter {
       }
     }
 
-    if (creds.provider === 'paynit') {
-      return await this.reconcilePaynitPayout(withdrawal, creds);
-    }
-
-    return {
-      status: withdrawal.status as any,
-      providerResponse: 'Reconciliation query complete; status remains unchanged.',
-    };
+    return await this.reconcilePaynitPayout(withdrawal, creds);
   }
 
   /**
@@ -842,7 +790,7 @@ export class UPIPaymentGatewayAdapter {
         order_id: withdrawal.id,
         amount: Number(withdrawal.amount),
         payout_method: 'UPI',
-        upi_id: withdrawal.upiId.trim(),
+        upi_id: (withdrawal.upiId || '').trim(),
         note: `TeleEarn payout for order ${withdrawal.id}`,
       };
 

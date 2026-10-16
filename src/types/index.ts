@@ -138,15 +138,44 @@ export interface Withdrawal {
   userTelegramId: number;
   username?: string;
   amount: number;
-  upiId: string;
+  upiId?: string;
   status: WithdrawalStatus;
   providerResponse?: string;
   failureReason?: string;
   payoutTransactionId?: string;
   payoutChannelMessageId?: number;
-  payoutMode?: 'manual' | 'gateway';
+  payoutMode?: 'manual' | 'gateway' | 'gift_card';
+  giftCardCode?: string;
+  giftCardDenomination?: number;
+  giftCardId?: string;
+  giftCardRedeemedAt?: string;
   createdAt: string;
   processedAt?: string | null;
+}
+
+export interface GiftCardCode {
+  id: string;
+  code: string;
+  denomination: number;
+  status: 'available' | 'redeemed' | 'invalidated';
+  assignedUserId?: string | null;
+  assignedTelegramId?: number | null;
+  assignedUsername?: string | null;
+  assignedWithdrawalId?: string | null;
+  redeemedAt?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+  createdBy?: string;
+  notes?: string;
+}
+
+export interface GiftCardInventoryStats {
+  totalCodes: number;
+  availableCodes: number;
+  redeemedCodes: number;
+  invalidatedCodes: number;
+  availableByDenomination: Record<number, number>;
+  totalAvailableValue: number;
 }
 
 export interface ForceJoinChannel {

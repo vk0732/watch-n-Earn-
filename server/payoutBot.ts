@@ -28,11 +28,11 @@ export async function notifyAdminNewWithdrawal(withdrawal: Withdrawal, user: Use
   const adminChat = settings.payoutAdminChatId || process.env.PAYOUT_ADMIN_CHAT_ID;
   if (!adminChat) return;
 
-  const text = `🔔 <b>NEW UPI WITHDRAWAL REQUEST</b>\n\n` +
+  const text = `🔔 <b>NEW WITHDRAWAL REQUEST</b>\n\n` +
     `👤 <b>User:</b> ${user.firstName} (@${user.username || 'none'})\n` +
     `🆔 <b>User ID:</b> <code>${user.id}</code>\n` +
     `💰 <b>Amount:</b> <b>₹${withdrawal.amount.toFixed(2)}</b>\n` +
-    `💳 <b>UPI VPA:</b> <code>${withdrawal.upiId}</code>\n` +
+    `💳 <b>Method:</b> <code>${withdrawal.giftCardCode ? 'Amazon Gift Card' : (withdrawal.upiId || 'N/A')}</code>\n` +
     `📦 <b>Order ID:</b> <code>${withdrawal.id}</code>\n` +
     `⏰ <b>Requested At:</b> ${new Date(withdrawal.createdAt).toLocaleString()}\n\n` +
     `👉 <i>Log into the Admin Panel to review, approve or process this payout.</i>`;
@@ -50,7 +50,7 @@ export async function broadcastPayoutProof(withdrawal: Withdrawal): Promise<{ su
   if (!channel) return { success: false };
 
   const template = settings.templates?.payoutProofBroadcast ||
-    `💸 <b>NEW UPI CASHBACK PAID!</b>\n\n` +
+    `💸 <b>NEW CASHBACK PAID!</b>\n\n` +
     `👤 Recipient: {masked_user}\n` +
     `💰 Amount: <b>₹{amount}</b>\n` +
     `💳 Destination: <code>{masked_upi}</code>\n` +
@@ -59,14 +59,16 @@ export async function broadcastPayoutProof(withdrawal: Withdrawal): Promise<{ su
     `🤖 <i>Earn daily with TeleEarn Bot!</i>`;
 
   const maskedUser = maskUsername(withdrawal.username);
-  const maskedUpi = maskUpiId(withdrawal.upiId);
+  const maskedUpi = withdrawal.giftCardCode
+    ? 'Amazon Gift Card'
+    : maskUpiId(withdrawal.upiId || 'Redemption');
 
   const messageText = template
     .replace('{masked_user}', maskedUser)
     .replace('{amount}', withdrawal.amount.toFixed(2))
     .replace('{masked_upi}', maskedUpi)
     .replace('{order_id}', withdrawal.id)
-    .replace('{txn_id}', withdrawal.payoutTransactionId || `UPI-${Date.now().toString().slice(-6)}`);
+    .replace('{txn_id}', withdrawal.payoutTransactionId || `PAY-${Date.now().toString().slice(-6)}`);
 
   const keyboard = {
     inline_keyboard: [
@@ -95,11 +97,18 @@ export async function notifyUserWithdrawalResult(
   const isApproved = result === 'approved' || result === true;
   const settings = await getAppSettings();
   if (isApproved) {
-    const text = `🎉 <b>UPI CASHBACK PAID SUCCESSFULLY!</b>\n\n` +
-      `Your withdrawal request for <b>₹${withdrawal.amount.toFixed(2)}</b> has been transferred to your UPI ID <code>${withdrawal.upiId}</code>.\n\n` +
-      `📦 <b>Order ID:</b> <code>${withdrawal.id}</code>\n` +
-      `⚡ <b>Status:</b> Completed\n\n` +
-      `Thank you for using TeleEarn! Keep completing tasks to earn more cashback.`;
+    const text = withdrawal.giftCardCode
+      ? `🎉 <b>AMAZON GIFT CARD CODE DELIVERED!</b>\n\n` +
+        `Your <b>₹${withdrawal.amount.toFixed(2)}</b> Amazon Gift Card code is:\n` +
+        `<code>${withdrawal.giftCardCode}</code>\n\n` +
+        `📦 <b>Order ID:</b> <code>${withdrawal.id}</code>\n` +
+        `💡 <b>How to Redeem:</b> Open Amazon App → Amazon Pay → Add Gift Card → Paste code.\n\n` +
+        `Thank you for using TeleEarn! Keep completing tasks to earn more.`
+      : `🎉 <b>CASHBACK PAID SUCCESSFULLY!</b>\n\n` +
+        `Your withdrawal request for <b>₹${withdrawal.amount.toFixed(2)}</b> has been transferred to <code>${withdrawal.upiId || 'your account'}</code>.\n\n` +
+        `📦 <b>Order ID:</b> <code>${withdrawal.id}</code>\n` +
+        `⚡ <b>Status:</b> Completed\n\n` +
+        `Thank you for using TeleEarn! Keep completing tasks to earn more cashback.`;
     await sendTelegramMessage(withdrawal.userTelegramId, text);
   } else {
     const text = `⚠️ <b>Withdrawal Request Rejected & Refunded</b>\n\n` +

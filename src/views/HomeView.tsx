@@ -94,7 +94,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               onClick={onOpenWithdrawal}
               className="py-3 px-4 bg-white hover:bg-slate-50 text-[#0088cc] font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition flex items-center justify-center gap-2 active:scale-98"
             >
-              <ArrowUpRight className="w-4 h-4" /> Withdraw UPI
+              <ArrowUpRight className="w-4 h-4" /> Withdraw
             </button>
             <button
               onClick={() => onNavigateTab('tasks')}

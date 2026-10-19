@@ -556,6 +556,12 @@ export async function checkTelegramChannelMembership(
   if (mockChannelOverrides.has(trimmed)) {
     return mockChannelOverrides.get(trimmed)!;
   }
+  if (mockChannelOverrides.has(`*_${userId}`)) {
+    return mockChannelOverrides.get(`*_${userId}`)!;
+  }
+  if (mockChannelOverrides.has('*')) {
+    return mockChannelOverrides.get('*')!;
+  }
 
   // 2. Built-in test channel patterns for automated test suites across candidates
   for (const candidate of candidates) {

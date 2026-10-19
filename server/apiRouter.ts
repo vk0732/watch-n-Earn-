@@ -42,7 +42,18 @@ import {
   atomicClaimSignupBonus,
   atomicClaimReferralReward,
   acquireLock,
+  getBulkBalanceResetPreview,
+  atomicResetAllUserBalances,
+  getMandatoryWithdrawalChannels,
+  verifyMandatoryWithdrawalMembership,
 } from './db.ts';
+import {
+  startBroadcast,
+  getBroadcastPreview,
+  getBroadcastStatus,
+  getLatestBroadcast,
+  cancelBroadcast,
+} from './broadcast.ts';
 import {
   verifySignedDeviceToken,
   computeDeviceFingerprintHash,
@@ -848,7 +859,7 @@ apiRouter.get('/referrals/stats', extractTelegramUser, async (req, res) => {
 /* ========================================================
    WITHDRAWALS & INSTANT AMAZON GIFT CARD REDEMPTION
    ======================================================== */
-apiRouter.post('/withdrawals/create', extractTelegramUser, requireLiveChannelMembership, async (req, res) => {
+apiRouter.post('/withdrawals/create', extractTelegramUser, async (req, res) => {
   try {
     const user = (req as any).user as UserProfile;
     const { amount, idempotencyKey } = req.body;
@@ -858,6 +869,26 @@ apiRouter.post('/withdrawals/create', extractTelegramUser, requireLiveChannelMem
     const numAmount = amount !== undefined && amount !== null && amount !== '' ? Number(amount) : undefined;
     if (numAmount !== undefined && (isNaN(numAmount) || numAmount <= 0)) {
       return res.status(400).json({ error: 'Please enter a valid withdrawal amount.' });
+    }
+
+    // Feature 3: Mandatory channel membership re-verification before every withdrawal
+    const channelVerification = await verifyMandatoryWithdrawalMembership(user.telegramId);
+    if (!channelVerification.isVerified) {
+      if (channelVerification.isApiError) {
+        return res.status(503).json({
+          error:
+            channelVerification.error ||
+            'Channel membership verification could not be completed due to a temporary Telegram connection issue. Please retry in a few moments.',
+          isApiError: true,
+        });
+      }
+      return res.status(403).json({
+        error:
+          channelVerification.error ||
+          'Please join all mandatory sponsor channels before redeeming your Amazon Gift Card.',
+        forceJoinRequired: true,
+        unjoinedChannels: channelVerification.unjoinedChannels || [],
+      });
     }
 
     // Every withdrawal is fulfilled instantly via Amazon Gift Card Code redemption
@@ -872,6 +903,13 @@ apiRouter.post('/withdrawals/create', extractTelegramUser, requireLiveChannelMem
       message: 'Amazon Gift Card Code redeemed successfully!',
     });
   } catch (err: any) {
+    if (err.forceJoinRequired) {
+      return res.status(403).json({
+        error: err.message,
+        forceJoinRequired: true,
+        unjoinedChannels: err.unjoinedChannels || [],
+      });
+    }
     res.status(400).json({ error: err.message });
   }
 });
@@ -1011,6 +1049,10 @@ apiRouter.post('/admin/tasks', extractTelegramUser, requireAdmin, async (req, re
       } else if ((!rawUrl || rawUrl === 'https://') && parsed.formatted?.startsWith('@')) {
         taskData.destinationUrl = `https://t.me/${parsed.formatted.replace('@', '')}`;
       }
+    }
+
+    if (taskData.isMandatoryForWithdrawal !== undefined) {
+      taskData.isMandatoryForWithdrawal = Boolean(taskData.isMandatoryForWithdrawal);
     }
 
     const saved = await saveTask(taskData);
@@ -1781,6 +1823,76 @@ apiRouter.post('/admin/users/:id/adjust-balance', extractTelegramUser, requireAd
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Feature 1: Admin Bulk Balance Reset
+apiRouter.get('/admin/bulk-balance-reset/preview', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const preview = await getBulkBalanceResetPreview();
+    res.json(preview);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+apiRouter.post('/admin/bulk-balance-reset', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const admin = (req as any).user as UserProfile;
+    const { confirmPhrase } = req.body;
+
+    if (!confirmPhrase || confirmPhrase.trim() !== 'RESET ALL BALANCES') {
+      return res.status(400).json({
+        error: 'Confirmation phrase mismatch. Please type "RESET ALL BALANCES" exactly to confirm.',
+      });
+    }
+
+    const result = await atomicResetAllUserBalances(admin.id);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Feature 2: Admin Telegram Broadcast
+apiRouter.get('/admin/broadcast/preview', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const preview = await getBroadcastPreview();
+    res.json(preview);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+apiRouter.post('/admin/broadcast/send', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const admin = (req as any).user as UserProfile;
+    const { message, parseMode } = req.body;
+
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({ error: 'Broadcast message text is required.' });
+    }
+
+    const task = await startBroadcast(admin.id, message.trim(), parseMode || 'HTML');
+    res.json({ success: true, task });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+apiRouter.get('/admin/broadcast/latest', extractTelegramUser, requireAdmin, (req, res) => {
+  const task = getLatestBroadcast();
+  res.json({ task });
+});
+
+apiRouter.get('/admin/broadcast/status/:id', extractTelegramUser, requireAdmin, (req, res) => {
+  const task = getBroadcastStatus(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Broadcast task not found' });
+  res.json({ task });
+});
+
+apiRouter.post('/admin/broadcast/cancel/:id', extractTelegramUser, requireAdmin, (req, res) => {
+  const success = cancelBroadcast(req.params.id);
+  res.json({ success });
 });
 
 apiRouter.get('/admin/audit-logs', extractTelegramUser, requireAdmin, async (req, res) => {

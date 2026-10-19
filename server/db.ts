@@ -29,9 +29,12 @@ import type {
   BonusClaimRecord,
   GiftCardCode,
   GiftCardInventoryStats,
+  BulkBalanceResetPreview,
+  BulkBalanceResetResult,
+  MandatoryWithdrawalVerificationResult,
 } from '../src/types/index.ts';
-import { formatBotUsername } from './telegram.ts';
-import { isSupabaseEnabled, supabaseRedeemGiftCard, supabaseCreditBalance } from './supabase.ts';
+import { formatBotUsername, checkTelegramChannelMembership } from './telegram.ts';
+import { isSupabaseEnabled, supabaseRedeemGiftCard, supabaseCreditBalance, supabaseBulkResetBalances } from './supabase.ts';
 
 // Initialize Firebase App
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -61,6 +64,7 @@ export const memStore = {
     referralReward: 10, // PRD: ₹10 per referral
     dailyCheckinBaseReward: 5,
     minWithdrawalAmount: 10, // PRD: ₹10 minimum withdrawal
+    resetGeneration: 1, // Campaign generation for versioned reward re-eligibility
     maxWithdrawalAmount: 5000, // Configurable upper bound
     dailyWithdrawalLimitEnabled: false,
     maxWithdrawalRequestsPer24h: 3,
@@ -730,21 +734,48 @@ export function registerDeviceFingerprint(userId: string, fingerprint?: string, 
   }
 }
 
-export async function hasUserClaimedSignupBonus(userId: string): Promise<boolean> {
-  if (memStore.userBonusClaims.has(userId)) return true;
+export async function hasUserClaimedSignupBonus(userId: string, generation?: number): Promise<boolean> {
+  const settings = await getAppSettings();
+  const currentGen = generation || settings.resetGeneration || 1;
+
   const user = memStore.users.get(userId);
-  if (user?.signupBonusClaimed) return true;
+  if (user?.signupBonusClaimedGeneration && user.signupBonusClaimedGeneration >= currentGen) {
+    return true;
+  }
+  // Legacy gen 1 check if user had signupBonusClaimed: true before generation versioning
+  if (currentGen === 1 && user?.signupBonusClaimed) {
+    return true;
+  }
+
+  const claimKey = `claim_user_${userId}_gen_${currentGen}`;
+  if (memStore.bonusClaims.has(claimKey)) return true;
+  if (currentGen === 1 && memStore.userBonusClaims.has(userId)) return true;
+
   for (const t of memStore.transactions.values()) {
     if (t.userId === userId && t.type === 'signup_bonus') {
-      return true;
+      if (t.referenceId === `signup_bonus_gen_${currentGen}`) {
+        return true;
+      }
+      if (currentGen === 1 && (!t.referenceId || t.referenceId === 'signup_bonus')) {
+        return true;
+      }
     }
   }
+
   try {
-    const snap = await getDoc(doc(db, 'bonus_claims', `claim_user_${userId}`));
+    const snap = await getDoc(doc(db, 'bonus_claims', claimKey));
     if (snap.exists()) {
       const data = snap.data() as BonusClaimRecord;
-      memStore.userBonusClaims.set(userId, data);
+      memStore.bonusClaims.set(claimKey, data);
       return true;
+    }
+    if (currentGen === 1) {
+      const snapOld = await getDoc(doc(db, 'bonus_claims', `claim_user_${userId}`));
+      if (snapOld.exists()) {
+        const data = snapOld.data() as BonusClaimRecord;
+        memStore.userBonusClaims.set(userId, data);
+        return true;
+      }
     }
   } catch (err) {
     // fallback
@@ -752,22 +783,51 @@ export async function hasUserClaimedSignupBonus(userId: string): Promise<boolean
   return false;
 }
 
-export async function hasDeviceClaimedSignupBonus(deviceId?: string, fingerprintHash?: string): Promise<{ claimed: boolean; claimedByUserId?: string }> {
-  if (deviceId && memStore.deviceClaims.has(deviceId)) {
-    const claim = memStore.deviceClaims.get(deviceId)!;
-    return { claimed: true, claimedByUserId: claim.userId };
+export async function hasDeviceClaimedSignupBonus(
+  deviceId?: string,
+  fingerprintHash?: string,
+  generation?: number
+): Promise<{ claimed: boolean; claimedByUserId?: string }> {
+  const settings = await getAppSettings();
+  const currentGen = generation || settings.resetGeneration || 1;
+
+  if (deviceId) {
+    const devKey = `claim_device_${deviceId}_gen_${currentGen}`;
+    if (memStore.bonusClaims.has(devKey)) {
+      const claim = memStore.bonusClaims.get(devKey)!;
+      return { claimed: true, claimedByUserId: claim.userId };
+    }
+    if (currentGen === 1 && memStore.deviceClaims.has(deviceId)) {
+      const claim = memStore.deviceClaims.get(deviceId)!;
+      return { claimed: true, claimedByUserId: claim.userId };
+    }
   }
-  if (fingerprintHash && memStore.deviceFingerprintClaims.has(fingerprintHash)) {
-    const claim = memStore.deviceFingerprintClaims.get(fingerprintHash)!;
-    return { claimed: true, claimedByUserId: claim.userId };
+  if (fingerprintHash) {
+    const fpKey = `claim_fp_${fingerprintHash}_gen_${currentGen}`;
+    if (memStore.bonusClaims.has(fpKey)) {
+      const claim = memStore.bonusClaims.get(fpKey)!;
+      return { claimed: true, claimedByUserId: claim.userId };
+    }
+    if (currentGen === 1 && memStore.deviceFingerprintClaims.has(fingerprintHash)) {
+      const claim = memStore.deviceFingerprintClaims.get(fingerprintHash)!;
+      return { claimed: true, claimedByUserId: claim.userId };
+    }
   }
   if (deviceId) {
     try {
-      const snap = await getDoc(doc(db, 'bonus_claims', `claim_device_${deviceId}`));
+      const snap = await getDoc(doc(db, 'bonus_claims', `claim_device_${deviceId}_gen_${currentGen}`));
       if (snap.exists()) {
         const data = snap.data() as BonusClaimRecord;
-        memStore.deviceClaims.set(deviceId, data);
+        memStore.bonusClaims.set(`claim_device_${deviceId}_gen_${currentGen}`, data);
         return { claimed: true, claimedByUserId: data.userId };
+      }
+      if (currentGen === 1) {
+        const snapOld = await getDoc(doc(db, 'bonus_claims', `claim_device_${deviceId}`));
+        if (snapOld.exists()) {
+          const data = snapOld.data() as BonusClaimRecord;
+          memStore.deviceClaims.set(deviceId, data);
+          return { claimed: true, claimedByUserId: data.userId };
+        }
       }
     } catch (err) {
       // fallback
@@ -820,40 +880,30 @@ export async function atomicClaimSignupBonus({
       return { success: false, reason: 'User not found' };
     }
 
-    // 1. Telegram user eligibility check: has user already claimed?
-    if (user.signupBonusClaimed || memStore.userBonusClaims.has(userId)) {
+    const currentGen = settings.resetGeneration || 1;
+
+    // 1. Telegram user eligibility check: has user already claimed for this generation?
+    const alreadyClaimed = await hasUserClaimedSignupBonus(userId, currentGen);
+    if (alreadyClaimed) {
       return {
         success: false,
         reason: 'Signup bonus has already been claimed by this account.',
       };
     }
 
-    const existingTx = Array.from(memStore.transactions.values()).find(
-      (t) => t.userId === userId && t.type === 'signup_bonus'
-    );
-    if (existingTx) {
-      user.signupBonusClaimed = true;
-      memStore.users.set(userId, user);
-      return {
-        success: false,
-        reason: 'Signup bonus has already been claimed by this account.',
-      };
-    }
-
-    // 2. One Device = One Signup Bonus Protection
+    // 2. One Device = One Signup Bonus Protection for this generation
     if (settings.deviceVerificationEnabled && settings.blockDuplicateDevices) {
-      let conflictingClaim: BonusClaimRecord | undefined;
+      let conflictingClaimUserId: string | undefined;
 
-      if (deviceId && memStore.deviceClaims.has(deviceId)) {
-        conflictingClaim = memStore.deviceClaims.get(deviceId);
-      } else if (fingerprintHash && memStore.deviceFingerprintClaims.has(fingerprintHash)) {
-        conflictingClaim = memStore.deviceFingerprintClaims.get(fingerprintHash);
+      const devCheck = await hasDeviceClaimedSignupBonus(deviceId, fingerprintHash, currentGen);
+      if (devCheck.claimed && devCheck.claimedByUserId !== userId) {
+        conflictingClaimUserId = devCheck.claimedByUserId;
       }
 
-      if (conflictingClaim && conflictingClaim.userId !== userId) {
+      if (conflictingClaimUserId) {
         // Enforce exact message required: "⚠️ Signup bonus has already been claimed on this device."
         const rejectMsg = '⚠️ Signup bonus has already been claimed on this device.';
-        const claimId = `rej_${Date.now()}_${userId}`;
+        const claimId = `rej_${Date.now()}_${userId}_gen_${currentGen}`;
         const rejectedClaim: BonusClaimRecord = {
           id: claimId,
           claimType: 'signup_bonus',
@@ -863,6 +913,7 @@ export async function atomicClaimSignupBonus({
           deviceFingerprintHash: fingerprintHash,
           ipHash,
           amount: 0,
+          generation: currentGen,
           status: 'rejected',
           reason: rejectMsg,
           createdAt: new Date().toISOString(),
@@ -880,7 +931,7 @@ export async function atomicClaimSignupBonus({
         await recordAdminAudit(
           'ANTI_FRAUD',
           'DUPLICATE_DEVICE_BONUS_BLOCKED',
-          `Blocked signup bonus for duplicate device on user ${userId}. Device ${deviceId || fingerprintHash} was previously claimed by user ${conflictingClaim.userId}.`,
+          `Blocked signup bonus for duplicate device on user ${userId}. Device ${deviceId || fingerprintHash} was previously claimed by user ${conflictingClaimUserId} in generation ${currentGen}.`,
           userId
         );
 
@@ -896,7 +947,7 @@ export async function atomicClaimSignupBonus({
 
     // 3. Eligible! Atomically reserve the claim
     const claimRecord: BonusClaimRecord = {
-      id: `claim_user_${userId}`,
+      id: `claim_user_${userId}_gen_${currentGen}`,
       claimType: 'signup_bonus',
       userId,
       telegramId,
@@ -904,6 +955,7 @@ export async function atomicClaimSignupBonus({
       deviceFingerprintHash: fingerprintHash,
       ipHash,
       amount: bonusAmount,
+      generation: currentGen,
       status: 'claimed',
       createdAt: new Date().toISOString(),
     };
@@ -911,16 +963,18 @@ export async function atomicClaimSignupBonus({
     memStore.bonusClaims.set(claimRecord.id, claimRecord);
     memStore.userBonusClaims.set(userId, claimRecord);
     if (deviceId) {
+      memStore.bonusClaims.set(`claim_device_${deviceId}_gen_${currentGen}`, claimRecord);
       memStore.deviceClaims.set(deviceId, claimRecord);
     }
     if (fingerprintHash) {
+      memStore.bonusClaims.set(`claim_fp_${fingerprintHash}_gen_${currentGen}`, claimRecord);
       memStore.deviceFingerprintClaims.set(fingerprintHash, claimRecord);
     }
 
     try {
       await setDoc(doc(db, 'bonus_claims', claimRecord.id), cleanDocData(claimRecord));
       if (deviceId) {
-        await setDoc(doc(db, 'bonus_claims', `claim_device_${deviceId}`), cleanDocData(claimRecord));
+        await setDoc(doc(db, 'bonus_claims', `claim_device_${deviceId}_gen_${currentGen}`), cleanDocData(claimRecord));
       }
     } catch (err) {
       console.warn('[DB] Bonus claim sync fallback:', err);
@@ -931,10 +985,12 @@ export async function atomicClaimSignupBonus({
       userId,
       bonusAmount,
       'signup_bonus',
-      'Welcome signup bonus'
+      `Welcome signup bonus (Gen ${currentGen})`,
+      `signup_bonus_gen_${currentGen}`
     );
     user = creditRes.user;
     user.signupBonusClaimed = true;
+    user.signupBonusClaimedGeneration = currentGen;
     user.isDuplicateAccount = false;
     user.duplicateReason = undefined;
     user.signupBonusMessage = undefined;
@@ -1602,6 +1658,24 @@ export async function redeemGiftCardWithdrawal(
       }
     }
 
+    // Feature 3: Mandatory Telegram channel membership re-verification before every withdrawal
+    const channelVerification = await verifyMandatoryWithdrawalMembership(user.telegramId);
+    if (!channelVerification.isVerified) {
+      if (channelVerification.isApiError) {
+        throw new Error(
+          channelVerification.error ||
+            'Channel membership verification could not be completed due to a temporary Telegram connection issue. Please retry in a few moments.'
+        );
+      }
+      const err: any = new Error(
+        channelVerification.error ||
+          'Please join all mandatory sponsor channels before redeeming your gift card code.'
+      );
+      err.unjoinedChannels = channelVerification.unjoinedChannels;
+      err.forceJoinRequired = true;
+      throw err;
+    }
+
     const settings = await getAppSettings();
 
     // Determine amount dynamically based on settings
@@ -2012,3 +2086,182 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     totalTaskBots: memStore.taskBots.size,
   };
 }
+
+/* ========================================================
+   FEATURE 1: ADMIN BULK BALANCE RESET & GENERATION ELIGIBILITY
+   ======================================================== */
+
+export async function getBulkBalanceResetPreview(): Promise<BulkBalanceResetPreview> {
+  const settings = await getAppSettings();
+  const currentGeneration = settings.resetGeneration || 1;
+  const nextGeneration = currentGeneration + 1;
+
+  const allUsers = await searchUsers();
+  let totalBalance = 0;
+  let affectedCount = 0;
+
+  for (const u of allUsers) {
+    if (u.balance > 0) {
+      affectedCount++;
+      totalBalance += u.balance;
+    }
+  }
+
+  return {
+    totalUsers: affectedCount,
+    totalBalance: Math.round(totalBalance * 100) / 100,
+    currentGeneration,
+    nextGeneration,
+  };
+}
+
+export async function atomicResetAllUserBalances(adminId: string): Promise<BulkBalanceResetResult> {
+  const releaseLock = await acquireLock('global_bulk_balance_reset', 15000);
+  try {
+    const settings = await getAppSettings();
+    const currentGeneration = settings.resetGeneration || 1;
+    const nextGeneration = currentGeneration + 1;
+    const now = new Date().toISOString();
+
+    const allUsers = await searchUsers();
+    let affectedCount = 0;
+    let totalBalanceReset = 0;
+
+    for (const u of allUsers) {
+      if (u.balance > 0) {
+        affectedCount++;
+        totalBalanceReset += u.balance;
+
+        const txObj: Transaction = {
+          id: `tx_reset_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          userId: u.id,
+          type: 'admin_adjustment',
+          amount: -u.balance,
+          balanceAfter: 0,
+          description: `Bulk balance reset by admin (Campaign generation ${nextGeneration})`,
+          referenceId: `reset_gen_${nextGeneration}`,
+          createdAt: now,
+        };
+        memStore.transactions.set(txObj.id, txObj);
+
+        u.balance = 0;
+        u.lastBalanceResetAt = now;
+        memStore.users.set(u.id, u);
+        await saveUser(u);
+      }
+    }
+
+    totalBalanceReset = Math.round(totalBalanceReset * 100) / 100;
+
+    // Update settings with the new generation
+    await updateAppSettings({ resetGeneration: nextGeneration });
+
+    // Call Supabase procedure if configured
+    if (isSupabaseEnabled()) {
+      await supabaseBulkResetBalances(adminId, nextGeneration).catch((err) =>
+        console.warn('[Supabase Bulk Reset Sync Warning]:', err)
+      );
+    }
+
+    // Record audit log
+    await recordAdminAudit(
+      adminId,
+      'BULK_BALANCE_RESET',
+      `Bulk balance reset executed by admin ${adminId}. Affected users: ${affectedCount}. Total balance reset: ₹${totalBalanceReset.toFixed(2)}. New campaign generation: ${nextGeneration}.`
+    );
+
+    return {
+      success: true,
+      affectedUsers: affectedCount,
+      totalBalanceReset,
+      newResetGeneration: nextGeneration,
+      resetAt: now,
+    };
+  } finally {
+    releaseLock();
+  }
+}
+
+/* ========================================================
+   FEATURE 3: MANDATORY WITHDRAWAL CHANNEL VERIFICATION
+   ======================================================== */
+
+export async function getMandatoryWithdrawalChannels(): Promise<ForceJoinChannel[]> {
+  const forceJoinChannels = await getForceJoinChannels(true);
+  const tasks = await getAllTasks(true);
+
+  const mandatoryChannelsMap = new Map<string, ForceJoinChannel>();
+
+  for (const ch of forceJoinChannels) {
+    if (ch.isEnabled && ch.channelId) {
+      const cleanId = ch.channelId.trim();
+      mandatoryChannelsMap.set(cleanId.toLowerCase(), ch);
+    }
+  }
+
+  for (const task of tasks) {
+    if (task.isActive && task.taskType === 'channel' && task.isMandatoryForWithdrawal && task.channelId) {
+      const cleanId = task.channelId.trim();
+      if (!mandatoryChannelsMap.has(cleanId.toLowerCase())) {
+        mandatoryChannelsMap.set(cleanId.toLowerCase(), {
+          id: `task_mandatory_${task.id}`,
+          title: task.title,
+          channelId: cleanId,
+          inviteLink: task.destinationUrl || `https://t.me/${cleanId.replace(/^@/, '')}`,
+          isPrivate: !cleanId.startsWith('@'),
+          isEnabled: true,
+          order: 999,
+        });
+      }
+    }
+  }
+
+  return Array.from(mandatoryChannelsMap.values());
+}
+
+export async function verifyMandatoryWithdrawalMembership(
+  telegramId: number
+): Promise<MandatoryWithdrawalVerificationResult> {
+  const channels = await getMandatoryWithdrawalChannels();
+  if (channels.length === 0) {
+    return { isVerified: true };
+  }
+
+  const unjoined: ForceJoinChannel[] = [];
+
+  for (const ch of channels) {
+    const check = await checkTelegramChannelMembership(ch.channelId, telegramId);
+
+    // Fail closed: Telegram API error, Bot not admin, Bot token missing, or Chat not found
+    if (!check.isMember) {
+      if (
+        check.status === 'api_error' ||
+        check.status === 'bot_not_admin' ||
+        check.status === 'chat_not_found' ||
+        check.status === 'bot_token_missing'
+      ) {
+        return {
+          isVerified: false,
+          isApiError: true,
+          error:
+            check.error ||
+            `Telegram channel verification temporarily unavailable for ${ch.title} (${ch.channelId}). Please retry.`,
+          unjoinedChannels: [ch],
+        };
+      }
+      unjoined.push(ch);
+    }
+  }
+
+  if (unjoined.length > 0) {
+    return {
+      isVerified: false,
+      isApiError: false,
+      unjoinedChannels: unjoined,
+      error: 'Please join all mandatory sponsor channels before redeeming your gift card code.',
+    };
+  }
+
+  return { isVerified: true };
+}
+

@@ -32,7 +32,9 @@ export interface UserProfile {
   isDuplicateAccount?: boolean;
   duplicateReason?: string;
   signupBonusClaimed?: boolean;
+  signupBonusClaimedGeneration?: number;
   signupBonusMessage?: string;
+  lastBalanceResetAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -46,6 +48,7 @@ export interface BonusClaimRecord {
   deviceFingerprintHash?: string;
   ipHash?: string;
   amount: number;
+  generation?: number;
   status: 'claimed' | 'rejected' | 'flagged';
   reason?: string;
   createdAt: string;
@@ -67,6 +70,7 @@ export interface Task {
   completed?: boolean;
   botUsername?: string;
   channelId?: string; // Telegram channel username (e.g. @telegram) or numeric chat ID (-100...)
+  isMandatoryForWithdrawal?: boolean; // When true, membership in this channel is required to redeem withdrawals
   socialPlatform?: 'youtube' | 'twitter' | 'instagram' | 'telegram' | 'discord' | 'facebook' | 'other';
   verificationMethod?: 'telegram_membership' | 'timer' | 'manual_review' | 'code_confirmation';
   verificationCode?: string; // Optional code for code_confirmation
@@ -226,6 +230,8 @@ export interface AppSettings {
   templates?: Partial<BotMessageTemplates>;
   // Gamification & Rewards: Spin Wheel & Scratch Card
   gamification?: GamificationSettings;
+  // Reset Generation for controlled reward campaign versioning
+  resetGeneration?: number;
 }
 
 export interface SpinRewardSegment {
@@ -384,3 +390,46 @@ export interface GatewayTestResult {
   timestamp: string;
   rawDetails?: any;
 }
+
+export interface BulkBalanceResetPreview {
+  totalUsers: number;
+  totalBalance: number;
+  currentGeneration: number;
+  nextGeneration: number;
+}
+
+export interface BulkBalanceResetResult {
+  success: boolean;
+  affectedUsers: number;
+  totalBalanceReset: number;
+  newResetGeneration: number;
+  resetAt: string;
+  error?: string;
+}
+
+export interface BroadcastPreview {
+  recipientCount: number;
+}
+
+export interface BroadcastTask {
+  id: string;
+  adminId: string;
+  message: string;
+  parseMode: 'HTML' | 'Markdown' | 'None';
+  totalRecipients: number;
+  sentCount: number;
+  failedCount: number;
+  blockedCount: number;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
+  startedAt: string;
+  completedAt?: string;
+  errorMessage?: string;
+}
+
+export interface MandatoryWithdrawalVerificationResult {
+  isVerified: boolean;
+  isApiError?: boolean;
+  unjoinedChannels?: ForceJoinChannel[];
+  error?: string;
+}
+

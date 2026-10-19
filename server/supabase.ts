@@ -116,3 +116,29 @@ export async function supabaseCreditBalance(
     return { success: false, error: err.message || 'Supabase credit error' };
   }
 }
+
+/**
+ * Bulk reset all user balances via Supabase PostgreSQL procedure
+ */
+export async function supabaseBulkResetBalances(
+  adminId: string,
+  newGeneration: number
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  if (!supabase) return { success: false, error: 'Supabase is not configured' };
+
+  try {
+    const { data, error } = await supabase.rpc('bulk_reset_user_balances_atomic', {
+      p_admin_id: adminId,
+      p_new_generation: newGeneration,
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, data };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Supabase bulk reset error' };
+  }
+}
+

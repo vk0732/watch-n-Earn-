@@ -16,6 +16,10 @@ import type {
   GamificationStats,
   GiftCardCode,
   GiftCardInventoryStats,
+  BulkBalanceResetPreview,
+  BulkBalanceResetResult,
+  BroadcastPreview,
+  BroadcastTask,
 } from '../types/index.ts';
 
 let currentInitData = '';
@@ -422,6 +426,37 @@ export const api = {
         body: JSON.stringify({ amount, reason }),
       }
     ),
+
+  // Feature 1: Admin Bulk Balance Reset
+  getBulkBalanceResetPreview: () =>
+    request<BulkBalanceResetPreview>('/admin/bulk-balance-reset/preview'),
+
+  executeBulkBalanceReset: (confirmPhrase: string) =>
+    request<BulkBalanceResetResult>('/admin/bulk-balance-reset', {
+      method: 'POST',
+      body: JSON.stringify({ confirmPhrase }),
+    }),
+
+  // Feature 2: Admin Telegram Broadcast
+  getBroadcastPreview: () =>
+    request<BroadcastPreview>('/admin/broadcast/preview'),
+
+  sendBroadcast: (message: string, parseMode: 'HTML' | 'Markdown' | 'None' = 'HTML') =>
+    request<{ success: boolean; task: BroadcastTask }>('/admin/broadcast/send', {
+      method: 'POST',
+      body: JSON.stringify({ message, parseMode }),
+    }),
+
+  getLatestBroadcast: () =>
+    request<{ task: BroadcastTask | null }>('/admin/broadcast/latest'),
+
+  getBroadcastStatus: (id: string) =>
+    request<{ task: BroadcastTask }>(`/admin/broadcast/status/${id}`),
+
+  cancelBroadcast: (id: string) =>
+    request<{ success: boolean }>(`/admin/broadcast/cancel/${id}`, {
+      method: 'POST',
+    }),
 
   getAdminAuditLogs: () => request<{ logs: AdminAuditLog[] }>('/admin/audit-logs'),
 

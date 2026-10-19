@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { X, Gift, ShieldCheck, AlertCircle, CheckCircle2, Copy, Check, Sparkles } from 'lucide-react';
+import { X, Gift, ShieldCheck, AlertCircle, CheckCircle2, Copy, Check, Sparkles, ExternalLink, ShieldAlert } from 'lucide-react';
 import { api } from '../services/api.ts';
+import type { ForceJoinChannel } from '../types/index.ts';
 
 interface WithdrawalModalProps {
   isOpen: boolean;
@@ -22,6 +23,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   const [amount, setAmount] = useState<string>(minWithdrawal ? minWithdrawal.toString() : '10');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [unjoinedChannels, setUnjoinedChannels] = useState<ForceJoinChannel[] | null>(null);
   const [copied, setCopied] = useState(false);
   const [successResult, setSuccessResult] = useState<{
     orderId: string;
@@ -40,6 +42,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     if (isOpen) {
       setError(null);
       setSuccessResult(null);
+      setUnjoinedChannels(null);
       if (minWithdrawal) {
         setAmount(minWithdrawal.toString());
       }
@@ -55,6 +58,15 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       navigator.clipboard.writeText(successResult.code);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleOpenChannel = (url: string) => {
+    const tg = (window as any).Telegram?.WebApp;
+    if (tg?.openTelegramLink && (url.includes('t.me/') || url.includes('telegram.me/'))) {
+      tg.openTelegramLink(url);
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer');
     }
   };
 
@@ -88,9 +100,15 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
         denomination: res.denomination || numAmount,
         message: res.message || 'Amazon Gift Card Code redeemed successfully!',
       });
+      setUnjoinedChannels(null);
       onSuccess(res.orderId, res.remainingBalance);
     } catch (err: any) {
-      setError(err.message || 'Gift card redemption failed. Please try again.');
+      if (err.forceJoinRequired && err.unjoinedChannels && err.unjoinedChannels.length > 0) {
+        setUnjoinedChannels(err.unjoinedChannels);
+        setError('Channel membership check failed: Please join the required sponsor channel(s) below to continue.');
+      } else {
+        setError(err.message || 'Gift card redemption failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -243,6 +261,46 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               )}
             </div>
 
+            {/* Mandatory Channels Required For Withdrawal */}
+            {unjoinedChannels && unjoinedChannels.length > 0 && (
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl space-y-3">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
+                  <div>
+                    <h4 className="text-xs font-bold text-amber-900">Sponsor Channel Verification Required</h4>
+                    <p className="text-[11px] text-amber-700">
+                      You must be an active member of our official channels to redeem rewards:
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {unjoinedChannels.map((ch, idx) => (
+                    <div
+                      key={ch.id || idx}
+                      className="p-2.5 bg-white border border-amber-200 rounded-xl flex items-center justify-between gap-2 shadow-2xs"
+                    >
+                      <div className="min-w-0 pr-2">
+                        <p className="text-xs font-bold text-slate-900 truncate">{ch.title}</p>
+                        <p className="text-[10px] text-slate-500 font-mono truncate">{ch.channelId || ch.username}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenChannel(ch.inviteLink)}
+                        className="px-3 py-1 bg-[#0088cc] hover:bg-[#0077b5] text-white text-xs font-bold rounded-lg shadow-2xs transition flex items-center gap-1 shrink-0"
+                      >
+                        Join <ExternalLink className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <p className="text-[10px] text-amber-800">
+                  After joining, click &quot;Verify &amp; Continue&quot; below. The system checks membership in real time.
+                </p>
+              </div>
+            )}
+
             {/* Fulfillment & Delivery Notice */}
             <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl text-xs space-y-1.5 text-slate-600">
               <div className="flex justify-between">
@@ -267,7 +325,11 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               className="w-full py-3.5 px-4 tg-btn-primary font-bold text-xs uppercase tracking-wider rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 active:scale-98"
             >
               {loading ? (
-                'Redeeming Gift Card...'
+                'Verifying & Redeeming...'
+              ) : unjoinedChannels && unjoinedChannels.length > 0 ? (
+                <>
+                  <ShieldCheck className="w-4 h-4" /> Verify & Continue
+                </>
               ) : availableBalance < minWithdrawal ? (
                 `Need ₹${(minWithdrawal - availableBalance).toFixed(2)} more to redeem`
               ) : (

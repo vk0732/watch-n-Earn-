@@ -11,6 +11,7 @@ import {
   getAllWithdrawals,
   memStore,
 } from '../server/db.ts';
+import { setMockChannelMembership } from '../server/telegram.ts';
 import type { UserProfile } from '../src/types/index.ts';
 
 async function runPersistenceTests() {
@@ -31,6 +32,8 @@ async function runPersistenceTests() {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+
+  setMockChannelMembership('*', { isMember: true, status: 'member' });
 
   await saveUser(mockUser);
   console.log('  ✓ Saved initial user profile');

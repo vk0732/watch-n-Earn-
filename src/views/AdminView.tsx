@@ -52,6 +52,9 @@ import type {
   ScratchRewardOption,
   GiftCardCode,
   GiftCardInventoryStats,
+  BulkBalanceResetPreview,
+  BroadcastPreview,
+  BroadcastTask,
 } from '../types/index.ts';
 
 interface AdminViewProps {
@@ -60,7 +63,7 @@ interface AdminViewProps {
 
 export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   const [activeTab, setActiveTab] = useState<
-    'stats' | 'giftcards' | 'gamification' | 'withdrawals' | 'bot' | 'channels' | 'tasks' | 'settings' | 'users' | 'logs'
+    'stats' | 'giftcards' | 'gamification' | 'withdrawals' | 'bot' | 'channels' | 'tasks' | 'settings' | 'users' | 'broadcast' | 'logs'
   >('stats');
 
   // Gamification & Rewards State
@@ -116,9 +119,43 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   const [rejectingOrder, setRejectingOrder] = useState<Withdrawal | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
+  // Bulk Balance Reset State
+  const [resetPreview, setResetPreview] = useState<BulkBalanceResetPreview | null>(null);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetPhrase, setResetPhrase] = useState('');
+  const [resetting, setResetting] = useState(false);
+
+  // Broadcast Message State
+  const [broadcastPreview, setBroadcastPreview] = useState<BroadcastPreview | null>(null);
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [broadcastParseMode, setBroadcastParseMode] = useState<'HTML' | 'Markdown' | 'None'>('HTML');
+  const [broadcastLoading, setBroadcastLoading] = useState(false);
+  const [activeBroadcastTask, setActiveBroadcastTask] = useState<BroadcastTask | null>(null);
+  const [showBroadcastConfirmModal, setShowBroadcastConfirmModal] = useState(false);
+
   useEffect(() => {
     loadTabContent();
   }, [activeTab]);
+
+  // Polling for active broadcast progress
+  useEffect(() => {
+    let interval: any = null;
+    if (activeBroadcastTask && (activeBroadcastTask.status === 'in_progress' || activeBroadcastTask.status === 'pending')) {
+      interval = setInterval(async () => {
+        try {
+          const res = await api.getBroadcastStatus(activeBroadcastTask.id);
+          if (res?.task) {
+            setActiveBroadcastTask(res.task);
+          }
+        } catch (e) {
+          // ignore transient poll error
+        }
+      }, 1500);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [activeBroadcastTask?.status, activeBroadcastTask?.id]);
 
   const showNotify = (text: string, type: 'success' | 'error' = 'success') => {
     setMessage({ text, type });
@@ -232,6 +269,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       } else if (activeTab === 'users') {
         const res = await api.searchAdminUsers(userSearchQuery);
         setUsersList(res.users || []);
+      } else if (activeTab === 'broadcast') {
+        const [prev, latest] = await Promise.all([
+          api.getBroadcastPreview(),
+          api.getLatestBroadcast().catch(() => null),
+        ]);
+        setBroadcastPreview(prev);
+        if (latest?.task) setActiveBroadcastTask(latest.task);
       } else if (activeTab === 'logs') {
         const res = await api.getAdminAuditLogs();
         setAuditLogs(res.logs || []);
@@ -666,6 +710,72 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     }
   };
 
+  /* Bulk Balance Reset Actions */
+  const handleOpenResetModal = async () => {
+    setLoading(true);
+    try {
+      const prev = await api.getBulkBalanceResetPreview();
+      setResetPreview(prev);
+      setResetPhrase('');
+      setShowResetModal(true);
+    } catch (err: any) {
+      showNotify(err.message || 'Failed to fetch reset preview', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirmReset = async () => {
+    if (resetPhrase.trim() !== 'RESET ALL BALANCES') {
+      showNotify('Please type "RESET ALL BALANCES" exactly to confirm.', 'error');
+      return;
+    }
+    setResetting(true);
+    try {
+      const res = await api.executeBulkBalanceReset(resetPhrase.trim());
+      showNotify(`Reset successful! ${res.affectedUsers} users reset (₹${res.totalBalanceReset.toFixed(2)} cleared). Generation is now ${res.newResetGeneration}.`);
+      setShowResetModal(false);
+      setResetPhrase('');
+      loadTabContent();
+    } catch (err: any) {
+      showNotify(err.message || 'Reset failed', 'error');
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  /* Broadcast Actions */
+  const handleStartBroadcast = async () => {
+    if (!broadcastMessage.trim()) {
+      showNotify('Please enter a message to broadcast.', 'error');
+      return;
+    }
+    setBroadcastLoading(true);
+    try {
+      const res = await api.sendBroadcast(broadcastMessage.trim(), broadcastParseMode);
+      showNotify(`Broadcast initiated: Task ID ${res.task.id}`);
+      setShowBroadcastConfirmModal(false);
+      setActiveBroadcastTask(res.task);
+    } catch (err: any) {
+      showNotify(err.message || 'Failed to initiate broadcast', 'error');
+    } finally {
+      setBroadcastLoading(false);
+    }
+  };
+
+  const handleCancelBroadcast = async (taskId: string) => {
+    try {
+      await api.cancelBroadcast(taskId);
+      showNotify('Broadcast cancellation requested.');
+      const res = await api.getBroadcastStatus(taskId);
+      if (res?.task) {
+        setActiveBroadcastTask(res.task);
+      }
+    } catch (err: any) {
+      showNotify(err.message || 'Failed to cancel broadcast', 'error');
+    }
+  };
+
   const handleSetupWebhook = async () => {
     try {
       const res = await api.setupTelegramWebhook();
@@ -733,6 +843,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
           { id: 'channels', label: 'Force Join', icon: Radio },
           { id: 'tasks', label: 'Tasks', icon: PlayCircle },
           { id: 'users', label: 'Users', icon: Users },
+          { id: 'broadcast', label: 'Broadcast', icon: Send },
           { id: 'settings', label: 'Settings', icon: Settings },
           { id: 'logs', label: 'Audit Logs', icon: Key },
         ].map((t) => {
@@ -2085,6 +2196,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     >
                       {t.isActive ? 'ACTIVE' : 'INACTIVE'}
                     </span>
+                    {t.isMandatoryForWithdrawal && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/30">
+                        MANDATORY FOR WITHDRAWAL
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-slate-500">
                     Type: <strong className="text-white uppercase">{t.taskType}</strong> • Timer: {t.timerSeconds}s
@@ -2261,6 +2377,18 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                       </div>
                       <div className="text-[11px] text-amber-400/90 bg-amber-500/10 p-2.5 rounded-lg border border-amber-500/20 leading-relaxed">
                         💡 <strong>Telegram Bot API Requirement:</strong> The bot checks membership using <code>getChatMember</code> with the numeric Channel ID. Ensure your bot is an Administrator in this channel with &quot;View members&quot; permissions.
+                      </div>
+                      <div className="flex items-center gap-2 pt-1 border-t border-slate-700/50">
+                        <input
+                          type="checkbox"
+                          id="isMandatoryForWithdrawal"
+                          checked={Boolean(editingTask.isMandatoryForWithdrawal)}
+                          onChange={(e) => setEditingTask({ ...editingTask, isMandatoryForWithdrawal: e.target.checked })}
+                          className="w-4 h-4 rounded text-red-600 focus:ring-red-500 border-slate-300"
+                        />
+                        <label htmlFor="isMandatoryForWithdrawal" className="text-xs font-semibold text-amber-400 cursor-pointer">
+                          Mandatory for Withdrawal (Re-verified before every gift card redemption)
+                        </label>
                       </div>
                     </div>
                   )}
@@ -2571,6 +2699,35 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       {/* TAB 5: USER MANAGEMENT */}
       {activeTab === 'users' && (
         <div className="space-y-4">
+          {/* BULK BALANCE RESET ACTION CARD */}
+          <div className="p-4 bg-gradient-to-r from-red-50 to-orange-50 border border-red-200 rounded-2xl shadow-xs space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-red-100 border border-red-200 flex items-center justify-center text-red-600 shrink-0">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-slate-900">Bulk Reset User Balances</h3>
+                    <span className="px-2 py-0.5 bg-red-600 text-white text-[10px] font-bold rounded-full uppercase tracking-wider">
+                      DANGER ZONE
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Reset all users&apos; current balances to ₹0.00 while fully preserving user accounts, Telegram IDs, referral ties, task histories, and past transactions. Increments campaign generation, allowing users to re-claim signup rewards once.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleOpenResetModal}
+                className="shrink-0 px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-xs transition active:scale-95"
+              >
+                Reset All User Balances
+              </button>
+            </div>
+          </div>
+
           <div className="flex gap-2">
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -2691,6 +2848,322 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   </button>
                 </div>
               </form>
+            </div>
+          )}
+
+          {/* Double-Confirmation Modal for Bulk Balance Reset */}
+          {showResetModal && resetPreview && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+              <div className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-6 space-y-4 shadow-2xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-red-50 border border-red-200 flex items-center justify-center text-red-600 shrink-0">
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">Confirm Bulk Balance Reset</h3>
+                    <p className="text-xs text-red-600 font-semibold">This action cannot be undone!</p>
+                  </div>
+                </div>
+
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Total Users:</span>
+                    <strong className="text-slate-900 font-mono">{resetPreview.totalUsers} users</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Total Balance to Clear:</span>
+                    <strong className="text-red-600 font-bold font-mono">₹{resetPreview.totalBalance.toFixed(2)}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Current Campaign Generation:</span>
+                    <span className="text-slate-700 font-mono">Gen {resetPreview.currentGeneration}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Next Campaign Generation:</span>
+                    <span className="text-emerald-600 font-bold font-mono">Gen {resetPreview.nextGeneration}</span>
+                  </div>
+                </div>
+
+                <div className="text-xs text-slate-600 space-y-1">
+                  <p>
+                    All registered users will have their available balance set to <strong>₹0.00</strong>.
+                  </p>
+                  <p>
+                    User profiles, Telegram chat IDs, task histories, referral ties, and past transaction records will be <strong>preserved</strong>.
+                  </p>
+                  <p className="text-emerald-700 font-medium">
+                    Users will be eligible to re-claim the starting signup reward once under Generation {resetPreview.nextGeneration}.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5 pt-2">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Type <code className="text-red-600 font-mono select-all bg-red-50 px-1.5 py-0.5 rounded border border-red-200">RESET ALL BALANCES</code> to confirm:
+                  </label>
+                  <input
+                    type="text"
+                    value={resetPhrase}
+                    onChange={(e) => setResetPhrase(e.target.value)}
+                    placeholder="RESET ALL BALANCES"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 font-mono text-xs font-bold focus:bg-white focus:border-red-500"
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    disabled={resetting}
+                    onClick={() => {
+                      setShowResetModal(false);
+                      setResetPhrase('');
+                    }}
+                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={resetting || resetPhrase.trim() !== 'RESET ALL BALANCES'}
+                    onClick={handleConfirmReset}
+                    className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-xl shadow-xs transition"
+                  >
+                    {resetting ? 'Resetting Balances...' : 'Confirm Bulk Reset'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB: USER BROADCAST */}
+      {activeTab === 'broadcast' && (
+        <div className="space-y-4">
+          <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-100 flex items-center justify-center text-[#0088cc]">
+                <Send className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Broadcast Message</h3>
+                <p className="text-xs text-slate-500">
+                  Send a Telegram notification to all registered users via the Telegram Bot API.
+                </p>
+              </div>
+            </div>
+
+            {/* Recipient Counter & Rate Limit Info */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl">
+                <span className="text-[10px] text-slate-500 uppercase font-semibold">Valid Telegram Recipients</span>
+                <p className="text-xl font-black text-[#0088cc]">{broadcastPreview?.recipientCount ?? '...'}</p>
+              </div>
+              <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl">
+                <span className="text-[10px] text-slate-500 uppercase font-semibold">Estimated Delivery Time</span>
+                <p className="text-xl font-black text-emerald-600">
+                  {broadcastPreview?.recipientCount ? `~${Math.ceil(broadcastPreview.recipientCount / 25)}s` : 'Instant'}
+                </p>
+              </div>
+            </div>
+
+            {/* Formatting mode toggle */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700">Message Content</label>
+                <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                  {(['HTML', 'Markdown', 'None'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setBroadcastParseMode(mode)}
+                      className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition ${
+                        broadcastParseMode === mode
+                          ? 'bg-white text-slate-900 shadow-2xs'
+                          : 'text-slate-500 hover:text-slate-900'
+                      }`}
+                    >
+                      {mode === 'None' ? 'Plain' : mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <textarea
+                rows={5}
+                value={broadcastMessage}
+                onChange={(e) => setBroadcastMessage(e.target.value)}
+                placeholder={
+                  broadcastParseMode === 'HTML'
+                    ? '<b>📢 New Announcement!</b>\n\nEarn ₹50 extra coins today by completing tasks!\n<a href="https://t.me/...">Tap here to learn more</a>'
+                    : broadcastParseMode === 'Markdown'
+                    ? '*📢 New Announcement!*\n\nEarn ₹50 extra coins today!\n[Tap here](https://t.me/...) to check it out'
+                    : 'Enter plain text announcement message...'
+                }
+                className="w-full p-3 bg-slate-50 border border-slate-200 focus:bg-white focus:border-[#0088cc] rounded-xl text-slate-900 text-xs font-mono transition"
+              />
+              <p className="text-[11px] text-slate-400">
+                Pacing: ~25 messages/second with automated HTTP 429 backoff. Blocked users are recorded safely.
+              </p>
+            </div>
+
+            {/* Live Message Preview */}
+            {broadcastMessage.trim() && (
+              <div className="p-3.5 bg-sky-50/50 border border-sky-100 rounded-xl space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-sky-800">
+                  Telegram Bubble Preview ({broadcastParseMode})
+                </span>
+                <div className="p-3 bg-white border border-sky-200 rounded-xl text-xs text-slate-800 whitespace-pre-wrap font-sans shadow-2xs">
+                  {broadcastMessage}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                disabled={broadcastLoading || !broadcastMessage.trim() || !broadcastPreview?.recipientCount}
+                onClick={() => setShowBroadcastConfirmModal(true)}
+                className="px-5 py-2.5 bg-[#0088cc] hover:bg-[#0077b5] disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-2 active:scale-95"
+              >
+                <Send className="w-4 h-4" />
+                <span>Send Broadcast to {broadcastPreview?.recipientCount ?? 0} Users</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Active / Recent Broadcast Task Progress */}
+          {activeBroadcastTask && (
+            <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-bold text-slate-900">Broadcast Task Status</h4>
+                  <span
+                    className={`px-2 py-0.5 text-[10px] font-bold rounded-full uppercase ${
+                      activeBroadcastTask.status === 'in_progress' || activeBroadcastTask.status === 'pending'
+                        ? 'bg-amber-100 text-amber-800 animate-pulse'
+                        : activeBroadcastTask.status === 'completed'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : activeBroadcastTask.status === 'cancelled'
+                        ? 'bg-slate-100 text-slate-700'
+                        : 'bg-red-100 text-red-800'
+                    }`}
+                  >
+                    {activeBroadcastTask.status}
+                  </span>
+                </div>
+
+                {(activeBroadcastTask.status === 'in_progress' || activeBroadcastTask.status === 'pending') && (
+                  <button
+                    type="button"
+                    onClick={() => handleCancelBroadcast(activeBroadcastTask.id)}
+                    className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg text-xs font-bold transition"
+                  >
+                    Abort Broadcast
+                  </button>
+                )}
+              </div>
+
+              {/* Progress Bar */}
+              {activeBroadcastTask.totalRecipients > 0 && (
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs text-slate-500 font-semibold">
+                    <span>
+                      Progress: {activeBroadcastTask.sentCount + activeBroadcastTask.failedCount + activeBroadcastTask.blockedCount} / {activeBroadcastTask.totalRecipients}
+                    </span>
+                    <span>
+                      {Math.round(
+                        ((activeBroadcastTask.sentCount + activeBroadcastTask.failedCount + activeBroadcastTask.blockedCount) /
+                          activeBroadcastTask.totalRecipients) *
+                          100
+                      )}
+                      %
+                    </span>
+                  </div>
+                  <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 transition-all duration-300"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.round(
+                            ((activeBroadcastTask.sentCount + activeBroadcastTask.failedCount + activeBroadcastTask.blockedCount) /
+                              activeBroadcastTask.totalRecipients) *
+                              100
+                          )
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Metric stats */}
+              <div className="grid grid-cols-4 gap-2 pt-1 text-center">
+                <div className="p-2 bg-slate-50 rounded-lg border border-slate-100">
+                  <span className="text-[10px] text-slate-400 font-semibold">Total</span>
+                  <p className="text-sm font-bold text-slate-900">{activeBroadcastTask.totalRecipients}</p>
+                </div>
+                <div className="p-2 bg-emerald-50 rounded-lg border border-emerald-100">
+                  <span className="text-[10px] text-emerald-600 font-semibold">Sent</span>
+                  <p className="text-sm font-bold text-emerald-700">{activeBroadcastTask.sentCount}</p>
+                </div>
+                <div className="p-2 bg-amber-50 rounded-lg border border-amber-100">
+                  <span className="text-[10px] text-amber-600 font-semibold">Blocked</span>
+                  <p className="text-sm font-bold text-amber-700">{activeBroadcastTask.blockedCount}</p>
+                </div>
+                <div className="p-2 bg-red-50 rounded-lg border border-red-100">
+                  <span className="text-[10px] text-red-600 font-semibold">Failed</span>
+                  <p className="text-sm font-bold text-red-700">{activeBroadcastTask.failedCount}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Broadcast Confirmation Modal */}
+          {showBroadcastConfirmModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+              <div className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-6 space-y-4 shadow-2xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-sky-50 border border-sky-100 flex items-center justify-center text-[#0088cc]">
+                    <Send className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">Confirm Telegram Broadcast</h3>
+                    <p className="text-xs text-slate-500">
+                      Targeting {broadcastPreview?.recipientCount} registered Telegram users
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs space-y-1.5 text-slate-600">
+                  <p>
+                    The message will be sent in the background at ~25 messages/second. You can track progress or cancel at any time.
+                  </p>
+                </div>
+
+                <div className="p-3 bg-sky-50 border border-sky-100 rounded-2xl text-xs text-slate-800 whitespace-pre-wrap max-h-40 overflow-y-auto font-sans">
+                  {broadcastMessage}
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    disabled={broadcastLoading}
+                    onClick={() => setShowBroadcastConfirmModal(false)}
+                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={broadcastLoading}
+                    onClick={handleStartBroadcast}
+                    className="flex-1 py-2.5 bg-[#0088cc] hover:bg-[#0077b5] text-white font-bold text-xs rounded-xl shadow-xs transition"
+                  >
+                    {broadcastLoading ? 'Starting...' : 'Confirm & Send'}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>

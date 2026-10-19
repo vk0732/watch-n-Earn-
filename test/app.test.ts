@@ -21,9 +21,22 @@ import {
   addGiftCardCodes,
   redeemGiftCardWithdrawal,
   getAllGiftCardCodes,
+  invalidateGiftCardCode,
   getUserWithdrawals,
   getUserTransactions,
+  getBulkBalanceResetPreview,
+  atomicResetAllUserBalances,
+  atomicClaimSignupBonus,
+  hasUserClaimedSignupBonus,
+  getMandatoryWithdrawalChannels,
+  verifyMandatoryWithdrawalMembership,
 } from '../server/db.ts';
+import {
+  getBroadcastPreview,
+  startBroadcast,
+  getBroadcastStatus,
+  cancelBroadcast,
+} from '../server/broadcast.ts';
 import {
   verifyTelegramInitData,
   isTelegramAdmin,
@@ -428,6 +441,16 @@ async function runTests() {
     await updateAppSettings({ minWithdrawalAmount: 10, maxWithdrawalAmount: 100 });
 
     try {
+      setMockChannelMembership('*', { isMember: true, status: 'member' });
+
+      // Clean up any available codes of 77 and 88 from previous test runs
+      const existingCodes = await getAllGiftCardCodes();
+      for (const c of existingCodes) {
+        if ((c.denomination === 77 || c.denomination === 88) && c.status === 'available') {
+          await invalidateGiftCardCode(c.id, 'test_cleanup');
+        }
+      }
+
       const testDenom = 77;
       const wthUserId = `wth_user_${Date.now()}`;
       await saveUser({
@@ -589,6 +612,7 @@ async function runTests() {
       assert(user10Withdrawals.every((w) => w.userId === user10Id), 'User isolation: User withdrawal query only returns own withdrawals');
       assert(!user10Withdrawals.some((w) => w.userId === concUserId), 'User isolation: User cannot see another user\'s withdrawal');
     } finally {
+      clearMockChannelMemberships();
       await updateAppSettings(initialSettings);
     }
   }
@@ -979,6 +1003,206 @@ async function runTests() {
 
     clearMockChannelMemberships();
     clearChannelAliases();
+  }
+
+  /* ------------------------------------------------------------------
+     TEST 11: Production Feature 1 — Admin Bulk Balance Reset & Versioned Reward Re-eligibility
+     ------------------------------------------------------------------ */
+  console.log('\nTest Suite 11: Production Feature 1 — Bulk Balance Reset');
+  {
+    // Create two test users with balances
+    const userAId = `reset_user_a_${Date.now()}`;
+    const userBId = `reset_user_b_${Date.now()}`;
+    await saveUser({
+      id: userAId,
+      telegramId: 777111,
+      username: 'reset_alice',
+      firstName: 'Alice',
+      balance: 150,
+      lifetimeEarnings: 150,
+      referralEarnings: 0,
+      referralCode: `ref_alice_${Date.now()}`,
+      dailyStreak: 3,
+      isBanned: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await saveUser({
+      id: userBId,
+      telegramId: 777222,
+      username: 'reset_bob',
+      firstName: 'Bob',
+      balance: 250,
+      lifetimeEarnings: 250,
+      referralEarnings: 0,
+      referralCode: `ref_bob_${Date.now()}`,
+      dailyStreak: 1,
+      isBanned: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Verify preview
+    const preview = await getBulkBalanceResetPreview();
+    assert(preview.totalUsers > 0, 'Bulk Reset Preview: Total registered users count is positive');
+    assert(preview.totalBalance >= 400, 'Bulk Reset Preview: Accurately computes sum of user balances');
+    assert(preview.nextGeneration === preview.currentGeneration + 1, 'Bulk Reset Preview: Next generation is current + 1');
+
+    // Claim signup bonus for userA under current generation
+    const curGen = preview.currentGeneration;
+    const initialClaim = await atomicClaimSignupBonus({
+      userId: userAId,
+      telegramId: 777111,
+    });
+    assert(initialClaim.success === true, 'Signup Bonus: Successfully claimed in current generation');
+
+    // Duplicate claim under same generation is strictly blocked
+    const dupClaim = await atomicClaimSignupBonus({
+      userId: userAId,
+      telegramId: 777111,
+    });
+    assert(dupClaim.success === false, 'Signup Bonus: Duplicate claim in same generation strictly blocked');
+
+    // Execute bulk balance reset
+    const resetResult = await atomicResetAllUserBalances('admin_2022247489');
+    assert(resetResult.success === true, 'Bulk Reset: Execution succeeds atomically');
+    assert(resetResult.affectedUsers > 0, 'Bulk Reset: Reports count of reset users');
+    assert(resetResult.totalBalanceReset >= 400, 'Bulk Reset: Reports total balance cleared');
+    assert(resetResult.newResetGeneration === curGen + 1, 'Bulk Reset: Generation successfully incremented');
+
+    // Verify User A and User B balances are reset to exactly 0.00
+    const userAAfter = await getUser(userAId);
+    const userBAfter = await getUser(userBId);
+    assert(userAAfter?.balance === 0, 'Bulk Reset: User A balance reset to exactly ₹0.00');
+    assert(userBAfter?.balance === 0, 'Bulk Reset: User B balance reset to exactly ₹0.00');
+
+    // Verify user profile integrity: username, telegramId, referral ties, daily streak preserved
+    assert(userAAfter?.username === 'reset_alice', 'Bulk Reset Integrity: User A username preserved');
+    assert(userAAfter?.telegramId === 777111, 'Bulk Reset Integrity: User A telegramId preserved');
+    assert(userAAfter?.dailyStreak === 3, 'Bulk Reset Integrity: User A daily streak preserved');
+    assert(userBAfter?.username === 'reset_bob', 'Bulk Reset Integrity: User B username preserved');
+    assert(userBAfter?.telegramId === 777222, 'Bulk Reset Integrity: User B telegramId preserved');
+
+    // User A can now claim the signup bonus ONCE AGAIN under the new generation!
+    const newGenClaim = await atomicClaimSignupBonus({
+      userId: userAId,
+      telegramId: 777111,
+    });
+    assert(newGenClaim.success === true, 'Signup Bonus: User A successfully re-claims bonus in new generation');
+
+    const userAReclaimed = await getUser(userAId);
+    assert(userAReclaimed !== null && userAReclaimed.balance > 0, 'Signup Bonus: Balance credited after generation claim');
+
+    // Second claim within new generation blocked again
+    const secondNewGenClaim = await atomicClaimSignupBonus({
+      userId: userAId,
+      telegramId: 777111,
+    });
+    assert(secondNewGenClaim.success === false, 'Signup Bonus: Double claim within new generation blocked');
+  }
+
+  /* ------------------------------------------------------------------
+     TEST 12: Production Feature 2 — Admin Telegram User Broadcast
+     ------------------------------------------------------------------ */
+  console.log('\nTest Suite 12: Production Feature 2 — Telegram User Broadcast');
+  {
+    const bPreview = await getBroadcastPreview();
+    assert(bPreview.recipientCount >= 2, 'Broadcast Preview: Returns count of valid Telegram recipients');
+
+    // Start a broadcast in test environment
+    const bTask = await startBroadcast(
+      'admin_2022247489',
+      '📢 Special Announcement: Welcome to Watch & Earn Gen 2!',
+      'HTML'
+    );
+    assert(bTask.id.startsWith('bcast_'), 'Broadcast: Returns valid broadcast task ID');
+    assert(bTask.totalRecipients > 0, 'Broadcast: Total recipients count assigned');
+    assert(bTask.status === 'in_progress' || bTask.status === 'completed', 'Broadcast: Status is in_progress or completed');
+
+    // Retrieve broadcast status by ID
+    const polledStatus = getBroadcastStatus(bTask.id);
+    assert(polledStatus !== null, 'Broadcast Status: Retrievable by task ID');
+    assert(polledStatus?.id === bTask.id, 'Broadcast Status: Matches queried task ID');
+
+    // Cancellation test
+    const cancelled = cancelBroadcast(bTask.id);
+    assert(typeof cancelled === 'boolean', 'Broadcast Cancellation: Cancel action executed safely');
+  }
+
+  /* ------------------------------------------------------------------
+     TEST 13: Production Feature 3 — Mandatory Channel Verification Before Withdrawal
+     ------------------------------------------------------------------ */
+  console.log('\nTest Suite 13: Production Feature 3 — Mandatory Channel Verification Before Withdrawal');
+  {
+    clearMockChannelMemberships();
+
+    // 1. Withdrawal fails closed when bot token is not configured or API fails
+    const unverifiedTgId = 555666777;
+    const failClosedCheck = await verifyMandatoryWithdrawalMembership(unverifiedTgId);
+    assert(failClosedCheck.isVerified === false, 'Fail-Closed: Unverified user fails verification check');
+    assert(failClosedCheck.isApiError === true || (failClosedCheck.unjoinedChannels && failClosedCheck.unjoinedChannels.length > 0), 'Fail-Closed: Correctly flags api error or missing channels');
+
+    // Setup mandatory channel and unjoined user test
+    const mandChanId = `@mandatorysponsor_${Date.now()}`;
+    const mandChan: ForceJoinChannel = {
+      id: `mand_chan_${Date.now()}`,
+      title: 'Mandatory Sponsor Channel',
+      channelId: mandChanId,
+      inviteLink: `https://t.me/${mandChanId.replace('@', '')}`,
+      isPrivate: false,
+      isEnabled: true,
+      order: 1,
+    };
+    await saveForceJoinChannel(mandChan);
+
+    const mandUserId = `mand_user_${Date.now()}`;
+    await saveUser({
+      id: mandUserId,
+      telegramId: 999888,
+      firstName: 'MandatoryTester',
+      balance: 100,
+      lifetimeEarnings: 100,
+      referralEarnings: 0,
+      referralCode: `ref_mand_${Date.now()}`,
+      dailyStreak: 0,
+      isBanned: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Mock: User is NOT a member of the mandatory channel
+    setMockChannelMembership(`${mandChanId}_999888`, {
+      isMember: false,
+      status: 'left',
+      error: 'User has left the channel.',
+    });
+
+    let wthBlocked = false;
+    try {
+      await redeemGiftCardWithdrawal(mandUserId, 10);
+    } catch (err: any) {
+      wthBlocked = true;
+    }
+    assert(wthBlocked === true, 'Withdrawal Blocked: User who left mandatory channel is strictly blocked from withdrawal');
+    const mandUserAfterBlock = await getUser(mandUserId);
+    assert(mandUserAfterBlock?.balance === 100, 'Zero Balance Deduction: Balance untouched when channel check fails');
+
+    // Mock: User now JOINS the mandatory channel
+    setMockChannelMembership('*', { isMember: true, status: 'member' });
+    setMockChannelMembership(`${mandChanId}_999888`, { isMember: true, status: 'member' });
+
+    // Add code so redemption succeeds
+    const gcTestCode = `AMZN-MAND-${Date.now()}`;
+    await addGiftCardCodes([gcTestCode], 10, 'admin_test');
+
+    const wthSuccess = await redeemGiftCardWithdrawal(mandUserId, 10);
+    assert(wthSuccess.withdrawal.status === 'success', 'Withdrawal Verified: Succeeds immediately after joining all channels');
+    assert(wthSuccess.giftCardCode === gcTestCode, 'Withdrawal Verified: Gift card code assigned');
+    assert(wthSuccess.user.balance === 90, 'Withdrawal Verified: Balance deducted by ₹10 only upon full verification');
+
+    // Clean up channel
+    await deleteForceJoinChannel(mandChan.id);
+    clearMockChannelMemberships();
   }
 
   console.log('\n==================================================');

@@ -41,6 +41,8 @@ import {
   getBroadcastStatus,
   cancelBroadcast,
 } from '../server/broadcast.ts';
+import { handleTelegramBotUpdate } from '../server/bot.ts';
+import type { TelegramUpdate } from '../server/bot.ts';
 import {
   verifyTelegramInitData,
   isTelegramAdmin,
@@ -1594,6 +1596,153 @@ async function runTests() {
 
     // Clean up test channel
     await deleteForceJoinChannel(forceJoinChan.id);
+    clearMockChannelMemberships();
+  }
+
+  /* ------------------------------------------------------------------
+     TEST 16: Hotfix — Telegram Bot /start Scratch Card Flow & Callbacks
+     ------------------------------------------------------------------ */
+  console.log('\nTest Suite 16: Hotfix — Telegram Bot /start Scratch Card Flow & Zero Regression');
+  {
+    clearMockChannelMemberships();
+
+    const botTestTgId = 554433221;
+    const botTestUserId = botTestTgId.toString();
+    const appUrl = 'https://teleearn-six.vercel.app';
+
+    // 1. New user sends /start update
+    const startUpdate: TelegramUpdate = {
+      update_id: Math.floor(Math.random() * 100000),
+      message: {
+        message_id: 201,
+        from: {
+          id: botTestTgId,
+          first_name: 'BotTester',
+          username: 'bottester55',
+        },
+        chat: {
+          id: botTestTgId,
+          type: 'private',
+        },
+        date: Math.floor(Date.now() / 1000),
+        text: '/start',
+      },
+    };
+
+    await handleTelegramBotUpdate(startUpdate, appUrl);
+
+    // Verify user was registered
+    const botUser = await getUser(botTestUserId);
+    assert(Boolean(botUser), 'Case 1: User profile created upon /start');
+    assert(botUser?.signupBonusClaimed === false, 'Case 1: signupBonusClaimed is initialized to false');
+    assert(botUser?.balance === 0, 'Case 1: Available balance remains 0 at start time');
+    assert(
+      typeof botUser?.pendingSignupBonus === 'number' && botUser.pendingSignupBonus > 0,
+      'Case 1: Pending scratch bonus amount is deterministically assigned and persisted in DB'
+    );
+
+    const firstAssigned = botUser?.pendingSignupBonus || 5;
+
+    // 2. Repeated /start preserves the assigned amount and does not claim
+    await handleTelegramBotUpdate(startUpdate, appUrl);
+    const botUserAfterRepeat = await getUser(botTestUserId);
+    assert(botUserAfterRepeat?.pendingSignupBonus === firstAssigned, 'Case 2: Repeated /start preserves exact same pending bonus amount');
+    assert(botUserAfterRepeat?.balance === 0, 'Case 2: Repeated /start does not credit balance prematurely');
+
+    // Setup a required sponsor channel
+    const testChannelId = `@bot_sponsor_${Date.now()}`;
+    const testChannel: ForceJoinChannel = {
+      id: `bot_chan_${Date.now()}`,
+      title: 'Bot Sponsor Channel',
+      channelId: testChannelId,
+      inviteLink: `https://t.me/${testChannelId.replace('@', '')}`,
+      isPrivate: false,
+      isEnabled: true,
+      order: 1,
+    };
+    await saveForceJoinChannel(testChannel);
+
+    // 3. User scratches in chat (callback 'scratch_signup')
+    const scratchCbUpdate: TelegramUpdate = {
+      update_id: Math.floor(Math.random() * 100000),
+      callback_query: {
+        id: 'cb_scratch_1',
+        from: {
+          id: botTestTgId,
+          first_name: 'BotTester',
+          username: 'bottester55',
+        },
+        message: {
+          chat: { id: botTestTgId },
+          message_id: 202,
+        },
+        data: 'scratch_signup',
+      },
+    };
+    await handleTelegramBotUpdate(scratchCbUpdate, appUrl);
+
+    // Pending amount remains unchanged
+    const botUserAfterScratch = await getUser(botTestUserId);
+    assert(botUserAfterScratch?.pendingSignupBonus === firstAssigned, 'Case 3: Scratching in chat preserves assigned amount');
+    assert(botUserAfterScratch?.balance === 0, 'Case 3: Balance remains 0 before channel join verification');
+
+    // 4. User attempts to claim without joining channels (callback 'claim_scratch_bonus')
+    setMockChannelMembership('*', { isMember: false, status: 'left' });
+    setMockChannelMembership(testChannelId, { isMember: false, status: 'left' });
+    setMockChannelMembership(`${testChannelId}_${botTestTgId}`, { isMember: false, status: 'left' });
+
+    const claimCbUpdate: TelegramUpdate = {
+      update_id: Math.floor(Math.random() * 100000),
+      callback_query: {
+        id: 'cb_claim_1',
+        from: {
+          id: botTestTgId,
+          first_name: 'BotTester',
+          username: 'bottester55',
+        },
+        message: {
+          chat: { id: botTestTgId },
+          message_id: 203,
+        },
+        data: 'claim_scratch_bonus',
+      },
+    };
+    await handleTelegramBotUpdate(claimCbUpdate, appUrl);
+
+    const botUserBlocked = await getUser(botTestUserId);
+    assert(botUserBlocked?.balance === 0, 'Case 4: Claim fails closed when required channels are unjoined (balance = 0)');
+    assert(botUserBlocked?.signupBonusClaimed === false, 'Case 4: signupBonusClaimed remains false');
+
+    // 5. User joins channels and claims successfully
+    setMockChannelMembership('*', { isMember: true, status: 'member' });
+    setMockChannelMembership(testChannelId, { isMember: true, status: 'member' });
+    setMockChannelMembership(`${testChannelId}_${botTestTgId}`, { isMember: true, status: 'member' });
+
+    await handleTelegramBotUpdate(claimCbUpdate, appUrl);
+
+    const botUserClaimed = await getUser(botTestUserId);
+    assert(botUserClaimed?.signupBonusClaimed === true, 'Case 5: signupBonusClaimed marked true after channel verification');
+    assert(botUserClaimed?.balance === firstAssigned, 'Case 5: Exact assigned scratch bonus credited to balance');
+    assert(botUserClaimed?.pendingSignupBonus === 0, 'Case 5: pendingSignupBonus cleared to 0');
+
+    // Verify ledger entry
+    const botTxns = await getUserTransactions(botTestUserId);
+    const botSignupTx = botTxns.find((t) => t.type === 'signup_bonus');
+    assert(Boolean(botSignupTx), 'Case 5: Transaction recorded in persistent ledger');
+    assert(botSignupTx?.amount === firstAssigned, 'Case 5: Transaction amount matches revealed scratch bonus');
+
+    // 6. Duplicate claim attempt via callback is rejected
+    await handleTelegramBotUpdate(claimCbUpdate, appUrl);
+    const botUserDup = await getUser(botTestUserId);
+    assert(botUserDup?.balance === firstAssigned, 'Case 6: Duplicate claim attempt does not credit balance twice');
+
+    // 7. Subsequent /start recognizes user as already claimed and shows dashboard
+    await handleTelegramBotUpdate(startUpdate, appUrl);
+    const botUserFinal = await getUser(botTestUserId);
+    assert(botUserFinal?.balance === firstAssigned, 'Case 7: Subsequent /start preserves existing user balance');
+
+    // Cleanup test channel
+    await deleteForceJoinChannel(testChannel.id);
     clearMockChannelMemberships();
   }
 

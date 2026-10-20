@@ -8,6 +8,8 @@ import {
   getForceJoinChannels,
   recordReferral,
   hasUserClaimedSignupBonus,
+  getOrAssignSignupScratchBonus,
+  atomicClaimSignupBonus,
 } from './db.ts';
 import {
   checkTelegramChannelMembership,
@@ -332,7 +334,71 @@ async function handleStartCommand(
     if (!user) return;
   }
 
-  // 2. Check Force Join Channels
+  const currentGen = settings.resetGeneration || 1;
+  const isAlreadyClaimed = await hasUserClaimedSignupBonus(userId, currentGen);
+
+  // 2. FOR UNCLAIMED USERS: Show the Scratch Card Welcome experience directly!
+  // In the new flow, sponsor channel verification occurs AFTER scratching during the claim step, NOT before.
+  if (!isAlreadyClaimed && !user.signupBonusClaimed) {
+    const scratchInfo = await getOrAssignSignupScratchBonus(userId);
+    const maxBonus = settings.maxScratchSignupBonus || 10;
+    const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+
+    // Clean up previous message if user repeated /start
+    const prevSession = activeVerificationSessions.get(chatId);
+    if (prevSession?.forceJoinMsgId) {
+      await deleteTelegramMessage(chatId, prevSession.forceJoinMsgId).catch(() => {});
+    }
+
+    const scratchWelcomeText =
+      `🎁 <b>Scratch & Win — Up to ₹${maxBonus} Signup Bonus!</b>\n\n` +
+      `Welcome to TeleEarn, <b>${from.first_name || 'Friend'}</b>!\n` +
+      `Your exclusive Signup Scratch Card is ready with a guaranteed cash reward.\n\n` +
+      `✨ Scratch your card below to reveal your bonus and unlock earnings!\n\n` +
+      `👇 Tap below to scratch your card now:`;
+
+    const scratchKeyboard = {
+      inline_keyboard: [
+        [
+          {
+            text: `🎮 Scratch & Win — Up to ₹${maxBonus} Signup Bonus`,
+            web_app: { url: webAppUrl },
+          },
+        ],
+        [
+          {
+            text: `✨ Scratch Card in Chat (₹${maxBonus} Max)`,
+            callback_data: 'scratch_signup',
+          },
+        ],
+        [
+          {
+            text: '👥 Invite Friends',
+            url: `https://t.me/share/url?url=${encodeURIComponent(
+              `https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot')}?start=${user.referralCode}`
+            )}&text=${encodeURIComponent('Join TeleEarn and earn instant cash daily!')}`,
+          },
+          {
+            text: '💬 Support',
+            url: `https://t.me/${(settings.supportTelegramUsername || 'TeleEarnSupport').replace(/^@+/, '')}`,
+          },
+        ],
+      ],
+    };
+
+    const sent = await sendTelegramMessage(chatId, scratchWelcomeText, scratchKeyboard);
+    let session = activeVerificationSessions.get(chatId);
+    if (!session) {
+      session = { incompleteMsgIds: new Set() };
+      activeVerificationSessions.set(chatId, session);
+    }
+    if (sent.messageId) {
+      session.forceJoinMsgId = sent.messageId;
+    }
+    return;
+  }
+
+  // 3. FOR CLAIMED USERS: Check Force Join Channels for ongoing task/wallet access
   const channels = await getForceJoinChannels(true);
   const unjoinedChannels: Array<{ channel: (typeof channels)[0]; error?: string; status?: string }> = [];
 
@@ -344,7 +410,7 @@ async function handleStartCommand(
     }
   }
 
-  // 3. If Force Join requirements are not met
+  // 4. If Force Join requirements are not met for claimed user
   if (unjoinedChannels.length > 0) {
     if (user.forceJoinVerified) {
       user.forceJoinVerified = false;
@@ -414,9 +480,9 @@ async function handleStartCommand(
     await saveUser(user);
   }
 
-  // 4. All channels joined: Display Open App & Dashboard
+  // 5. All channels joined: Display Open App & Dashboard
   const maxBonus = settings.maxScratchSignupBonus || 10;
-  const bonusStatus = user.signupBonusClaimed ? 'Credited!' : `Ready to Scratch & Claim (Up to ₹${maxBonus})!`;
+  const bonusStatus = 'Credited!';
   const welcomeText = `🚀 <b>Welcome to TeleEarn!</b>\n\n💰 <b>Your Available Balance:</b> ₹${user.balance.toFixed(2)}\n🎁 <b>Signup Bonus:</b> ${bonusStatus}\n\nEarn money by watching videos, visiting partner sites, and inviting friends!\nRedeem instant <b>Amazon Gift Cards</b> directly to your account anytime.`;
 
   const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
@@ -425,7 +491,7 @@ async function handleStartCommand(
     inline_keyboard: [
       [
         {
-          text: user.signupBonusClaimed ? '🎮 Open Watch & Earn Mini App' : '🎮 Scratch & Win Bonus',
+          text: '🎮 Open Watch & Earn Mini App',
           web_app: { url: webAppUrl },
         },
       ],
@@ -456,6 +522,203 @@ async function handleCallbackQuery(
   const chatId = cb.message.chat.id;
   const userId = cb.from.id;
   const triggeringMsgId = cb.message.message_id;
+
+  if (cb.data === 'scratch_signup') {
+    await answerTelegramCallback(cb.id, '🎉 Scratching card...');
+
+    const scratchInfo = await getOrAssignSignupScratchBonus(userId.toString());
+    const channels = await getForceJoinChannels(true);
+    const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+
+    const inlineKeyboard: any[][] = [];
+
+    // Sponsor channels to join
+    channels.forEach((ch) => {
+      const joinUrl =
+        (ch.inviteLink || '').trim() ||
+        (ch.channelId?.startsWith('@') ? `https://t.me/${ch.channelId.replace('@', '')}` : '');
+      if (joinUrl) {
+        inlineKeyboard.push([
+          {
+            text: `📢 Join ${ch.title}`,
+            url: joinUrl,
+          },
+        ]);
+      }
+    });
+
+    // Verification & Claim button
+    inlineKeyboard.push([
+      {
+        text: `✅ Verify & Claim ₹${scratchInfo.amount} Bonus`,
+        callback_data: 'claim_scratch_bonus',
+      },
+    ]);
+
+    // Open Mini App button as fallback/convenience
+    inlineKeyboard.push([
+      {
+        text: '🎮 Open Watch & Earn Mini App',
+        web_app: { url: webAppUrl },
+      },
+    ]);
+
+    const revealText =
+      `🎉 <b>Scratch Card Revealed!</b>\n\n` +
+      `💰 You revealed a guaranteed <b>₹${scratchInfo.amount} Signup Bonus</b>!\n` +
+      `<i>(This reward is reserved for your account and pending verification)</i>\n\n` +
+      `<b>Complete 2 quick steps to claim:</b>\n` +
+      `1. Join our official sponsor channel(s) below\n` +
+      `2. Tap <b>"Verify & Claim ₹${scratchInfo.amount} Bonus"</b>`;
+
+    await sendTelegramMessage(chatId, revealText, { inline_keyboard: inlineKeyboard });
+    return;
+  }
+
+  if (cb.data === 'claim_scratch_bonus') {
+    if (inFlightVerifications.has(userId)) {
+      await answerTelegramCallback(cb.id, '⏳ Verification in progress...');
+      return;
+    }
+
+    inFlightVerifications.add(userId);
+
+    try {
+      const settings = await getAppSettings();
+      const currentGen = settings.resetGeneration || 1;
+      const alreadyClaimed = await hasUserClaimedSignupBonus(userId.toString(), currentGen);
+
+      if (alreadyClaimed) {
+        await answerTelegramCallback(cb.id, '⚠️ Signup bonus already claimed!');
+        const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+        await sendTelegramMessage(
+          chatId,
+          `ℹ️ You have already claimed your Signup Bonus!\n\n👇 Tap below to explore tasks and earn more:`,
+          {
+            inline_keyboard: [
+              [
+                {
+                  text: '🎮 Open Watch & Earn Mini App',
+                  web_app: { url: webAppUrl },
+                },
+              ],
+            ],
+          }
+        );
+        return;
+      }
+
+      // Check live channel membership with Telegram Bot API getChatMember
+      const channels = await getForceJoinChannels(true);
+      let allJoined = true;
+      const stillUnjoined: Array<{ channel: typeof channels[0]; error?: string; status?: string }> = [];
+
+      for (const ch of channels) {
+        const rawId = (ch.channelId || ch.username || '').trim();
+        const check = await checkTelegramChannelMembership(rawId, userId);
+        if (!check.isMember) {
+          allJoined = false;
+          stillUnjoined.push({ channel: ch, error: check.error, status: check.status });
+        }
+      }
+
+      const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+
+      if (!allJoined) {
+        const scratchInfo = await getOrAssignSignupScratchBonus(userId.toString());
+        await answerTelegramCallback(cb.id, '❌ Please join all sponsor channels first!');
+
+        const inlineKeyboard: any[][] = [];
+        stillUnjoined.forEach((item) => {
+          const ch = item.channel;
+          const joinUrl =
+            (ch.inviteLink || '').trim() ||
+            (ch.channelId?.startsWith('@') ? `https://t.me/${ch.channelId.replace('@', '')}` : '');
+          if (joinUrl) {
+            inlineKeyboard.push([{ text: `📢 Join ${ch.title}`, url: joinUrl }]);
+          }
+        });
+
+        inlineKeyboard.push([
+          {
+            text: `✅ Verify & Claim ₹${scratchInfo.amount} Bonus`,
+            callback_data: 'claim_scratch_bonus',
+          },
+        ]);
+        inlineKeyboard.push([
+          {
+            text: '🎮 Open Watch & Earn Mini App',
+            web_app: { url: webAppUrl },
+          },
+        ]);
+
+        const channelNotes = stillUnjoined
+          .map((item, i) => `${i + 1}. <b>${item.channel.title}</b>${item.error ? `\n   <i>(${item.error})</i>` : ''}`)
+          .join('\n');
+
+        const messageText =
+          `⚠️ <b>Channel Verification Incomplete!</b>\n\n` +
+          `Your <b>₹${scratchInfo.amount}</b> bonus is reserved, but you must join all required sponsor channels:\n\n` +
+          `${channelNotes}\n\n` +
+          `Please join the channel(s) above, then tap <b>Verify & Claim</b>.`;
+
+        await sendTelegramMessage(chatId, messageText, { inline_keyboard: inlineKeyboard });
+        return;
+      }
+
+      // All channels verified! Atomically claim signup bonus
+      const claimResult = await atomicClaimSignupBonus({
+        userId: userId.toString(),
+        telegramId: userId,
+      });
+
+      if (!claimResult.success) {
+        await answerTelegramCallback(cb.id, `⚠️ ${claimResult.reason || 'Could not claim bonus'}`);
+        return;
+      }
+
+      const creditedAmount = claimResult.amount || 0;
+      const userBalance = claimResult.user?.balance ?? creditedAmount;
+
+      await answerTelegramCallback(cb.id, `🎉 ₹${creditedAmount} Credited to Your Balance!`);
+
+      // Mark user forceJoinVerified
+      let user = await getUser(userId.toString());
+      if (user && !user.forceJoinVerified) {
+        user.forceJoinVerified = true;
+        await saveUser(user);
+      }
+
+      // Send success message with Open Mini App button (requirement 7)
+      const successText =
+        `🎉 <b>Signup Bonus Successfully Claimed!</b>\n\n` +
+        `✅ <b>+₹${creditedAmount}</b> has been credited to your balance!\n` +
+        `💰 <b>Available Balance:</b> ₹${userBalance.toFixed(2)}\n\n` +
+        `👇 Tap below to launch the Mini App and start completing tasks:`;
+
+      await sendTelegramMessage(chatId, successText, {
+        inline_keyboard: [
+          [
+            {
+              text: '🎮 Open Watch & Earn Mini App',
+              web_app: { url: webAppUrl },
+            },
+          ],
+          [
+            {
+              text: '👥 Invite Friends (+₹10)',
+              url: `https://t.me/share/url?url=${encodeURIComponent(
+                `https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot')}?start=${user?.referralCode || ''}`
+              )}&text=${encodeURIComponent('Join TeleEarn and earn instant cash daily!')}`,
+            },
+          ],
+        ],
+      });
+    } finally {
+      inFlightVerifications.delete(userId);
+    }
+    return;
+  }
 
   if (cb.data === 'verify_channels') {
     // 1. Prevent duplicate concurrent runs when user taps repeatedly

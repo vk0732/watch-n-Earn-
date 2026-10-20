@@ -31,6 +31,7 @@ const WithdrawalModal = lazy(() => import('./components/WithdrawalModal.tsx').th
 const ForceJoinModal = lazy(() => import('./components/ForceJoinModal.tsx').then((m) => ({ default: m.ForceJoinModal })));
 const SpinWheelModal = lazy(() => import('./components/SpinWheelModal.tsx').then((m) => ({ default: m.SpinWheelModal })));
 const ScratchCardModal = lazy(() => import('./components/ScratchCardModal.tsx').then((m) => ({ default: m.ScratchCardModal })));
+const SignupScratchModal = lazy(() => import('./components/SignupScratchModal.tsx').then((m) => ({ default: m.SignupScratchModal })));
 
 declare global {
   interface Window {
@@ -231,6 +232,12 @@ export default function App() {
     initApp(userId, name);
   };
 
+  const handleSignupScratchSuccess = (newBalance: number, updatedUser: UserProfile) => {
+    setUser({ ...updatedUser, balance: newBalance, signupBonusClaimed: true });
+    setForceJoinRequired(false);
+    setActiveTab('home');
+  };
+
   const handleForceJoinVerified = () => {
     setForceJoinRequired(false);
     setUnjoinedChannels([]);
@@ -390,7 +397,18 @@ export default function App() {
 
       {/* Interactive Modals - Lazy Loaded on Demand */}
       <Suspense fallback={null}>
-        {forceJoinRequired && unjoinedChannels.length > 0 && (
+        {user && !user.signupBonusClaimed && (
+          <SignupScratchModal
+            isOpen={true}
+            user={user}
+            channels={unjoinedChannels}
+            maxBonus={settings.maxScratchSignupBonus || 10}
+            initialBonusAmount={user.pendingSignupBonus}
+            onClaimSuccess={handleSignupScratchSuccess}
+          />
+        )}
+
+        {user && user.signupBonusClaimed && forceJoinRequired && unjoinedChannels.length > 0 && (
           <ForceJoinModal
             isOpen={true}
             channels={unjoinedChannels}

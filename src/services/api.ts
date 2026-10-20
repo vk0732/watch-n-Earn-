@@ -117,9 +117,31 @@ export const api = {
       isSimulatedAuth: boolean;
       forceJoinRequired: boolean;
       unjoinedChannels: ForceJoinChannel[];
+      pendingSignupBonus?: number;
+      maxScratchSignupBonus?: number;
     }>('/auth/verify-telegram', {
       method: 'POST',
       body: JSON.stringify({ initData, refCode, deviceToken, deviceFingerprint }),
+    }),
+
+  getSignupScratchCard: () =>
+    request<{
+      eligible: boolean;
+      alreadyClaimed: boolean;
+      amount: number;
+      maxBonus: number;
+    }>('/auth/signup-scratch/assign', { method: 'POST' }),
+
+  claimSignupScratchBonus: (deviceId?: string, deviceFingerprint?: string) =>
+    request<{
+      success: boolean;
+      claimedAmount: number;
+      newBalance: number;
+      user: UserProfile;
+      message: string;
+    }>('/auth/signup-scratch/claim', {
+      method: 'POST',
+      body: JSON.stringify({ deviceId, deviceFingerprint }),
     }),
 
   getCurrentUser: () =>

@@ -48,6 +48,8 @@ import {
   verifyMandatoryWithdrawalMembership,
   getMandatoryCheckinChannels,
   verifyMandatoryCheckinMembership,
+  getOrAssignSignupScratchBonus,
+  hasUserClaimedSignupBonus,
 } from './db.ts';
 import {
   startBroadcast,
@@ -398,26 +400,16 @@ apiRouter.post('/auth/verify-telegram', async (req, res) => {
       return res.status(500).json({ error: 'Failed to initialize user' });
     }
 
-    // 4. One Device = One Signup Bonus Atomic Protection
+    // 4. Scratch Card Signup Bonus: Assign or retrieve pending scratch bonus without crediting balance
     let signupBonusMessage: string | undefined;
     let deviceWarning: string | undefined;
+    let pendingBonus = user.pendingSignupBonus || 0;
 
-    const bonusClaimRes = await atomicClaimSignupBonus({
-      userId,
-      telegramId: tgUser.id,
-      deviceId,
-      fingerprintHash,
-      ipHash,
-    });
-
-    if (bonusClaimRes.success && bonusClaimRes.user) {
-      user = bonusClaimRes.user;
-      signupBonusMessage = `🎁 Welcome! ₹${bonusClaimRes.amount} signup bonus added to your balance.`;
-    } else if (bonusClaimRes.isDeviceDuplicate) {
-      // Exact prompt required message: "⚠️ Signup bonus has already been claimed on this device."
-      signupBonusMessage = '⚠️ Signup bonus has already been claimed on this device.';
-      deviceWarning = '⚠️ Signup bonus has already been claimed on this device.';
-      user.signupBonusMessage = signupBonusMessage;
+    if (!user.signupBonusClaimed) {
+      const scratchInfo = await getOrAssignSignupScratchBonus(userId);
+      pendingBonus = scratchInfo.amount;
+      user = (await getUser(userId)) || user;
+      signupBonusMessage = `🎁 Scratch & Win up to ₹${scratchInfo.maxBonus} Signup Bonus!`;
     }
 
     // 5. Atomic Referral Reward Claim for Inviter (with Device-Switching Abuse Prevention)
@@ -476,9 +468,124 @@ apiRouter.post('/auth/verify-telegram', async (req, res) => {
       isSimulatedAuth: verification.isSimulated,
       forceJoinRequired: unjoined.length > 0,
       unjoinedChannels: unjoined,
+      pendingSignupBonus: pendingBonus,
+      maxScratchSignupBonus: settings.maxScratchSignupBonus || 10,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Assigns or retrieves the persistent scratch signup bonus amount.
+ * Does not credit user balance.
+ */
+apiRouter.post('/auth/signup-scratch/assign', extractTelegramUser, async (req, res) => {
+  try {
+    const user = (req as any).user as UserProfile;
+    const scratchCard = await getOrAssignSignupScratchBonus(user.id);
+    res.json(scratchCard);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Authoritatively verifies force-join channels and claims the scratch signup bonus.
+ * Credits exactly the assigned pending amount once all channels pass live verification.
+ */
+apiRouter.post('/auth/signup-scratch/claim', extractTelegramUser, async (req, res) => {
+  const reqUser = (req as any).user as UserProfile;
+  const user = (await getUser(reqUser.id)) || reqUser;
+  const deviceId = (req.body?.deviceId as string) || user.deviceId;
+  const fingerprintHash = (req.body?.deviceFingerprint as string) || user.deviceFingerprint;
+  const ipHash = user.ipHash;
+
+  const releaseLock = await acquireLock(`lock_claim_signup_${user.id}`);
+  try {
+    const settings = await getAppSettings();
+    const currentGen = settings.resetGeneration || 1;
+
+    // 1. Eligibility check: cannot claim twice
+    const alreadyClaimed = await hasUserClaimedSignupBonus(user.id, currentGen);
+    if (alreadyClaimed || user.signupBonusClaimed) {
+      return res.status(400).json({
+        error: 'Signup bonus has already been claimed by this account.',
+      });
+    }
+
+    // 2. Mandatory Force-Join Membership Verification (FAIL CLOSED)
+    const channels = await getForceJoinChannels(true);
+    const unjoined: ForceJoinChannel[] = [];
+    for (const ch of channels) {
+      const check = await checkTelegramChannelMembership(ch.channelId, user.telegramId);
+      if (!check.isMember) {
+        if (
+          check.status === 'api_error' ||
+          check.status === 'bot_not_admin' ||
+          check.status === 'chat_not_found' ||
+          check.status === 'bot_token_missing'
+        ) {
+          return res.status(503).json({
+            error:
+              check.error ||
+              `Telegram channel verification temporarily unavailable for ${ch.title}. Please retry in a moment.`,
+            isApiError: true,
+            unjoinedChannels: [ch],
+          });
+        }
+        unjoined.push(ch);
+      }
+    }
+
+    if (unjoined.length > 0) {
+      return res.status(403).json({
+        error: 'Please join all required channels before claiming your signup bonus.',
+        forceJoinRequired: true,
+        unjoinedChannels: unjoined,
+      });
+    }
+
+    // 3. Atomically claim signup bonus
+    const claimRes = await atomicClaimSignupBonus({
+      userId: user.id,
+      telegramId: user.telegramId,
+      deviceId,
+      fingerprintHash,
+      ipHash,
+    });
+
+    if (!claimRes.success) {
+      return res.status(400).json({
+        error: claimRes.reason || claimRes.message || 'Unable to claim signup bonus.',
+        isDeviceDuplicate: claimRes.isDeviceDuplicate,
+      });
+    }
+
+    const freshUser = claimRes.user || (await getUser(user.id)) || user;
+
+    // 4. Atomic Referral Reward Claim for Inviter (if referred)
+    if (freshUser.referredBy && settings.referralReward > 0) {
+      await atomicClaimReferralReward({
+        referrerId: freshUser.referredBy,
+        refereeId: freshUser.id,
+        refereeUsername: freshUser.username || freshUser.firstName,
+        refereeDeviceId: deviceId,
+        refereeFingerprintHash: fingerprintHash,
+      }).catch((err) => console.warn('[DB] Referral reward claim error:', err));
+    }
+
+    res.json({
+      success: true,
+      claimedAmount: claimRes.amount,
+      newBalance: freshUser.balance,
+      user: freshUser,
+      message: `🎁 Successfully claimed ₹${claimRes.amount} signup bonus!`,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    releaseLock();
   }
 });
 
@@ -1309,6 +1416,17 @@ apiRouter.post('/admin/settings', extractTelegramUser, requireAdmin, async (req,
         });
       }
       incoming.dailyCheckinBaseReward = baseVal;
+    }
+
+    // Validate Maximum Scratch Signup Bonus
+    if (incoming.maxScratchSignupBonus !== undefined && incoming.maxScratchSignupBonus !== null && incoming.maxScratchSignupBonus !== '') {
+      const maxScratch = Number(incoming.maxScratchSignupBonus);
+      if (isNaN(maxScratch) || maxScratch <= 0 || !Number.isFinite(maxScratch) || maxScratch > 1000) {
+        return res.status(400).json({
+          error: 'Maximum Scratch Signup Bonus must be a valid positive number greater than 0 (e.g. ₹5, ₹10, ₹25).',
+        });
+      }
+      incoming.maxScratchSignupBonus = maxScratch;
     }
 
     const updated = await updateAppSettings(incoming);

@@ -3212,13 +3212,15 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">Welcome Signup Bonus (₹)</label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Maximum Scratch Signup Bonus (₹)</label>
                     <input
                       type="number"
-                      value={settings.signupBonus ?? 20}
-                      onChange={(e) => setSettings({ ...settings, signupBonus: Number(e.target.value) })}
+                      min="1"
+                      value={settings.maxScratchSignupBonus ?? 10}
+                      onChange={(e) => setSettings({ ...settings, maxScratchSignupBonus: Number(e.target.value) })}
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                     />
+                    <p className="text-[10px] text-slate-500 mt-0.5">Maximum scratch bonus for new signups (default: ₹10)</p>
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Referral Reward (₹)</label>
@@ -3228,6 +3230,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                       onChange={(e) => setSettings({ ...settings, referralReward: Number(e.target.value) })}
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                     />
+                    <p className="text-[10px] text-slate-500 mt-0.5">Reward given to inviter per valid referral</p>
                   </div>
                 </div>
 

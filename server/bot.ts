@@ -381,9 +381,10 @@ async function handleStartCommand(
       await deleteTelegramMessage(chatId, prevSession.forceJoinMsgId).catch(() => {});
     }
 
+    const maxBonus = settings.maxScratchSignupBonus || 10;
     const startWelcomeText =
       settings.templates?.welcomeMessage?.trim() ||
-      `🎁 <b>Welcome to TeleEarn!</b>\n\n💰 <b>Complete Tasks & Earn Rewards</b>\n⚡ Simple Tasks • Exciting Rewards\n\n🚀 Start your earning journey today!`;
+      `🎁 <b>Scratch & Win — Up to ₹${maxBonus} Signup Bonus!</b>\n\n💰 <b>Complete Tasks & Earn Rewards</b>\n⚡ Simple Tasks • Exciting Rewards\n\n🚀 Start your earning journey today!`;
 
     let forceJoinText = startWelcomeText;
     const botErrors = unjoinedChannels.filter(
@@ -414,7 +415,9 @@ async function handleStartCommand(
   }
 
   // 4. All channels joined: Display Open App & Dashboard
-  const welcomeText = `🚀 <b>Welcome to TeleEarn!</b>\n\n💰 <b>Your Available Balance:</b> ₹${user.balance.toFixed(2)}\n🎁 <b>Signup Bonus:</b> Credited!\n\nEarn money by watching videos, visiting partner sites, and inviting friends!\nRedeem instant <b>Amazon Gift Cards</b> directly to your account anytime.`;
+  const maxBonus = settings.maxScratchSignupBonus || 10;
+  const bonusStatus = user.signupBonusClaimed ? 'Credited!' : `Ready to Scratch & Claim (Up to ₹${maxBonus})!`;
+  const welcomeText = `🚀 <b>Welcome to TeleEarn!</b>\n\n💰 <b>Your Available Balance:</b> ₹${user.balance.toFixed(2)}\n🎁 <b>Signup Bonus:</b> ${bonusStatus}\n\nEarn money by watching videos, visiting partner sites, and inviting friends!\nRedeem instant <b>Amazon Gift Cards</b> directly to your account anytime.`;
 
   const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
 
@@ -422,7 +425,7 @@ async function handleStartCommand(
     inline_keyboard: [
       [
         {
-          text: '🎮 Open TeleEarn Mini App',
+          text: user.signupBonusClaimed ? '🎮 Open Watch & Earn Mini App' : '🎮 Scratch & Win Bonus',
           web_app: { url: webAppUrl },
         },
       ],

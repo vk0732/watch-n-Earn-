@@ -33,6 +33,7 @@ export interface UserProfile {
   duplicateReason?: string;
   signupBonusClaimed?: boolean;
   signupBonusClaimedGeneration?: number;
+  pendingSignupBonus?: number; // Persisted pending scratch bonus amount waiting to be claimed
   signupBonusMessage?: string;
   lastBalanceResetAt?: string;
   createdAt: string;
@@ -209,6 +210,7 @@ export interface BotMessageTemplates {
 
 export interface AppSettings {
   signupBonus: number;
+  maxScratchSignupBonus?: number; // Maximum Scratch Signup Bonus (default: 10)
   referralReward: number;
   dailyCheckinBaseReward: number;
   dailyCheckinRewardDifference?: number; // Configurable Daily Check-in Reward Difference (default: 2)

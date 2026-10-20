@@ -61,6 +61,7 @@ export const memStore = {
   referralClaims: new Map<string, BonusClaimRecord>(), // refereeId -> claim
   settings: {
     signupBonus: 20, // PRD: ₹10-₹25 configurable
+    maxScratchSignupBonus: 10, // Admin-configurable Maximum Scratch Signup Bonus (default: ₹10)
     referralReward: 10, // PRD: ₹10 per referral
     dailyCheckinBaseReward: 5,
     dailyCheckinRewardDifference: 2,
@@ -260,6 +261,17 @@ export async function getAppSettings(): Promise<AppSettings> {
         typeof merged.dailyCheckinRewardDifference === 'number' && merged.dailyCheckinRewardDifference > 0
           ? merged.dailyCheckinRewardDifference
           : 2;
+      merged.maxScratchSignupBonus =
+        typeof merged.maxScratchSignupBonus === 'number' && merged.maxScratchSignupBonus > 0
+          ? merged.maxScratchSignupBonus
+          : 10;
+      if (
+        typeof merged.maxWithdrawalAmount === 'number' &&
+        merged.maxWithdrawalAmount > 0 &&
+        merged.maxWithdrawalAmount < (merged.minWithdrawalAmount || 10)
+      ) {
+        merged.maxWithdrawalAmount = 5000;
+      }
       return merged;
     }
   } catch (err) {
@@ -886,6 +898,10 @@ export async function atomicClaimSignupBonus({
     }
 
     const currentGen = settings.resetGeneration || 1;
+    const bonusAmount =
+      typeof user.pendingSignupBonus === 'number' && user.pendingSignupBonus > 0
+        ? user.pendingSignupBonus
+        : settings.maxScratchSignupBonus || settings.signupBonus || 10;
 
     // 1. Telegram user eligibility check: has user already claimed for this generation?
     const alreadyClaimed = await hasUserClaimedSignupBonus(userId, currentGen);
@@ -996,6 +1012,7 @@ export async function atomicClaimSignupBonus({
     user = creditRes.user;
     user.signupBonusClaimed = true;
     user.signupBonusClaimedGeneration = currentGen;
+    user.pendingSignupBonus = 0;
     user.isDuplicateAccount = false;
     user.duplicateReason = undefined;
     user.signupBonusMessage = undefined;
@@ -1013,6 +1030,44 @@ export async function atomicClaimSignupBonus({
     releaseUserLock();
     if (releaseDeviceLock) releaseDeviceLock();
   }
+}
+
+/**
+ * Assigns or retrieves a persistent pending scratch card bonus amount for signup.
+ * Guarantees that the assigned amount never changes on refresh, restart, or reopening.
+ * Does NOT credit user balance.
+ */
+export async function getOrAssignSignupScratchBonus(userId: string): Promise<{
+  eligible: boolean;
+  alreadyClaimed: boolean;
+  amount: number;
+  maxBonus: number;
+}> {
+  const settings = await getAppSettings();
+  const maxBonus = settings.maxScratchSignupBonus || 10;
+  const user = await getUser(userId);
+  if (!user) {
+    return { eligible: false, alreadyClaimed: false, amount: 0, maxBonus };
+  }
+
+  const currentGen = settings.resetGeneration || 1;
+  const claimed = await hasUserClaimedSignupBonus(userId, currentGen);
+  if (claimed) {
+    return { eligible: false, alreadyClaimed: true, amount: 0, maxBonus };
+  }
+
+  // If user already has an assigned pending amount, preserve it strictly
+  if (typeof user.pendingSignupBonus === 'number' && user.pendingSignupBonus > 0) {
+    return { eligible: true, alreadyClaimed: false, amount: user.pendingSignupBonus, maxBonus };
+  }
+
+  // Assign one bonus amount up to maxBonus
+  const min = Math.max(1, Math.min(2, maxBonus));
+  const assigned = Math.floor(Math.random() * (maxBonus - min + 1)) + min;
+  user.pendingSignupBonus = assigned;
+  await saveUser(user);
+
+  return { eligible: true, alreadyClaimed: false, amount: assigned, maxBonus };
 }
 
 /**

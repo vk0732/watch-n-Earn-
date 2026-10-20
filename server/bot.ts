@@ -339,7 +339,7 @@ async function handleStartCommand(
 
   // 2. FOR UNCLAIMED USERS: Show the Scratch Card Welcome experience directly!
   // In the new flow, sponsor channel verification occurs AFTER scratching during the claim step, NOT before.
-  if (!isAlreadyClaimed && !user.signupBonusClaimed) {
+  if (!isAlreadyClaimed) {
     const scratchInfo = await getOrAssignSignupScratchBonus(userId);
     const maxBonus = settings.maxScratchSignupBonus || 10;
     const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
@@ -398,92 +398,13 @@ async function handleStartCommand(
     return;
   }
 
-  // 3. FOR CLAIMED USERS: Check Force Join Channels for ongoing task/wallet access
-  const channels = await getForceJoinChannels(true);
-  const unjoinedChannels: Array<{ channel: (typeof channels)[0]; error?: string; status?: string }> = [];
-
-  for (const ch of channels) {
-    const rawId = (ch.channelId || ch.username || '').trim();
-    const check = await checkTelegramChannelMembership(rawId, from.id);
-    if (!check.isMember) {
-      unjoinedChannels.push({ channel: ch, error: check.error, status: check.status });
-    }
+  // 3. FOR CLAIMED USERS: Show Dashboard with current balance intact
+  const prevSession = activeVerificationSessions.get(chatId);
+  if (prevSession?.forceJoinMsgId) {
+    await deleteTelegramMessage(chatId, prevSession.forceJoinMsgId).catch(() => {});
   }
 
-  // 4. If Force Join requirements are not met for claimed user
-  if (unjoinedChannels.length > 0) {
-    if (user.forceJoinVerified) {
-      user.forceJoinVerified = false;
-      await saveUser(user);
-    }
-
-    const inlineKeyboard: any[][] = [];
-
-    unjoinedChannels.forEach((item) => {
-      const ch = item.channel;
-      const joinUrl =
-        (ch.inviteLink || '').trim() ||
-        (ch.channelId?.startsWith('@') ? `https://t.me/${ch.channelId.replace('@', '')}` : '');
-      if (joinUrl) {
-        inlineKeyboard.push([
-          {
-            text: `📢 Join ${ch.title}`,
-            url: joinUrl,
-          },
-        ]);
-      }
-    });
-
-    inlineKeyboard.push([
-      {
-        text: '✅ I Have Joined (Verify Now)',
-        callback_data: 'verify_channels',
-      },
-    ]);
-
-    // Clean up previous force-join message if user repeated /start
-    const prevSession = activeVerificationSessions.get(chatId);
-    if (prevSession?.forceJoinMsgId) {
-      await deleteTelegramMessage(chatId, prevSession.forceJoinMsgId).catch(() => {});
-    }
-
-    const maxBonus = settings.maxScratchSignupBonus || 10;
-    const startWelcomeText =
-      settings.templates?.welcomeMessage?.trim() ||
-      `🎁 <b>Scratch & Win — Up to ₹${maxBonus} Signup Bonus!</b>\n\n💰 <b>Complete Tasks & Earn Rewards</b>\n⚡ Simple Tasks • Exciting Rewards\n\n🚀 Start your earning journey today!`;
-
-    let forceJoinText = startWelcomeText;
-    const botErrors = unjoinedChannels.filter(
-      (item) => item.status === 'chat_not_found' || item.status === 'bot_not_admin'
-    );
-    if (botErrors.length > 0) {
-      const errList = botErrors.map((i) => `• <b>${i.channel.title}</b>: ${i.error}`).join('\n');
-      forceJoinText += `\n\n⚠️ <b>Channel Bot Access Notice:</b>\n${errList}`;
-    }
-
-    const sent = await sendTelegramMessage(chatId, forceJoinText, { inline_keyboard: inlineKeyboard });
-
-    let session = activeVerificationSessions.get(chatId);
-    if (!session) {
-      session = { incompleteMsgIds: new Set() };
-      activeVerificationSessions.set(chatId, session);
-    }
-    if (sent.messageId) {
-      session.forceJoinMsgId = sent.messageId;
-    }
-    return;
-  }
-
-  // Live verified: sync status in DB
-  if (!user.forceJoinVerified) {
-    user.forceJoinVerified = true;
-    await saveUser(user);
-  }
-
-  // 5. All channels joined: Display Open App & Dashboard
-  const maxBonus = settings.maxScratchSignupBonus || 10;
-  const bonusStatus = 'Credited!';
-  const welcomeText = `🚀 <b>Welcome to TeleEarn!</b>\n\n💰 <b>Your Available Balance:</b> ₹${user.balance.toFixed(2)}\n🎁 <b>Signup Bonus:</b> ${bonusStatus}\n\nEarn money by watching videos, visiting partner sites, and inviting friends!\nRedeem instant <b>Amazon Gift Cards</b> directly to your account anytime.`;
+  const welcomeText = `🚀 <b>Welcome to TeleEarn!</b>\n\n💰 <b>Your Available Balance:</b> ₹${user.balance.toFixed(2)}\n🎁 <b>Signup Bonus:</b> Credited!\n\nEarn money by watching videos, visiting partner sites, and inviting friends!\nRedeem instant <b>Amazon Gift Cards</b> directly to your account anytime.`;
 
   const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
 
@@ -508,7 +429,15 @@ async function handleStartCommand(
     ],
   };
 
-  await sendTelegramMessage(chatId, welcomeText, keyboard);
+  const sent = await sendTelegramMessage(chatId, welcomeText, keyboard);
+  let session = activeVerificationSessions.get(chatId);
+  if (!session) {
+    session = { incompleteMsgIds: new Set() };
+    activeVerificationSessions.set(chatId, session);
+  }
+  if (sent.messageId) {
+    session.forceJoinMsgId = sent.messageId;
+  }
 }
 
 /**

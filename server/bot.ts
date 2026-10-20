@@ -350,37 +350,22 @@ async function handleStartCommand(
       await deleteTelegramMessage(chatId, prevSession.forceJoinMsgId).catch(() => {});
     }
 
-    const scratchWelcomeText =
-      `🎁 <b>Scratch & Win — Up to ₹${maxBonus} Signup Bonus!</b>\n\n` +
-      `Welcome to TeleEarn, <b>${from.first_name || 'Friend'}</b>!\n` +
-      `Your exclusive Signup Scratch Card is ready with a guaranteed cash reward.\n\n` +
-      `✨ Scratch your card below to reveal your bonus and unlock earnings!\n\n` +
-      `👇 Tap below to scratch your card now:`;
+    const welcomeTemplate = settings.templates?.welcomeMessage?.trim();
+    const scratchWelcomeText = welcomeTemplate
+      ? `${welcomeTemplate}\n\n🎁 <b>Scratch & Win — Up to ₹${maxBonus} Signup Bonus!</b>\n\n👇 Tap below to open your Scratch Card in the Mini App:`
+      : `🎁 <b>Welcome to TeleEarn!</b>\n\n` +
+        `💰 <b>Complete Tasks & Earn Rewards</b>\n` +
+        `⚡ Simple Tasks • Exciting Rewards\n\n` +
+        `🎁 <b>Scratch & Win — Up to ₹${maxBonus} Signup Bonus!</b>\n` +
+        `Your exclusive Signup Scratch Card is ready with a guaranteed cash reward.\n\n` +
+        `👇 Tap below to scratch your card in the Mini App:`;
 
     const scratchKeyboard = {
       inline_keyboard: [
         [
           {
-            text: `🎮 Scratch & Win — Up to ₹${maxBonus} Signup Bonus`,
+            text: `🎁 Scratch & Win — Up to ₹${maxBonus}`,
             web_app: { url: webAppUrl },
-          },
-        ],
-        [
-          {
-            text: `✨ Scratch Card in Chat (₹${maxBonus} Max)`,
-            callback_data: 'scratch_signup',
-          },
-        ],
-        [
-          {
-            text: '👥 Invite Friends',
-            url: `https://t.me/share/url?url=${encodeURIComponent(
-              `https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot')}?start=${user.referralCode}`
-            )}&text=${encodeURIComponent('Join TeleEarn and earn instant cash daily!')}`,
-          },
-          {
-            text: '💬 Support',
-            url: `https://t.me/${(settings.supportTelegramUsername || 'TeleEarnSupport').replace(/^@+/, '')}`,
           },
         ],
       ],

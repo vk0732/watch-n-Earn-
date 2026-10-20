@@ -236,6 +236,7 @@ export default function App() {
     setUser({ ...updatedUser, balance: newBalance, signupBonusClaimed: true });
     setForceJoinRequired(false);
     setActiveTab('home');
+    api.getMyTransactions().then((txs) => setTransactions(txs)).catch(() => {});
   };
 
   const handleForceJoinVerified = () => {

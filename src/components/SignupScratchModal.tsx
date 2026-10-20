@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Sparkles, ShieldAlert, ExternalLink, RefreshCw, Trophy, Gift, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Sparkles, ExternalLink, RefreshCw, Trophy, Gift, CheckCircle2, AlertCircle, ArrowRight } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { api } from '../services/api.ts';
 import type { UserProfile, ForceJoinChannel } from '../types/index.ts';
@@ -23,9 +23,12 @@ export const SignupScratchModal: React.FC<SignupScratchModalProps> = ({
 }) => {
   const [bonusAmount, setBonusAmount] = useState<number>(initialBonusAmount || user.pendingSignupBonus || 5);
   const [isRevealed, setIsRevealed] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [isVerified, setIsVerified] = useState(false);
+  const [verifyLoading, setVerifyLoading] = useState(false);
+  const [claimLoading, setClaimLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isApiError, setIsApiError] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [channelsList, setChannelsList] = useState<Array<ForceJoinChannel & { isMember?: boolean }>>(channels || []);
   const [unjoinedList, setUnjoinedList] = useState<ForceJoinChannel[]>(channels || []);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -47,8 +50,23 @@ export const SignupScratchModal: React.FC<SignupScratchModalProps> = ({
           console.warn('[SignupScratch] Could not assign scratch card:', err);
         });
       }
-      setUnjoinedList(channels);
+
+      // If initial channels provided, use them; otherwise fetch fresh list
+      if (channels && channels.length > 0) {
+        setChannelsList(channels);
+        setUnjoinedList(channels);
+      } else {
+        api.verifyForceJoin().then((res) => {
+          if (res.channels) {
+            setChannelsList(res.channels);
+            setUnjoinedList(res.channels.filter((c) => !c.isMember));
+            if (res.allJoined) setIsVerified(true);
+          }
+        }).catch(() => {});
+      }
+
       setError(null);
+      setSuccessMessage(null);
     }
   }, [isOpen, initialBonusAmount, user.pendingSignupBonus, channels]);
 
@@ -64,7 +82,7 @@ export const SignupScratchModal: React.FC<SignupScratchModalProps> = ({
     canvas.width = 280;
     canvas.height = 150;
 
-    // Rich metallic Telegram Blue gradient
+    // Metallic Telegram Blue gradient
     const grad = ctx.createLinearGradient(0, 0, 280, 150);
     grad.addColorStop(0, '#0088cc');
     grad.addColorStop(0.5, '#24a1de');
@@ -81,13 +99,13 @@ export const SignupScratchModal: React.FC<SignupScratchModalProps> = ({
 
     // Centered label
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 14px sans-serif';
+    ctx.font = 'bold 15px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('✨ SCRATCH TO REVEAL ✨', 140, 75);
+    ctx.fillText('✨ SCRATCH TO REVEAL ✨', 140, 72);
 
-    ctx.font = 'normal 11px sans-serif';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-    ctx.fillText('Up to ₹' + maxBonus + ' Welcome Bonus', 140, 95);
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.fillText(`Win up to ₹${maxBonus} Signup Bonus`, 140, 94);
   }, [isOpen, isRevealed, maxBonus]);
 
   if (!isOpen) return null;
@@ -158,7 +176,7 @@ export const SignupScratchModal: React.FC<SignupScratchModalProps> = ({
         confetti({
           particleCount: 80,
           spread: 70,
-          origin: { y: 0.6 },
+          origin: { y: 0.5 },
           colors: ['#0088cc', '#10b981', '#f59e0b', '#8b5cf6'],
         });
       }
@@ -167,55 +185,96 @@ export const SignupScratchModal: React.FC<SignupScratchModalProps> = ({
     }
   };
 
-  const handleClaim = async () => {
-    if (loading) return;
-    setLoading(true);
+  // Step 3: Verify Channel Membership
+  const handleVerifyMembership = async () => {
+    if (verifyLoading) return;
+    setVerifyLoading(true);
     setError(null);
-    setIsApiError(false);
+    setSuccessMessage(null);
+
+    try {
+      const res = await api.verifyForceJoin();
+
+      if (res.channels) {
+        setChannelsList(res.channels);
+        const unjoined = res.channels.filter((c) => !c.isMember);
+        setUnjoinedList(unjoined);
+
+        if (res.allJoined || unjoined.length === 0) {
+          setIsVerified(true);
+          setSuccessMessage('✅ Channel membership verified! Tap "Claim Signup Bonus" below to receive your reward.');
+        } else {
+          setIsVerified(false);
+          const missingNames = unjoined.map((c) => c.title).join(', ');
+          setError(`Please join the required channel(s): ${missingNames}`);
+        }
+      } else if (res.allJoined) {
+        setIsVerified(true);
+        setSuccessMessage('✅ Channel membership verified! Tap "Claim Signup Bonus" below to receive your reward.');
+      } else {
+        setIsVerified(false);
+        setError(res.failureReason || 'Please join all required channels to verify membership.');
+      }
+    } catch (err: any) {
+      setIsVerified(false);
+      setError(err.message || 'Verification service temporarily unavailable. Please retry.');
+    } finally {
+      setVerifyLoading(false);
+    }
+  };
+
+  // Step 4: Claim Signup Bonus
+  const handleClaimBonus = async () => {
+    if (claimLoading || !isVerified) return;
+    setClaimLoading(true);
+    setError(null);
 
     try {
       const res = await api.claimSignupScratchBonus(user.deviceId, user.deviceFingerprint);
 
       // Celebrate success
       confetti({
-        particleCount: 100,
+        particleCount: 120,
         spread: 90,
         origin: { y: 0.5 },
         colors: ['#10b981', '#0088cc', '#f59e0b'],
       });
 
-      onClaimSuccess(res.newBalance, res.user, res.claimedAmount);
+      setSuccessMessage(`🎉 ₹${res.claimedAmount} Signup Bonus Claimed Successfully! Redirecting to Home...`);
+
+      // Wait a moment so user sees the celebration, then redirect to Home
+      setTimeout(() => {
+        onClaimSuccess(res.newBalance, res.user, res.claimedAmount);
+      }, 1200);
     } catch (err: any) {
       if (err.unjoinedChannels && err.unjoinedChannels.length > 0) {
         setUnjoinedList(err.unjoinedChannels);
+        setIsVerified(false);
       }
-      setIsApiError(Boolean(err.isApiError));
       setError(err.message || 'Failed to claim signup bonus. Please retry.');
     } finally {
-      setLoading(false);
+      setClaimLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl p-5 shadow-2xl animate-in zoom-in-95 duration-150">
-        {/* Header */}
-        <div className="text-center mb-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150 overflow-y-auto">
+      <div className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl p-5 shadow-2xl animate-in zoom-in-95 duration-150 my-auto">
+        {/* Header (Exact requirement: Heading: Scratch & Win, Subtitle: Win up to ₹10 Signup Bonus) */}
+        <div className="text-center mb-3">
           <div className="inline-flex w-12 h-12 rounded-2xl bg-sky-50 border border-sky-100 items-center justify-center text-[#0088cc] shadow-2xs mb-2">
             <Gift className="w-6 h-6 animate-bounce" />
           </div>
-          <h2 className="text-base font-black text-slate-900 tracking-tight">
-            Scratch &amp; Win — Up to ₹{maxBonus} Signup Bonus!
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {isRevealed
-              ? 'Join all required channels below to claim your bonus'
-              : 'Scratch the card to reveal your guaranteed welcome cash'}
+          <h1 className="text-xl font-black text-slate-900 tracking-tight">
+            Scratch &amp; Win
+          </h1>
+          <p className="text-xs font-semibold text-slate-500 mt-0.5">
+            Win up to ₹{maxBonus} Signup Bonus
           </p>
         </div>
 
         {/* Scratch Card Interactive Area */}
-        <div className="relative w-[280px] h-[150px] mx-auto rounded-2xl overflow-hidden shadow-md border-2 border-sky-200 bg-gradient-to-br from-amber-50 via-sky-50 to-emerald-50 flex items-center justify-center mb-4">
+        <div className="relative w-[280px] h-[150px] mx-auto rounded-2xl overflow-hidden shadow-md border-2 border-sky-200 bg-gradient-to-br from-amber-50 via-sky-50 to-emerald-50 flex items-center justify-center mb-3">
           {/* Revealed Reward Background (Beneath Canvas) */}
           <div className="text-center p-4 select-none">
             <Trophy className="w-8 h-8 text-amber-500 mx-auto mb-1 animate-pulse" />
@@ -223,7 +282,7 @@ export const SignupScratchModal: React.FC<SignupScratchModalProps> = ({
               ₹{bonusAmount}
             </div>
             <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wider mt-0.5">
-              Welcome Bonus
+              Guaranteed Welcome Reward
             </p>
           </div>
 
@@ -239,87 +298,129 @@ export const SignupScratchModal: React.FC<SignupScratchModalProps> = ({
           )}
         </div>
 
-        {/* Error / Alert Display */}
+        {/* Instructions when not yet scratched */}
+        {!isRevealed && (
+          <p className="text-center text-xs text-slate-500 font-medium mb-2">
+            👆 Rub or scratch the blue surface above to reveal your bonus!
+          </p>
+        )}
+
+        {/* Status / Error Alerts */}
         {error && (
-          <div className={`mb-3.5 p-3 rounded-xl text-xs flex items-start gap-2 ${
-            isApiError
-              ? 'bg-amber-50 border border-amber-200 text-amber-800'
-              : 'bg-red-50 border border-red-200 text-red-700'
-          }`}>
+          <div className="mb-3 p-3 rounded-xl text-xs bg-red-50 border border-red-200 text-red-700 flex items-start gap-2">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <span className="leading-snug">{error}</span>
-              {isApiError && (
-                <button
-                  type="button"
-                  onClick={handleClaim}
-                  disabled={loading}
-                  className="mt-1.5 px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] rounded-lg flex items-center gap-1 transition"
-                >
-                  <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> Retry Verification
-                </button>
-              )}
-            </div>
+            <span className="leading-snug">{error}</span>
           </div>
         )}
 
-        {/* Flow Stage 2: Channels to Join Once Card Is Revealed */}
+        {successMessage && (
+          <div className="mb-3 p-3 rounded-xl text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-start gap-2 font-medium">
+            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
+            <span className="leading-snug">{successMessage}</span>
+          </div>
+        )}
+
+        {/* Revealed Section: You won ₹X! + Join & Verify + Claim Buttons */}
         {isRevealed && (
-          <div className="space-y-3 mb-4 animate-in fade-in duration-200">
-            <div className="p-3 bg-sky-50 border border-sky-200 rounded-xl text-xs text-sky-900 leading-snug">
-              🎉 <strong>You won ₹{bonusAmount}!</strong> Join all required channels and verify to claim your signup bonus:
+          <div className="space-y-3 mb-2 animate-in fade-in duration-200">
+            {/* Prominent Win Banner */}
+            <div className="p-3 bg-gradient-to-r from-sky-50 via-emerald-50 to-sky-50 border border-sky-200 rounded-xl text-center">
+              <span className="text-base font-black text-slate-900">
+                🎉 You won <span className="text-[#0088cc]">₹{bonusAmount}</span>!
+              </span>
+              <p className="text-[11px] text-slate-600 mt-0.5">
+                Complete the two quick steps below to claim your bonus:
+              </p>
             </div>
 
-            {unjoinedList.length > 0 && (
+            {/* List of Required Channels */}
+            {channelsList.length > 0 && (
               <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                {unjoinedList.map((ch, idx) => (
-                  <div
-                    key={ch.id || idx}
-                    className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-2 shadow-2xs"
-                  >
-                    <div className="min-w-0 pr-2">
-                      <p className="text-xs font-bold text-slate-900 truncate">{ch.title}</p>
-                      <p className="text-[10px] text-slate-500 font-mono truncate">{ch.channelId || ch.username}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenChannel(ch.inviteLink)}
-                      className="px-2.5 py-1 bg-[#0088cc] hover:bg-[#0077b5] text-white text-xs font-bold rounded-lg shadow-2xs transition flex items-center gap-1 shrink-0"
+                {channelsList.map((ch, idx) => {
+                  const isJoined = ch.isMember || !unjoinedList.some((u) => u.channelId === ch.channelId);
+                  return (
+                    <div
+                      key={ch.id || idx}
+                      className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-2 shadow-2xs"
                     >
-                      Join <ExternalLink className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
+                      <div className="min-w-0 pr-2">
+                        <p className="text-xs font-bold text-slate-900 truncate">{ch.title}</p>
+                        <p className="text-[10px] text-slate-500 font-mono truncate">{ch.channelId || ch.username}</p>
+                      </div>
+                      {isJoined ? (
+                        <span className="px-2 py-1 bg-emerald-50 text-emerald-700 text-[11px] font-bold rounded-lg border border-emerald-200 flex items-center gap-1 shrink-0">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Joined
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenChannel(ch.inviteLink)}
+                          className="px-2.5 py-1 bg-[#0088cc] hover:bg-[#0077b5] text-white text-xs font-bold rounded-lg shadow-2xs transition flex items-center gap-1 shrink-0"
+                        >
+                          Join <ExternalLink className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
-          </div>
-        )}
 
-        {/* Main CTA Action */}
-        <div className="space-y-2">
-          {isRevealed ? (
+            {/* Step 3: Verify Membership Button */}
             <button
               type="button"
-              onClick={handleClaim}
-              disabled={loading}
-              className="w-full py-3 px-4 tg-btn-primary font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition flex items-center justify-center gap-2"
+              onClick={handleVerifyMembership}
+              disabled={verifyLoading || claimLoading}
+              className={`w-full py-2.5 px-4 font-bold text-xs uppercase tracking-wider rounded-xl transition flex items-center justify-center gap-2 ${
+                isVerified
+                  ? 'bg-emerald-50 border border-emerald-300 text-emerald-800'
+                  : 'bg-slate-900 hover:bg-slate-800 text-white shadow-md'
+              }`}
             >
-              {loading ? (
+              {verifyLoading ? (
                 <>
-                  <RefreshCw className="w-4 h-4 animate-spin" /> Verifying &amp; Claiming...
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Verifying Membership...
+                </>
+              ) : isVerified ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Membership Verified ✓
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-4 h-4" /> Verify &amp; Claim ₹{bonusAmount} Bonus
+                  <RefreshCw className="w-3.5 h-3.5" /> Verify Membership
                 </>
               )}
             </button>
-          ) : (
-            <p className="text-center text-[11px] text-slate-400 font-medium">
-              👆 Rub or scratch the blue surface above to reveal your bonus
-            </p>
-          )}
-        </div>
+
+            {/* Step 4: Claim Signup Bonus Button (Unlocked only after verification) */}
+            <button
+              type="button"
+              onClick={handleClaimBonus}
+              disabled={!isVerified || claimLoading}
+              className={`w-full py-3 px-4 font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition flex items-center justify-center gap-2 ${
+                isVerified
+                  ? 'tg-btn-primary hover:opacity-95 cursor-pointer'
+                  : 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+              }`}
+            >
+              {claimLoading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" /> Claiming Bonus...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" /> Claim Signup Bonus (₹{bonusAmount})
+                </>
+              )}
+            </button>
+
+            {!isVerified && (
+              <p className="text-center text-[10px] text-slate-400 font-medium">
+                🔒 Tap "Verify Membership" first to unlock the Claim button
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -177,16 +177,6 @@ async function extractTelegramUser(req: Request, res: Response, next: NextFuncti
       updatedAt: new Date().toISOString(),
     };
     user = await saveUser(newUser);
-
-    if (settings.signupBonus > 0) {
-      const bonusRes = await atomicClaimSignupBonus({
-        userId: user.id,
-        telegramId: user.telegramId,
-      });
-      if (bonusRes.user) {
-        user = bonusRes.user;
-      }
-    }
   }
 
   if (user.isBanned) {
@@ -405,7 +395,10 @@ apiRouter.post('/auth/verify-telegram', async (req, res) => {
     let deviceWarning: string | undefined;
     let pendingBonus = user.pendingSignupBonus || 0;
 
-    if (!user.signupBonusClaimed) {
+    const currentGen = settings.resetGeneration || 1;
+    const isClaimed = await hasUserClaimedSignupBonus(userId, currentGen);
+
+    if (!isClaimed) {
       const scratchInfo = await getOrAssignSignupScratchBonus(userId);
       pendingBonus = scratchInfo.amount;
       user = (await getUser(userId)) || user;
@@ -460,7 +453,10 @@ apiRouter.post('/auth/verify-telegram', async (req, res) => {
 
     res.json({
       success: true,
-      user,
+      user: {
+        ...user,
+        signupBonusClaimed: isClaimed,
+      },
       deviceToken: deviceVerification.token,
       signupBonusMessage,
       deviceWarning,
@@ -508,7 +504,7 @@ apiRouter.post('/auth/signup-scratch/claim', extractTelegramUser, async (req, re
 
     // 1. Eligibility check: cannot claim twice
     const alreadyClaimed = await hasUserClaimedSignupBonus(user.id, currentGen);
-    if (alreadyClaimed || user.signupBonusClaimed) {
+    if (alreadyClaimed) {
       return res.status(400).json({
         error: 'Signup bonus has already been claimed by this account.',
       });
@@ -607,11 +603,20 @@ apiRouter.get('/auth/me', extractTelegramUser, async (req, res) => {
     await saveUser(user);
   }
 
+  const settings = await getAppSettings();
+  const currentGen = settings.resetGeneration || 1;
+  const isClaimed = await hasUserClaimedSignupBonus(user.id, currentGen);
+
   res.json({
-    user,
+    user: {
+      ...user,
+      signupBonusClaimed: isClaimed,
+    },
     isAdmin,
     forceJoinRequired: unjoined.length > 0,
     unjoinedChannels: unjoined,
+    pendingSignupBonus: user.pendingSignupBonus || 0,
+    maxScratchSignupBonus: settings.maxScratchSignupBonus || 10,
   });
 });
 

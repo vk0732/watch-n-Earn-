@@ -46,6 +46,8 @@ import {
   atomicResetAllUserBalances,
   getMandatoryWithdrawalChannels,
   verifyMandatoryWithdrawalMembership,
+  getMandatoryCheckinChannels,
+  verifyMandatoryCheckinMembership,
 } from './db.ts';
 import {
   startBroadcast,
@@ -509,7 +511,7 @@ apiRouter.get('/auth/me', extractTelegramUser, async (req, res) => {
 /* ========================================================
    DAILY CHECK-IN REWARD
    ======================================================== */
-apiRouter.post('/rewards/daily-checkin', extractTelegramUser, requireLiveChannelMembership, async (req, res) => {
+apiRouter.post('/rewards/daily-checkin', extractTelegramUser, async (req, res) => {
   const reqUser = (req as any).user as UserProfile;
   const releaseLock = await acquireLock(`lock_daily_checkin_${reqUser.id}`);
 
@@ -519,39 +521,68 @@ apiRouter.post('/rewards/daily-checkin', extractTelegramUser, requireLiveChannel
 
     const todayUTC = new Date().toISOString().split('T')[0];
 
+    // 1. Check daily claim eligibility first
     if (user.lastDailyCheckIn === todayUTC) {
       return res.status(400).json({
         error: 'You have already claimed your daily check-in reward today! Return tomorrow.',
       });
     }
 
-    // Streak calculation
+    // 2. Mandatory Telegram channel membership re-verification before claiming
+    // Administrators bypass channel membership check
+    if (!isTelegramAdmin(user.telegramId)) {
+      const checkinVerification = await verifyMandatoryCheckinMembership(user.telegramId);
+      if (!checkinVerification.isVerified) {
+        if (checkinVerification.isApiError) {
+          return res.status(503).json({
+            error: checkinVerification.error,
+            isApiError: true,
+            unjoinedChannels: checkinVerification.unjoinedChannels || [],
+          });
+        }
+        return res.status(403).json({
+          error:
+            checkinVerification.error ||
+            'You have left one or more required channels. Please rejoin to claim your daily check-in reward.',
+          forceJoinRequired: true,
+          unjoinedChannels: checkinVerification.unjoinedChannels || [],
+        });
+      }
+    }
+
+    // 3. 7-day repeating cycle streak calculation (Day 1 -> Day 7 -> Day 1)
     let streak = 1;
     if (user.lastDailyCheckIn) {
       const lastDate = new Date(user.lastDailyCheckIn);
       const todayDate = new Date(todayUTC);
       const diffDays = Math.round((todayDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24));
       if (diffDays === 1) {
-        streak = (user.dailyStreak || 0) + 1;
+        const prevStreak = user.dailyStreak || 0;
+        // After Day 7, roll over to Day 1
+        streak = prevStreak >= 7 ? 1 : prevStreak + 1;
       }
     }
 
-    // Streak bonus logic: +2 coins per day streak up to day 7 (+14 max bonus)
-    const bonus = Math.min((streak - 1) * 2, 14);
+    // 4. Configurable reward difference calculation
+    const diff =
+      typeof settings.dailyCheckinRewardDifference === 'number' && settings.dailyCheckinRewardDifference > 0
+        ? settings.dailyCheckinRewardDifference
+        : 2;
+    const bonus = (streak - 1) * diff;
     const reward = settings.dailyCheckinBaseReward + bonus;
 
-    // Save user checkin state
-    user.lastDailyCheckIn = todayUTC;
-    user.dailyStreak = streak;
-    await saveUser(user);
-
-    // Credit balance
+    // 5. Credit balance atomically first
     const result = await atomicCreditBalance(
       user.id,
       reward,
       'daily_checkin',
       `Daily Check-In Reward (Day ${streak} Streak bonus: +₹${bonus})`
     );
+
+    // 6. Only after balance credit succeeds, save user checkin state
+    result.user.lastDailyCheckIn = todayUTC;
+    result.user.dailyStreak = streak;
+    await saveUser(result.user);
 
     res.json({
       success: true,
@@ -1054,6 +1085,9 @@ apiRouter.post('/admin/tasks', extractTelegramUser, requireAdmin, async (req, re
     if (taskData.isMandatoryForWithdrawal !== undefined) {
       taskData.isMandatoryForWithdrawal = Boolean(taskData.isMandatoryForWithdrawal);
     }
+    if (taskData.isMandatoryForCheckin !== undefined) {
+      taskData.isMandatoryForCheckin = Boolean(taskData.isMandatoryForCheckin);
+    }
 
     const saved = await saveTask(taskData);
     await recordAdminAudit(admin.id, 'SAVE_TASK', `Saved task: ${saved.title} (Reward: ${saved.rewardAmount})`);
@@ -1254,6 +1288,27 @@ apiRouter.post('/admin/settings', extractTelegramUser, requireAdmin, async (req,
           return res.status(400).json({ error: 'Maximum total amount per 24 hours must be greater than 0.' });
         }
       }
+    }
+
+    // Validate Daily Check-In reward settings
+    if (incoming.dailyCheckinRewardDifference !== undefined && incoming.dailyCheckinRewardDifference !== null && incoming.dailyCheckinRewardDifference !== '') {
+      const diffVal = Number(incoming.dailyCheckinRewardDifference);
+      if (isNaN(diffVal) || diffVal <= 0 || !Number.isFinite(diffVal) || diffVal > 500) {
+        return res.status(400).json({
+          error: 'Daily check-in reward difference must be a valid positive number greater than 0 (e.g. ₹1, ₹2, ₹3, ₹5).',
+        });
+      }
+      incoming.dailyCheckinRewardDifference = diffVal;
+    }
+
+    if (incoming.dailyCheckinBaseReward !== undefined && incoming.dailyCheckinBaseReward !== null && incoming.dailyCheckinBaseReward !== '') {
+      const baseVal = Number(incoming.dailyCheckinBaseReward);
+      if (isNaN(baseVal) || baseVal <= 0 || !Number.isFinite(baseVal) || baseVal > 5000) {
+        return res.status(400).json({
+          error: 'Daily check-in base reward must be a valid positive number greater than 0.',
+        });
+      }
+      incoming.dailyCheckinBaseReward = baseVal;
     }
 
     const updated = await updateAppSettings(incoming);

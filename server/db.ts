@@ -63,6 +63,7 @@ export const memStore = {
     signupBonus: 20, // PRD: ₹10-₹25 configurable
     referralReward: 10, // PRD: ₹10 per referral
     dailyCheckinBaseReward: 5,
+    dailyCheckinRewardDifference: 2,
     minWithdrawalAmount: 10, // PRD: ₹10 minimum withdrawal
     resetGeneration: 1, // Campaign generation for versioned reward re-eligibility
     maxWithdrawalAmount: 5000, // Configurable upper bound
@@ -255,6 +256,10 @@ export async function getAppSettings(): Promise<AppSettings> {
         };
       }
       merged.botUsername = formatBotUsername(merged.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot');
+      merged.dailyCheckinRewardDifference =
+        typeof merged.dailyCheckinRewardDifference === 'number' && merged.dailyCheckinRewardDifference > 0
+          ? merged.dailyCheckinRewardDifference
+          : 2;
       return merged;
     }
   } catch (err) {
@@ -2259,6 +2264,88 @@ export async function verifyMandatoryWithdrawalMembership(
       isApiError: false,
       unjoinedChannels: unjoined,
       error: 'Please join all mandatory sponsor channels before redeeming your gift card code.',
+    };
+  }
+
+  return { isVerified: true };
+}
+
+export async function getMandatoryCheckinChannels(): Promise<ForceJoinChannel[]> {
+  const forceJoinChannels = await getForceJoinChannels(true);
+  const tasks = await getAllTasks(true);
+
+  const mandatoryChannelsMap = new Map<string, ForceJoinChannel>();
+
+  for (const ch of forceJoinChannels) {
+    if (ch.isEnabled && ch.channelId) {
+      const cleanId = ch.channelId.trim();
+      mandatoryChannelsMap.set(cleanId.toLowerCase(), ch);
+    }
+  }
+
+  for (const task of tasks) {
+    const isMandatory =
+      task.isMandatoryForCheckin ||
+      (task.isMandatoryForCheckin === undefined && task.isMandatoryForWithdrawal);
+    if (task.isActive && task.taskType === 'channel' && isMandatory && task.channelId) {
+      const cleanId = task.channelId.trim();
+      if (!mandatoryChannelsMap.has(cleanId.toLowerCase())) {
+        mandatoryChannelsMap.set(cleanId.toLowerCase(), {
+          id: `task_mandatory_checkin_${task.id}`,
+          title: task.title,
+          channelId: cleanId,
+          inviteLink: task.destinationUrl || `https://t.me/${cleanId.replace(/^@/, '')}`,
+          isPrivate: !cleanId.startsWith('@'),
+          isEnabled: true,
+          order: 999,
+        });
+      }
+    }
+  }
+
+  return Array.from(mandatoryChannelsMap.values());
+}
+
+export async function verifyMandatoryCheckinMembership(
+  telegramId: number
+): Promise<MandatoryWithdrawalVerificationResult> {
+  const channels = await getMandatoryCheckinChannels();
+  if (channels.length === 0) {
+    return { isVerified: true };
+  }
+
+  const unjoined: ForceJoinChannel[] = [];
+
+  for (const ch of channels) {
+    const check = await checkTelegramChannelMembership(ch.channelId, telegramId);
+
+    // Fail closed: Telegram API error, Bot not admin, Bot token missing, or Chat not found
+    if (!check.isMember) {
+      if (
+        check.status === 'api_error' ||
+        check.status === 'bot_not_admin' ||
+        check.status === 'chat_not_found' ||
+        check.status === 'bot_token_missing'
+      ) {
+        return {
+          isVerified: false,
+          isApiError: true,
+          error:
+            check.error ||
+            `Telegram channel verification temporarily unavailable for ${ch.title} (${ch.channelId}). Please retry.`,
+          unjoinedChannels: [ch],
+        };
+      }
+      unjoined.push(ch);
+    }
+  }
+
+  if (unjoined.length > 0) {
+    return {
+      isVerified: false,
+      isApiError: false,
+      unjoinedChannels: unjoined,
+      error: 'Please join all mandatory channels before claiming your daily check-in reward.',
     };
   }
 

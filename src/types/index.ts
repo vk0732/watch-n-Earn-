@@ -71,6 +71,7 @@ export interface Task {
   botUsername?: string;
   channelId?: string; // Telegram channel username (e.g. @telegram) or numeric chat ID (-100...)
   isMandatoryForWithdrawal?: boolean; // When true, membership in this channel is required to redeem withdrawals
+  isMandatoryForCheckin?: boolean; // When true, membership in this channel is required for daily check-in claims
   socialPlatform?: 'youtube' | 'twitter' | 'instagram' | 'telegram' | 'discord' | 'facebook' | 'other';
   verificationMethod?: 'telegram_membership' | 'timer' | 'manual_review' | 'code_confirmation';
   verificationCode?: string; // Optional code for code_confirmation
@@ -210,6 +211,7 @@ export interface AppSettings {
   signupBonus: number;
   referralReward: number;
   dailyCheckinBaseReward: number;
+  dailyCheckinRewardDifference?: number; // Configurable Daily Check-in Reward Difference (default: 2)
   minWithdrawalAmount: number;
   maxWithdrawalAmount?: number; // Optional/configurable upper bound, e.g. 5000
   dailyWithdrawalLimitEnabled?: boolean; // Enable/disable 24-hour rolling limit
@@ -432,4 +434,6 @@ export interface MandatoryWithdrawalVerificationResult {
   unjoinedChannels?: ForceJoinChannel[];
   error?: string;
 }
+
+export type MandatoryChannelVerificationResult = MandatoryWithdrawalVerificationResult;
 

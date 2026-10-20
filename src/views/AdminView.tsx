@@ -2196,6 +2196,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     >
                       {t.isActive ? 'ACTIVE' : 'INACTIVE'}
                     </span>
+                    {t.isMandatoryForCheckin && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-sky-500/10 text-sky-600 border border-sky-500/30">
+                        MANDATORY FOR CHECK-IN
+                      </span>
+                    )}
                     {t.isMandatoryForWithdrawal && (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/30">
                         MANDATORY FOR WITHDRAWAL
@@ -2379,6 +2384,18 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         💡 <strong>Telegram Bot API Requirement:</strong> The bot checks membership using <code>getChatMember</code> with the numeric Channel ID. Ensure your bot is an Administrator in this channel with &quot;View members&quot; permissions.
                       </div>
                       <div className="flex items-center gap-2 pt-1 border-t border-slate-700/50">
+                        <input
+                          type="checkbox"
+                          id="isMandatoryForCheckin"
+                          checked={Boolean(editingTask.isMandatoryForCheckin)}
+                          onChange={(e) => setEditingTask({ ...editingTask, isMandatoryForCheckin: e.target.checked })}
+                          className="w-4 h-4 rounded text-sky-600 focus:ring-sky-500 border-slate-300"
+                        />
+                        <label htmlFor="isMandatoryForCheckin" className="text-xs font-semibold text-sky-400 cursor-pointer">
+                          Mandatory for Daily Check-In (Re-verified before every daily check-in claim)
+                        </label>
+                      </div>
+                      <div className="flex items-center gap-2 pt-1">
                         <input
                           type="checkbox"
                           id="isMandatoryForWithdrawal"
@@ -3299,10 +3316,24 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Daily Check-In Base (₹)</label>
                     <input
                       type="number"
+                      min="1"
                       value={settings.dailyCheckinBaseReward ?? 5}
                       onChange={(e) => setSettings({ ...settings, dailyCheckinBaseReward: Number(e.target.value) })}
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                     />
+                    <p className="text-[10px] text-slate-500 mt-0.5">Day 1 baseline reward (default: ₹5)</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Daily Check-In Reward Difference (₹)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={settings.dailyCheckinRewardDifference ?? 2}
+                      onChange={(e) => setSettings({ ...settings, dailyCheckinRewardDifference: Number(e.target.value) })}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-0.5">Increment per day across the 7-day streak cycle (default: ₹2)</p>
                   </div>
                 </div>
 

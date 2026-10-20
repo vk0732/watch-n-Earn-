@@ -113,6 +113,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
       <DailyCheckinCard
         user={user}
         baseReward={settings.dailyCheckinBaseReward}
+        rewardDifference={settings.dailyCheckinRewardDifference ?? 2}
         onClaimed={onClaimedCheckin}
       />
 

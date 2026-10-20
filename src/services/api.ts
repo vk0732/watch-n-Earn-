@@ -80,6 +80,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       const error: any = new Error(data.error || 'Server request failed');
       error.forceJoinRequired = data.forceJoinRequired;
       error.unjoinedChannels = data.unjoinedChannels;
+      error.isApiError = data.isApiError;
       throw error;
     }
     return data as T;

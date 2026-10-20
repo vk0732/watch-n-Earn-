@@ -1606,7 +1606,7 @@ async function runTests() {
   {
     clearMockChannelMemberships();
 
-    const botTestTgId = 554433221;
+    const botTestTgId = Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 100000);
     const botTestUserId = botTestTgId.toString();
     const appUrl = 'https://teleearn-six.vercel.app';
 

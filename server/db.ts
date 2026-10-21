@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getFirestore,
@@ -38,10 +41,15 @@ import { formatBotUsername, checkTelegramChannelMembership } from './telegram.ts
 import { isSupabaseEnabled, supabaseRedeemGiftCard, supabaseCreditBalance, supabaseBulkResetBalances } from './supabase.ts';
 
 // Multi-Tier Database Isolation Configuration for Independent Clones
-export const DB_PREFIX = (process.env.DB_PREFIX || process.env.COLLECTION_PREFIX || '').trim();
+export function getDbPrefix(): string {
+  return (process.env.DB_PREFIX || process.env.COLLECTION_PREFIX || '').trim();
+}
+
+export const DB_PREFIX = getDbPrefix();
 
 export function getColName(collectionName: string): string {
-  return DB_PREFIX ? `${DB_PREFIX}_${collectionName}` : collectionName;
+  const prefix = getDbPrefix();
+  return prefix ? `${prefix}_${collectionName}` : collectionName;
 }
 
 const customFirebaseConfig = process.env.FIREBASE_CONFIG_JSON

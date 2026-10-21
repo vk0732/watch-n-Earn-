@@ -53,6 +53,7 @@ import {
   checkWithdrawalReferralEligibility,
   getValidReferralCount,
   DB_PREFIX,
+  getDbPrefix,
 } from './db.ts';
 import {
   startBroadcast,
@@ -278,8 +279,8 @@ apiRouter.get('/health', (req, res) => {
     botConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && !process.env.TELEGRAM_BOT_TOKEN.includes('ABCdefGHIjklMNOpqrSTUvwxYZ')),
     botUsername: formatBotUsername(process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot'),
     database: 'Firebase Firestore',
-    dbPrefix: DB_PREFIX || '(default)',
-    isolatedNamespace: Boolean(DB_PREFIX || process.env.FIRESTORE_DATABASE_ID || process.env.FIREBASE_PROJECT_ID),
+    dbPrefix: getDbPrefix() || '(default)',
+    isolatedNamespace: Boolean(getDbPrefix() || process.env.FIRESTORE_DATABASE_ID || process.env.FIREBASE_PROJECT_ID),
   });
 });
 

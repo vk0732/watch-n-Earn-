@@ -74,7 +74,7 @@ async function runVerification() {
     );
     console.log('  ✓ Verified: Settings contain no stale TeleEarn channel ID.\n');
 
-    const testUserId = 777123456;
+    const testUserId = Math.floor(100000000 + Math.random() * 800000000);
     const testChatId = testUserId;
     const appUrl = 'https://watchvearn-clone.test';
 

@@ -781,12 +781,41 @@ export async function sendTelegramMessage(
       }),
     });
     const data = (await res.json()) as any;
+    if (!data.ok) {
+      console.error(`[Telegram Send Error to ${chatId}]: ${data.error_code} - ${data.description}`);
+      // Resilient fallback: if Telegram rejected the reply_markup (e.g. invalid button URL/markup), retry without it
+      if (
+        replyMarkup &&
+        (data.description?.toLowerCase().includes('button') ||
+          data.description?.toLowerCase().includes('keyboard') ||
+          data.description?.toLowerCase().includes('url'))
+      ) {
+        console.warn(`[Telegram Fallback]: Retrying message to ${chatId} without reply_markup...`);
+        const fallbackRes = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text,
+            parse_mode: 'HTML',
+          }),
+        });
+        const fallbackData = (await fallbackRes.json()) as any;
+        if (fallbackData.ok) {
+          return {
+            success: true,
+            messageId: fallbackData.result?.message_id,
+          };
+        }
+      }
+    }
     return {
       success: Boolean(data.ok),
       messageId: data.result?.message_id,
       error: data.description,
     };
   } catch (err: any) {
+    console.error(`[Telegram Network Error to ${chatId}]:`, err.message);
     return { success: false, error: err.message };
   }
 }

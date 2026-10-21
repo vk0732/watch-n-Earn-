@@ -432,23 +432,34 @@ async function handleStartCommand(
 
     const welcomeTemplate = settings.templates?.welcomeMessage?.trim();
     const scratchWelcomeText = welcomeTemplate
-      ? `${welcomeTemplate}\n\n🎁 <b>Scratch & Win — Up to ₹${maxBonus} Signup Bonus!</b>\n\n👇 Tap below to open your Scratch Card in the Mini App:`
-      : `🎁 <b>Welcome to TeleEarn!</b>\n\n` +
+      ? `${welcomeTemplate}\n\n🎁 <b>Scratch & Win — Up to ₹${maxBonus} Signup Bonus!</b>\n\n👇 Tap below to scratch your card:`
+      : `🎁 <b>Welcome to Watch & Earn!</b>\n\n` +
         `💰 <b>Complete Tasks & Earn Rewards</b>\n` +
         `⚡ Simple Tasks • Exciting Rewards\n\n` +
         `🎁 <b>Scratch & Win — Up to ₹${maxBonus} Signup Bonus!</b>\n` +
         `Your exclusive Signup Scratch Card is ready with a guaranteed cash reward.\n\n` +
-        `👇 Tap below to scratch your card in the Mini App:`;
+        `👇 Tap below to scratch your card:`;
+
+    const scratchInlineKeyboard: any[][] = [
+      [
+        {
+          text: `🎁 Scratch & Win — Up to ₹${maxBonus}`,
+          callback_data: 'scratch_signup',
+        },
+      ],
+    ];
+
+    if (webAppUrl && webAppUrl.startsWith('https://')) {
+      scratchInlineKeyboard.push([
+        {
+          text: '🎮 Open Watch & Earn Mini App',
+          web_app: { url: webAppUrl },
+        },
+      ]);
+    }
 
     const scratchKeyboard = {
-      inline_keyboard: [
-        [
-          {
-            text: `🎁 Scratch & Win — Up to ₹${maxBonus}`,
-            web_app: { url: webAppUrl },
-          },
-        ],
-      ],
+      inline_keyboard: scratchInlineKeyboard,
     };
 
     const sent = await sendTelegramMessage(chatId, scratchWelcomeText, scratchKeyboard);
@@ -469,29 +480,32 @@ async function handleStartCommand(
     await deleteTelegramMessage(chatId, prevSession.forceJoinMsgId).catch(() => {});
   }
 
-  const welcomeText = `🚀 <b>Welcome to TeleEarn!</b>\n\n💰 <b>Your Available Balance:</b> ₹${user.balance.toFixed(2)}\n🎁 <b>Signup Bonus:</b> Credited!\n\nEarn money by watching videos, visiting partner sites, and inviting friends!\nRedeem instant <b>Amazon Gift Cards</b> directly to your account anytime.`;
+  const welcomeText = `🚀 <b>Welcome to Watch & Earn!</b>\n\n💰 <b>Your Available Balance:</b> ₹${user.balance.toFixed(2)}\n🎁 <b>Signup Bonus:</b> Credited!\n\nEarn money by watching videos, visiting partner sites, and inviting friends!\nRedeem instant <b>Amazon Gift Cards</b> directly to your account anytime.`;
 
   const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
 
+  const keyboardRows: any[][] = [];
+  if (webAppUrl && webAppUrl.startsWith('https://')) {
+    keyboardRows.push([
+      {
+        text: '🎮 Open Watch & Earn Mini App',
+        web_app: { url: webAppUrl },
+      },
+    ]);
+  }
+  keyboardRows.push([
+    {
+      text: '👥 Invite Friends',
+      url: `https://t.me/share/url?url=${encodeURIComponent(`https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchVEarnBot')}?start=${user.referralCode}`)}&text=${encodeURIComponent('Join Watch & Earn and earn instant cash daily!')}`,
+    },
+    {
+      text: '💬 Support',
+      url: `https://t.me/${(settings.supportTelegramUsername || 'TeleEarnSupport').replace(/^@+/, '')}`,
+    },
+  ]);
+
   const keyboard = {
-    inline_keyboard: [
-      [
-        {
-          text: '🎮 Open Watch & Earn Mini App',
-          web_app: { url: webAppUrl },
-        },
-      ],
-      [
-        {
-          text: '👥 Invite Friends',
-          url: `https://t.me/share/url?url=${encodeURIComponent(`https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot')}?start=${user.referralCode}`)}&text=${encodeURIComponent('Join TeleEarn and earn instant cash daily!')}`,
-        },
-        {
-          text: '💬 Support',
-          url: `https://t.me/${(settings.supportTelegramUsername || 'TeleEarnSupport').replace(/^@+/, '')}`,
-        },
-      ],
-    ],
+    inline_keyboard: keyboardRows,
   };
 
   const sent = await sendTelegramMessage(chatId, welcomeText, keyboard);
@@ -558,13 +572,15 @@ async function handleCallbackQuery(
       ]);
     }
 
-    // Open Mini App button as fallback/convenience
-    inlineKeyboard.push([
-      {
-        text: '🎮 Open Watch & Earn Mini App',
-        web_app: { url: webAppUrl },
-      },
-    ]);
+    // Open Mini App button if HTTPS is configured
+    if (webAppUrl && webAppUrl.startsWith('https://')) {
+      inlineKeyboard.push([
+        {
+          text: '🎮 Open Watch & Earn Mini App',
+          web_app: { url: webAppUrl },
+        },
+      ]);
+    }
 
     const revealText =
       channels.length > 0
@@ -598,19 +614,19 @@ async function handleCallbackQuery(
       if (alreadyClaimed) {
         await answerTelegramCallback(cb.id, '⚠️ Signup bonus already claimed!');
         const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+        const inlineKeyboard: any[][] = [];
+        if (webAppUrl && webAppUrl.startsWith('https://')) {
+          inlineKeyboard.push([
+            {
+              text: '🎮 Open Watch & Earn Mini App',
+              web_app: { url: webAppUrl },
+            },
+          ]);
+        }
         await sendTelegramMessage(
           chatId,
           `ℹ️ You have already claimed your Signup Bonus!\n\n👇 Tap below to explore tasks and earn more:`,
-          {
-            inline_keyboard: [
-              [
-                {
-                  text: '🎮 Open Watch & Earn Mini App',
-                  web_app: { url: webAppUrl },
-                },
-              ],
-            ],
-          }
+          inlineKeyboard.length > 0 ? { inline_keyboard: inlineKeyboard } : undefined
         );
         return;
       }
@@ -652,12 +668,14 @@ async function handleCallbackQuery(
             callback_data: 'claim_scratch_bonus',
           },
         ]);
-        inlineKeyboard.push([
-          {
-            text: '🎮 Open Watch & Earn Mini App',
-            web_app: { url: webAppUrl },
-          },
-        ]);
+        if (webAppUrl && webAppUrl.startsWith('https://')) {
+          inlineKeyboard.push([
+            {
+              text: '🎮 Open Watch & Earn Mini App',
+              web_app: { url: webAppUrl },
+            },
+          ]);
+        }
 
         const channelNotes = stillUnjoined
           .map((item, i) => `${i + 1}. <b>${item.channel.title}</b>${item.error ? `\n   <i>(${item.error})</i>` : ''}`)
@@ -703,23 +721,26 @@ async function handleCallbackQuery(
         `💰 <b>Available Balance:</b> ₹${userBalance.toFixed(2)}\n\n` +
         `👇 Tap below to launch the Mini App and start completing tasks:`;
 
+      const successKeyboard: any[][] = [];
+      if (webAppUrl && webAppUrl.startsWith('https://')) {
+        successKeyboard.push([
+          {
+            text: '🎮 Open Watch & Earn Mini App',
+            web_app: { url: webAppUrl },
+          },
+        ]);
+      }
+      successKeyboard.push([
+        {
+          text: '👥 Invite Friends (+₹10)',
+          url: `https://t.me/share/url?url=${encodeURIComponent(
+            `https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchVEarnBot')}?start=${user?.referralCode || ''}`
+          )}&text=${encodeURIComponent('Join Watch & Earn and earn instant cash daily!')}`,
+        },
+      ]);
+
       await sendTelegramMessage(chatId, successText, {
-        inline_keyboard: [
-          [
-            {
-              text: '🎮 Open Watch & Earn Mini App',
-              web_app: { url: webAppUrl },
-            },
-          ],
-          [
-            {
-              text: '👥 Invite Friends (+₹10)',
-              url: `https://t.me/share/url?url=${encodeURIComponent(
-                `https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot')}?start=${user?.referralCode || ''}`
-              )}&text=${encodeURIComponent('Join TeleEarn and earn instant cash daily!')}`,
-            },
-          ],
-        ],
+        inline_keyboard: successKeyboard,
       });
     } finally {
       inFlightVerifications.delete(userId);
@@ -866,19 +887,20 @@ async function handleCallbackQuery(
       const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
       const successText = `✅ <b>Channels Verified!</b>\n\n🎉 Your account is unlocked.\n💰 Explore tasks and earn rewards!\n\n👇 Tap below to launch the Mini App.`;
 
+      const verifyKeyboard: any[][] = [];
+      if (webAppUrl && webAppUrl.startsWith('https://')) {
+        verifyKeyboard.push([
+          {
+            text: '🎮 Launch Watch & Earn Mini App',
+            web_app: { url: webAppUrl },
+          },
+        ]);
+      }
+
       await sendTelegramMessage(
         chatId,
         successText,
-        {
-          inline_keyboard: [
-            [
-              {
-                text: '🎮 Launch TeleEarn Mini App',
-                web_app: { url: webAppUrl },
-              },
-            ],
-          ],
-        }
+        verifyKeyboard.length > 0 ? { inline_keyboard: verifyKeyboard } : undefined
       );
     } finally {
       inFlightVerifications.delete(userId);
@@ -929,14 +951,18 @@ async function handleReferralCommand(telegramId: number, chatId: number, appUrl:
 async function handleTasksCommand(chatId: number, appUrl: string) {
   const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
   const text = `🎯 <b>Watch & Earn Tasks</b>\n\nComplete quick video and visit tasks directly in the Mini App to earn instant cash!\n\nTap below to start earning now:`;
-  await sendTelegramMessage(chatId, text, {
-    inline_keyboard: [
-      [
-        {
-          text: '🚀 Open Tasks in Mini App',
-          web_app: { url: `${webAppUrl}#tasks` },
-        },
-      ],
-    ],
-  });
+  const taskKeyboard: any[][] = [];
+  if (webAppUrl && webAppUrl.startsWith('https://')) {
+    taskKeyboard.push([
+      {
+        text: '🚀 Open Tasks in Mini App',
+        web_app: { url: `${webAppUrl}#tasks` },
+      },
+    ]);
+  }
+  await sendTelegramMessage(
+    chatId,
+    text,
+    taskKeyboard.length > 0 ? { inline_keyboard: taskKeyboard } : undefined
+  );
 }

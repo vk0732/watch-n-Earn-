@@ -50,6 +50,8 @@ import {
   verifyMandatoryCheckinMembership,
   getOrAssignSignupScratchBonus,
   hasUserClaimedSignupBonus,
+  checkWithdrawalReferralEligibility,
+  getValidReferralCount,
 } from './db.ts';
 import {
   startBroadcast,
@@ -1053,7 +1055,24 @@ apiRouter.post('/withdrawals/create', extractTelegramUser, async (req, res) => {
         unjoinedChannels: err.unjoinedChannels || [],
       });
     }
+    if (err.referralRequirementFailed) {
+      return res.status(403).json({
+        error: err.message,
+        referralRequirementFailed: true,
+        eligibility: err.eligibility,
+      });
+    }
     res.status(400).json({ error: err.message });
+  }
+});
+
+apiRouter.get('/withdrawals/eligibility', extractTelegramUser, async (req, res) => {
+  try {
+    const user = (req as any).user as UserProfile;
+    const eligibility = await checkWithdrawalReferralEligibility(user.id);
+    res.json({ success: true, eligibility });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -1432,6 +1451,39 @@ apiRouter.post('/admin/settings', extractTelegramUser, requireAdmin, async (req,
         });
       }
       incoming.maxScratchSignupBonus = maxScratch;
+    }
+
+    // Validate Withdrawal Referral Requirement settings
+    if (incoming.withdrawalReferralRequirementEnabled !== undefined) {
+      incoming.withdrawalReferralRequirementEnabled = Boolean(incoming.withdrawalReferralRequirementEnabled);
+    }
+
+    if (
+      incoming.withdrawalReferralApplyFromCount !== undefined &&
+      incoming.withdrawalReferralApplyFromCount !== null &&
+      incoming.withdrawalReferralApplyFromCount !== ''
+    ) {
+      const applyFrom = Number(incoming.withdrawalReferralApplyFromCount);
+      if (isNaN(applyFrom) || !Number.isInteger(applyFrom) || applyFrom < 1) {
+        return res.status(400).json({
+          error: 'Withdrawal Referral "Apply from withdrawal number" must be a positive integer of at least 1 (default is 2).',
+        });
+      }
+      incoming.withdrawalReferralApplyFromCount = applyFrom;
+    }
+
+    if (
+      incoming.withdrawalMinReferralsRequired !== undefined &&
+      incoming.withdrawalMinReferralsRequired !== null &&
+      incoming.withdrawalMinReferralsRequired !== ''
+    ) {
+      const minRefs = Number(incoming.withdrawalMinReferralsRequired);
+      if (isNaN(minRefs) || !Number.isInteger(minRefs) || minRefs < 1) {
+        return res.status(400).json({
+          error: 'Withdrawal Referral "Minimum valid referrals required" must be a positive integer of at least 1.',
+        });
+      }
+      incoming.withdrawalMinReferralsRequired = minRefs;
     }
 
     const updated = await updateAppSettings(incoming);

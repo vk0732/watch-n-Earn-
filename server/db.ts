@@ -32,6 +32,7 @@ import type {
   BulkBalanceResetPreview,
   BulkBalanceResetResult,
   MandatoryWithdrawalVerificationResult,
+  WithdrawalReferralEligibility,
 } from '../src/types/index.ts';
 import { formatBotUsername, checkTelegramChannelMembership } from './telegram.ts';
 import { isSupabaseEnabled, supabaseRedeemGiftCard, supabaseCreditBalance, supabaseBulkResetBalances } from './supabase.ts';
@@ -67,6 +68,9 @@ export const memStore = {
     dailyCheckinRewardDifference: 2,
     minWithdrawalAmount: 10, // PRD: ₹10 minimum withdrawal
     resetGeneration: 1, // Campaign generation for versioned reward re-eligibility
+    withdrawalReferralRequirementEnabled: true,
+    withdrawalReferralApplyFromCount: 2,
+    withdrawalMinReferralsRequired: 1,
     maxWithdrawalAmount: 5000, // Configurable upper bound
     dailyWithdrawalLimitEnabled: false,
     maxWithdrawalRequestsPer24h: 3,
@@ -1376,6 +1380,105 @@ export async function getAllWithdrawals(status?: string): Promise<Withdrawal[]> 
   return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
+/* ========================================================
+   WITHDRAWAL REFERRAL REQUIREMENT HELPERS
+   ======================================================== */
+
+/**
+ * Returns count of distinct, valid, successfully credited referrals for a given user.
+ * Excludes:
+ * - self-referrals (refereeId === referrerId)
+ * - rejected or duplicate fraud records (status !== 'credited')
+ * - empty or invalid referee IDs
+ */
+export async function getValidReferralCount(referrerId: string): Promise<number> {
+  const referrals = await getReferralsByReferrer(referrerId);
+  const validReferees = new Set<string>();
+  for (const ref of referrals) {
+    if (
+      ref.status === 'credited' &&
+      ref.referrerId === referrerId &&
+      ref.refereeId &&
+      ref.refereeId !== referrerId
+    ) {
+      validReferees.add(ref.refereeId);
+    }
+  }
+  return validReferees.size;
+}
+
+/**
+ * Returns all successfully completed withdrawals for a given user.
+ * Per authoritative definition, only withdrawals with status === 'success' count as completed.
+ * Pending, processing, failed, rejected, or reversed withdrawals do not count.
+ */
+export async function getCompletedWithdrawals(userId: string): Promise<Withdrawal[]> {
+  const userWithdrawals = await getUserWithdrawals(userId);
+  return userWithdrawals.filter((w) => w.status === 'success');
+}
+
+/**
+ * Checks whether the user meets the withdrawal referral requirement.
+ * 
+ * Rules:
+ * 1. Default: First withdrawal is unrestricted (applyFromCount = 2).
+ * 2. Second withdrawal onward requires at least withdrawalMinReferralsRequired valid referrals.
+ * 3. If withdrawalReferralRequirementEnabled is false, requirement is bypassed.
+ * 4. Completed withdrawals count strictly authoritative records where status === 'success'.
+ */
+export async function checkWithdrawalReferralEligibility(userId: string): Promise<WithdrawalReferralEligibility> {
+  const settings = await getAppSettings();
+  const isEnabled = settings.withdrawalReferralRequirementEnabled !== false;
+  const applyFromCount =
+    typeof settings.withdrawalReferralApplyFromCount === 'number' && settings.withdrawalReferralApplyFromCount >= 1
+      ? settings.withdrawalReferralApplyFromCount
+      : 2;
+  const requiredReferrals =
+    typeof settings.withdrawalMinReferralsRequired === 'number' && settings.withdrawalMinReferralsRequired >= 1
+      ? settings.withdrawalMinReferralsRequired
+      : 1;
+
+  const completed = await getCompletedWithdrawals(userId);
+  const completedWithdrawals = completed.length;
+  const currentReferrals = await getValidReferralCount(userId);
+
+  // The next withdrawal attempt is number (completedWithdrawals + 1)
+  const currentWithdrawalNumber = completedWithdrawals + 1;
+  const applies = isEnabled && currentWithdrawalNumber >= applyFromCount;
+
+  if (!applies) {
+    return {
+      eligible: true,
+      applies: false,
+      completedWithdrawals,
+      currentReferrals,
+      requiredReferrals,
+      applyFromCount,
+    };
+  }
+
+  const eligible = currentReferrals >= requiredReferrals;
+  let message: string | undefined;
+  if (!eligible) {
+    if (completedWithdrawals === 1 && applyFromCount === 2) {
+      message = `Your first withdrawal is available without referrals. To make this withdrawal, invite at least ${requiredReferrals} valid referral${requiredReferrals > 1 ? 's' : ''}.`;
+    } else {
+      const diff = requiredReferrals - currentReferrals;
+      message = `Withdrawal #${currentWithdrawalNumber} requires at least ${requiredReferrals} valid referral${requiredReferrals > 1 ? 's' : ''}. You currently have ${currentReferrals} (invite ${diff} more to unlock).`;
+    }
+  }
+
+  return {
+    eligible,
+    applies: true,
+    completedWithdrawals,
+    currentReferrals,
+    requiredReferrals,
+    applyFromCount,
+    message,
+  };
+}
+
 export async function updateWithdrawalStatus(
   orderId: string,
   newStatus: Withdrawal['status'],
@@ -1733,6 +1836,18 @@ export async function redeemGiftCardWithdrawal(
       );
       err.unjoinedChannels = channelVerification.unjoinedChannels;
       err.forceJoinRequired = true;
+      throw err;
+    }
+
+    // Withdrawal Referral Requirement check
+    const referralEligibility = await checkWithdrawalReferralEligibility(userId);
+    if (!referralEligibility.eligible) {
+      const err: any = new Error(
+        referralEligibility.message ||
+          'You need more valid referrals before making this withdrawal.'
+      );
+      err.referralRequirementFailed = true;
+      err.eligibility = referralEligibility;
       throw err;
     }
 

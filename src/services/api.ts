@@ -20,6 +20,7 @@ import type {
   BulkBalanceResetResult,
   BroadcastPreview,
   BroadcastTask,
+  WithdrawalReferralEligibility,
 } from '../types/index.ts';
 
 let currentInitData = '';
@@ -258,6 +259,12 @@ export const api = {
   },
 
   getMyWithdrawals: () => request<{ withdrawals: Withdrawal[] }>('/withdrawals/my'),
+
+  getWithdrawalEligibility: () =>
+    request<{
+      success: boolean;
+      eligibility: WithdrawalReferralEligibility;
+    }>('/withdrawals/eligibility'),
 
   getMyTransactions: () => request<{ transactions: Transaction[] }>('/transactions/my'),
 

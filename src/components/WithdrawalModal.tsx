@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { X, Gift, ShieldCheck, AlertCircle, CheckCircle2, Copy, Check, Sparkles, ExternalLink, ShieldAlert } from 'lucide-react';
+import { X, Gift, ShieldCheck, AlertCircle, CheckCircle2, Copy, Check, Sparkles, ExternalLink, ShieldAlert, Users } from 'lucide-react';
 import { api } from '../services/api.ts';
-import type { ForceJoinChannel } from '../types/index.ts';
+import type { ForceJoinChannel, WithdrawalReferralEligibility } from '../types/index.ts';
 
 interface WithdrawalModalProps {
   isOpen: boolean;
@@ -24,6 +24,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unjoinedChannels, setUnjoinedChannels] = useState<ForceJoinChannel[] | null>(null);
+  const [referralEligibility, setReferralEligibility] = useState<WithdrawalReferralEligibility | null>(null);
   const [copied, setCopied] = useState(false);
   const [successResult, setSuccessResult] = useState<{
     orderId: string;
@@ -46,6 +47,14 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       if (minWithdrawal) {
         setAmount(minWithdrawal.toString());
       }
+      api
+        .getWithdrawalEligibility()
+        .then((res) => {
+          if (res?.eligibility) {
+            setReferralEligibility(res.eligibility);
+          }
+        })
+        .catch(() => {});
     }
   }, [isOpen, minWithdrawal]);
 
@@ -103,6 +112,9 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       setUnjoinedChannels(null);
       onSuccess(res.orderId, res.remainingBalance);
     } catch (err: any) {
+      if (err.eligibility) {
+        setReferralEligibility(err.eligibility);
+      }
       if (err.forceJoinRequired && err.unjoinedChannels && err.unjoinedChannels.length > 0) {
         setUnjoinedChannels(err.unjoinedChannels);
         setError('Channel membership check failed: Please join the required sponsor channel(s) below to continue.');
@@ -217,6 +229,39 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               </div>
             )}
 
+            {/* Withdrawal Referral Requirement Banner (only shown when rule applies to this user) */}
+            {referralEligibility && referralEligibility.applies && (
+              <div
+                className={`p-3.5 rounded-2xl border ${
+                  referralEligibility.eligible
+                    ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
+                    : 'bg-amber-50 border-amber-200 text-amber-900'
+                } space-y-1.5`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold flex items-center gap-1.5">
+                    <Users className={`w-4 h-4 ${referralEligibility.eligible ? 'text-emerald-600' : 'text-amber-600'}`} />
+                    Withdrawal Referral Requirement
+                  </span>
+                  <span
+                    className={`text-[11px] font-black px-2 py-0.5 rounded-full ${
+                      referralEligibility.eligible
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-amber-100 text-amber-800'
+                    }`}
+                  >
+                    {referralEligibility.currentReferrals} / {referralEligibility.requiredReferrals} Referrals
+                  </span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-slate-600">
+                  {referralEligibility.message ||
+                    (referralEligibility.eligible
+                      ? 'Referral requirement satisfied for this withdrawal.'
+                      : `Invite at least ${referralEligibility.requiredReferrals} valid referral(s) to unlock this withdrawal.`)}
+                </p>
+              </div>
+            )}
+
             {/* Denomination Card / Input */}
             <div>
               <div className="flex justify-between items-center mb-1.5">
@@ -321,7 +366,11 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
             <button
               type="submit"
-              disabled={loading || availableBalance < minWithdrawal}
+              disabled={
+                loading ||
+                availableBalance < minWithdrawal ||
+                (Boolean(referralEligibility?.applies) && !referralEligibility?.eligible)
+              }
               className="w-full py-3.5 px-4 tg-btn-primary font-bold text-xs uppercase tracking-wider rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 active:scale-98"
             >
               {loading ? (
@@ -329,6 +378,10 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               ) : unjoinedChannels && unjoinedChannels.length > 0 ? (
                 <>
                   <ShieldCheck className="w-4 h-4" /> Verify & Continue
+                </>
+              ) : referralEligibility?.applies && !referralEligibility?.eligible ? (
+                <>
+                  <Users className="w-4 h-4" /> Valid Referral Required
                 </>
               ) : availableBalance < minWithdrawal ? (
                 `Need ₹${(minWithdrawal - availableBalance).toFixed(2)} more to redeem`

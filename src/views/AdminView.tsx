@@ -651,6 +651,23 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       }
     }
 
+    if (settings.withdrawalReferralRequirementEnabled !== false) {
+      if (
+        settings.withdrawalReferralApplyFromCount !== undefined &&
+        (isNaN(settings.withdrawalReferralApplyFromCount) || settings.withdrawalReferralApplyFromCount < 1)
+      ) {
+        showNotify('Apply from withdrawal number must be at least 1 (default is 2)', 'error');
+        return;
+      }
+      if (
+        settings.withdrawalMinReferralsRequired !== undefined &&
+        (isNaN(settings.withdrawalMinReferralsRequired) || settings.withdrawalMinReferralsRequired < 1)
+      ) {
+        showNotify('Minimum valid referrals required must be at least 1', 'error');
+        return;
+      }
+    }
+
     try {
       const res = await api.updateAdminSettings(settings);
       if (res && res.settings) {
@@ -3308,6 +3325,82 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                             className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
                           />
                           <p className="text-[10px] text-slate-500 mt-0.5">Maximum cumulative amount in rolling 24h</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Withdrawal Referral Requirement Section */}
+                <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-4">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                        <Users className="w-3.5 h-3.5 text-blue-500" />
+                        Withdrawal Referral Requirement
+                      </h4>
+                      <p className="text-[11px] text-slate-500">
+                        Require users to have valid referrals before subsequent withdrawals
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-200/80 space-y-3">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.withdrawalReferralRequirementEnabled !== false}
+                        onChange={(e) =>
+                          setSettings({ ...settings, withdrawalReferralRequirementEnabled: e.target.checked })
+                        }
+                        className="rounded bg-slate-800 border-slate-200 text-blue-500 focus:ring-blue-500/20"
+                      />
+                      <span>Enable Withdrawal Referral Requirement</span>
+                    </label>
+
+                    {settings.withdrawalReferralRequirementEnabled !== false && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-5 border-l-2 border-blue-500/30 animate-in fade-in duration-200">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            Apply From Withdrawal Number
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={settings.withdrawalReferralApplyFromCount ?? 2}
+                            onChange={(e) =>
+                              setSettings({
+                                ...settings,
+                                withdrawalReferralApplyFromCount: Number(e.target.value),
+                              })
+                            }
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-semibold"
+                          />
+                          <p className="text-[10px] text-slate-500 mt-1">
+                            Default: 2 (1st withdrawal unrestricted; 2nd onward requires referrals)
+                          </p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            Minimum Valid Referrals Required
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={settings.withdrawalMinReferralsRequired ?? 1}
+                            onChange={(e) =>
+                              setSettings({
+                                ...settings,
+                                withdrawalMinReferralsRequired: Number(e.target.value),
+                              })
+                            }
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-semibold"
+                          />
+                          <p className="text-[10px] text-slate-500 mt-1">
+                            Number of credited, non-duplicate referrals required
+                          </p>
                         </div>
                       </div>
                     )}

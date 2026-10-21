@@ -236,6 +236,20 @@ export interface AppSettings {
   gamification?: GamificationSettings;
   // Reset Generation for controlled reward campaign versioning
   resetGeneration?: number;
+  // Withdrawal Referral Requirement settings
+  withdrawalReferralRequirementEnabled?: boolean;
+  withdrawalReferralApplyFromCount?: number;
+  withdrawalMinReferralsRequired?: number;
+}
+
+export interface WithdrawalReferralEligibility {
+  eligible: boolean;
+  applies: boolean;
+  completedWithdrawals: number;
+  currentReferrals: number;
+  requiredReferrals: number;
+  applyFromCount: number;
+  message?: string;
 }
 
 export interface SpinRewardSegment {

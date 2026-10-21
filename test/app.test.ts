@@ -23,6 +23,7 @@ import {
   getAllGiftCardCodes,
   invalidateGiftCardCode,
   getUserWithdrawals,
+  getAllWithdrawals,
   getUserTransactions,
   getBulkBalanceResetPreview,
   atomicResetAllUserBalances,
@@ -34,6 +35,9 @@ import {
   verifyMandatoryCheckinMembership,
   acquireLock,
   getOrAssignSignupScratchBonus,
+  checkWithdrawalReferralEligibility,
+  getValidReferralCount,
+  getCompletedWithdrawals,
 } from '../server/db.ts';
 import {
   getBroadcastPreview,
@@ -479,6 +483,17 @@ async function runTests() {
         isBanned: false,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+      });
+
+      // Record a valid credited referral for wthUserId so multi-withdrawal inventory allocation tests pass
+      await recordReferral({
+        id: `ref_wth_${Date.now()}`,
+        referrerId: wthUserId,
+        refereeId: `referee_wth_${Date.now()}`,
+        refereeUsername: 'referee_wth',
+        rewardAmount: 10,
+        status: 'credited',
+        createdAt: new Date().toISOString(),
       });
 
       // 1. Insufficient balance test
@@ -1744,6 +1759,458 @@ async function runTests() {
     // Cleanup test channel
     await deleteForceJoinChannel(testChannel.id);
     clearMockChannelMemberships();
+  }
+
+  /* ------------------------------------------------------------------
+     TEST 17: Feature Upgrade — Withdrawal Referral Requirement
+     ------------------------------------------------------------------ */
+  console.log('\nTest Suite 17: Withdrawal Referral Requirement (10 Test Cases)');
+  {
+    clearMockChannelMemberships();
+    setMockChannelMembership('*', { isMember: true, status: 'member' });
+
+    // Reset settings to defaults
+    await updateAppSettings({
+      withdrawalReferralRequirementEnabled: true,
+      withdrawalReferralApplyFromCount: 2,
+      withdrawalMinReferralsRequired: 1,
+      minWithdrawalAmount: 10,
+    });
+
+    // ----------------------------------------------------------------
+    // Case 1: A new eligible user can make their first withdrawal without referrals
+    // ----------------------------------------------------------------
+    const user1Id = `usr_ref_test_1_${Date.now()}`;
+    await saveUser({
+      id: user1Id,
+      telegramId: 881001,
+      username: 'ref_tester_1',
+      firstName: 'RefTester1',
+      balance: 100,
+      lifetimeEarnings: 100,
+      referralEarnings: 0,
+      referralCode: `REF1_${Date.now()}`,
+      dailyStreak: 0,
+      isBanned: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      signupBonusClaimed: true,
+    });
+    setMockChannelMembership(`*_${881001}`, { isMember: true, status: 'member' });
+
+    await addGiftCardCodes(
+      [
+        `AMZN-TEST-1-${Date.now()}`,
+        `AMZN-TEST-2-${Date.now()}`,
+        `AMZN-TEST-3-${Date.now()}`,
+        `AMZN-TEST-4-${Date.now()}`,
+        `AMZN-TEST-5-${Date.now()}`,
+        `AMZN-TEST-6-${Date.now()}`,
+        `AMZN-TEST-7-${Date.now()}`,
+        `AMZN-TEST-8-${Date.now()}`,
+        `AMZN-TEST-9-${Date.now()}`,
+        `AMZN-TEST-10-${Date.now()}`,
+        `AMZN-TEST-11-${Date.now()}`,
+        `AMZN-TEST-12-${Date.now()}`,
+        `AMZN-TEST-13-${Date.now()}`,
+        `AMZN-TEST-14-${Date.now()}`,
+        `AMZN-TEST-15-${Date.now()}`,
+      ],
+      10,
+      'admin'
+    );
+
+    const elig1 = await checkWithdrawalReferralEligibility(user1Id);
+    assert(elig1.applies === false, 'Case 1: Referral requirement does NOT apply on first withdrawal');
+    assert(elig1.eligible === true, 'Case 1: User is eligible on first withdrawal');
+    assert(elig1.completedWithdrawals === 0, 'Case 1: Completed withdrawals count is 0');
+
+    const res1 = await redeemGiftCardWithdrawal(user1Id, 10);
+    assert(res1.withdrawal.status === 'success', 'Case 1: First withdrawal succeeded without referrals');
+    const u1After = await getUser(user1Id);
+    assert(u1After?.balance === 90, 'Case 1: Balance deducted from 100 to 90');
+
+    // ----------------------------------------------------------------
+    // Case 2: Second withdrawal is blocked when referral rule is enabled and user has insufficient referrals
+    // ----------------------------------------------------------------
+    const elig2Blocked = await checkWithdrawalReferralEligibility(user1Id);
+    assert(elig2Blocked.applies === true, 'Case 2: Referral requirement applies to second withdrawal');
+    assert(elig2Blocked.eligible === false, 'Case 2: User is NOT eligible with 0 referrals');
+    assert(elig2Blocked.completedWithdrawals === 1, 'Case 2: Completed withdrawals count is 1');
+    assert(elig2Blocked.currentReferrals === 0, 'Case 2: Current valid referrals is 0');
+    assert(elig2Blocked.requiredReferrals === 1, 'Case 2: Required referrals is 1');
+    assert(Boolean(elig2Blocked.message), 'Case 2: Instructive rejection message is provided');
+
+    let threwReferralError = false;
+    try {
+      await redeemGiftCardWithdrawal(user1Id, 10);
+    } catch (err: any) {
+      threwReferralError = true;
+      assert(err.referralRequirementFailed === true, 'Case 2: Error includes referralRequirementFailed flag');
+      assert(err.message.includes('referral'), 'Case 2: Error message explains referral requirement');
+    }
+    assert(threwReferralError, 'Case 2: Second withdrawal was blocked by referral rule');
+    const u1BlockedCheck = await getUser(user1Id);
+    assert(u1BlockedCheck?.balance === 90, 'Case 2: Balance strictly untouched at 90 when blocked');
+
+    // ----------------------------------------------------------------
+    // Case 3: Second withdrawal succeeds when the required valid referral count is met
+    // ----------------------------------------------------------------
+    const referee1Id = `referee_1_${Date.now()}`;
+    await recordReferral({
+      id: `ref_rec_1_${Date.now()}`,
+      referrerId: user1Id,
+      refereeId: referee1Id,
+      refereeUsername: 'valid_referee_1',
+      rewardAmount: 10,
+      status: 'credited',
+      createdAt: new Date().toISOString(),
+    });
+
+    const elig2Success = await checkWithdrawalReferralEligibility(user1Id);
+    assert(elig2Success.applies === true, 'Case 3: Rule applies on withdrawal #2');
+    assert(elig2Success.currentReferrals === 1, 'Case 3: Valid referral count is now 1');
+    assert(elig2Success.eligible === true, 'Case 3: User is eligible after meeting referral requirement');
+
+    const res2 = await redeemGiftCardWithdrawal(user1Id, 10);
+    assert(res2.withdrawal.status === 'success', 'Case 3: Second withdrawal succeeds once referral met');
+    const u1AfterWth2 = await getUser(user1Id);
+    assert(u1AfterWth2?.balance === 80, 'Case 3: Balance correctly decremented from 90 to 80');
+
+    // ----------------------------------------------------------------
+    // Case 4: Admin can disable the rule and restore the existing withdrawal behavior
+    // ----------------------------------------------------------------
+    const user4Id = `usr_ref_test_4_${Date.now()}`;
+    await saveUser({
+      id: user4Id,
+      telegramId: 881004,
+      username: 'ref_tester_4',
+      firstName: 'RefTester4',
+      balance: 50,
+      lifetimeEarnings: 50,
+      referralEarnings: 0,
+      referralCode: `REF4_${Date.now()}`,
+      dailyStreak: 0,
+      isBanned: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      signupBonusClaimed: true,
+    });
+    setMockChannelMembership(`*_${881004}`, { isMember: true, status: 'member' });
+
+    // Give user4 one completed withdrawal
+    await redeemGiftCardWithdrawal(user4Id, 10);
+    const u4AfterFirst = await getUser(user4Id);
+    assert(u4AfterFirst?.balance === 40, 'Case 4: User 4 completes first withdrawal');
+
+    // Admin disables the rule
+    await updateAppSettings({ withdrawalReferralRequirementEnabled: false });
+
+    const elig4Disabled = await checkWithdrawalReferralEligibility(user4Id);
+    assert(elig4Disabled.applies === false, 'Case 4: Rule does not apply when disabled by admin');
+    assert(elig4Disabled.eligible === true, 'Case 4: User is eligible without referrals when rule is disabled');
+
+    const res4 = await redeemGiftCardWithdrawal(user4Id, 10);
+    assert(res4.withdrawal.status === 'success', 'Case 4: Second withdrawal succeeds with rule disabled');
+    const u4AfterSecond = await getUser(user4Id);
+    assert(u4AfterSecond?.balance === 30, 'Case 4: Balance correctly decremented to 30');
+
+    // Restore rule
+    await updateAppSettings({ withdrawalReferralRequirementEnabled: true });
+
+    // ----------------------------------------------------------------
+    // Case 5: Admin can change threshold and minimum referral count
+    // ----------------------------------------------------------------
+    // Set rule: applyFromCount = 3, minReferralsRequired = 2
+    await updateAppSettings({
+      withdrawalReferralRequirementEnabled: true,
+      withdrawalReferralApplyFromCount: 3,
+      withdrawalMinReferralsRequired: 2,
+    });
+
+    const user5Id = `usr_ref_test_5_${Date.now()}`;
+    await saveUser({
+      id: user5Id,
+      telegramId: 881005,
+      username: 'ref_tester_5',
+      firstName: 'RefTester5',
+      balance: 100,
+      lifetimeEarnings: 100,
+      referralEarnings: 0,
+      referralCode: `REF5_${Date.now()}`,
+      dailyStreak: 0,
+      isBanned: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      signupBonusClaimed: true,
+    });
+    setMockChannelMembership(`*_${881005}`, { isMember: true, status: 'member' });
+
+    // First withdrawal (attempt #1) -> unrestricted (1 < 3)
+    await redeemGiftCardWithdrawal(user5Id, 10);
+    // Second withdrawal (attempt #2) -> unrestricted (2 < 3)
+    await redeemGiftCardWithdrawal(user5Id, 10);
+    const u5After2 = await getUser(user5Id);
+    assert(u5After2?.balance === 80, 'Case 5: First 2 withdrawals unrestricted when applyFromCount=3');
+
+    // Third withdrawal (attempt #3) -> now 3 >= 3, applies! Requires 2 referrals
+    const elig5Blocked = await checkWithdrawalReferralEligibility(user5Id);
+    assert(elig5Blocked.applies === true, 'Case 5: Third withdrawal applies referral rule');
+    assert(elig5Blocked.eligible === false, 'Case 5: Blocked because 0 < 2 required referrals');
+    assert(elig5Blocked.requiredReferrals === 2, 'Case 5: Reflects admin-configured requirement of 2 referrals');
+
+    // User gets 1 referral -> still not enough
+    await recordReferral({
+      id: `ref_rec_5a_${Date.now()}`,
+      referrerId: user5Id,
+      refereeId: `referee_5a_${Date.now()}`,
+      refereeUsername: 'referee_5a',
+      rewardAmount: 10,
+      status: 'credited',
+      createdAt: new Date().toISOString(),
+    });
+    const elig5With1 = await checkWithdrawalReferralEligibility(user5Id);
+    assert(elig5With1.eligible === false, 'Case 5: Still blocked with 1 of 2 required referrals');
+
+    // User gets 2nd referral -> now meets requirement
+    await recordReferral({
+      id: `ref_rec_5b_${Date.now()}`,
+      referrerId: user5Id,
+      refereeId: `referee_5b_${Date.now()}`,
+      refereeUsername: 'referee_5b',
+      rewardAmount: 10,
+      status: 'credited',
+      createdAt: new Date().toISOString(),
+    });
+    const elig5With2 = await checkWithdrawalReferralEligibility(user5Id);
+    assert(elig5With2.eligible === true, 'Case 5: Eligible after obtaining 2 valid referrals');
+
+    const res5 = await redeemGiftCardWithdrawal(user5Id, 10);
+    assert(res5.withdrawal.status === 'success', 'Case 5: Third withdrawal succeeds when 2 referrals met');
+    const u5After3 = await getUser(user5Id);
+    assert(u5After3?.balance === 70, 'Case 5: Balance decremented from 80 to 70');
+
+    // Restore standard settings (applyFromCount=2, minReferralsRequired=1)
+    await updateAppSettings({
+      withdrawalReferralRequirementEnabled: true,
+      withdrawalReferralApplyFromCount: 2,
+      withdrawalMinReferralsRequired: 1,
+    });
+
+    // ----------------------------------------------------------------
+    // Case 6: Pending, failed or cancelled withdrawals are handled according to existing completed-withdrawal definition
+    // ----------------------------------------------------------------
+    const user6Id = `usr_ref_test_6_${Date.now()}`;
+    await saveUser({
+      id: user6Id,
+      telegramId: 881006,
+      username: 'ref_tester_6',
+      firstName: 'RefTester6',
+      balance: 50,
+      lifetimeEarnings: 50,
+      referralEarnings: 0,
+      referralCode: `REF6_${Date.now()}`,
+      dailyStreak: 0,
+      isBanned: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      signupBonusClaimed: true,
+    });
+    setMockChannelMembership(`*_${881006}`, { isMember: true, status: 'member' });
+
+    // Create a failed withdrawal and a pending withdrawal record for user6
+    const { memStore } = await import('../server/db.ts');
+    const failedOrderId = `WTH_FAIL_${Date.now()}`;
+    memStore.withdrawals.set(failedOrderId, {
+      id: failedOrderId,
+      userId: user6Id,
+      userTelegramId: 881006,
+      amount: 10,
+      status: 'failed',
+      createdAt: new Date().toISOString(),
+    });
+
+    const pendingOrderId = `WTH_PEND_${Date.now()}`;
+    memStore.withdrawals.set(pendingOrderId, {
+      id: pendingOrderId,
+      userId: user6Id,
+      userTelegramId: 881006,
+      amount: 10,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    });
+
+    const completed6 = await getCompletedWithdrawals(user6Id);
+    assert(completed6.length === 0, 'Case 6: Failed and pending withdrawals are NOT counted as completed');
+
+    const elig6 = await checkWithdrawalReferralEligibility(user6Id);
+    assert(elig6.completedWithdrawals === 0, 'Case 6: Completed count is 0 despite pending/failed records');
+    assert(elig6.applies === false, 'Case 6: Referral requirement does NOT apply because no withdrawal has succeeded');
+    assert(elig6.eligible === true, 'Case 6: User 6 is eligible for first withdrawal');
+
+    const res6 = await redeemGiftCardWithdrawal(user6Id, 10);
+    assert(res6.withdrawal.status === 'success', 'Case 6: First real successful withdrawal processed smoothly');
+
+    // ----------------------------------------------------------------
+    // Case 7: Self-referrals and invalid referrals do not satisfy the requirement
+    // ----------------------------------------------------------------
+    const user7Id = `usr_ref_test_7_${Date.now()}`;
+    await saveUser({
+      id: user7Id,
+      telegramId: 881007,
+      username: 'ref_tester_7',
+      firstName: 'RefTester7',
+      balance: 50,
+      lifetimeEarnings: 50,
+      referralEarnings: 0,
+      referralCode: `REF7_${Date.now()}`,
+      dailyStreak: 0,
+      isBanned: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      signupBonusClaimed: true,
+    });
+    setMockChannelMembership(`*_${881007}`, { isMember: true, status: 'member' });
+
+    // First withdrawal succeeds
+    await redeemGiftCardWithdrawal(user7Id, 10);
+
+    // Record self-referral (refereeId === referrerId)
+    await recordReferral({
+      id: `ref_self_${Date.now()}`,
+      referrerId: user7Id,
+      refereeId: user7Id,
+      refereeUsername: 'ref_tester_7',
+      rewardAmount: 10,
+      status: 'credited',
+      createdAt: new Date().toISOString(),
+    });
+
+    // Record fraud-rejected referral
+    await recordReferral({
+      id: `ref_fraud_${Date.now()}`,
+      referrerId: user7Id,
+      refereeId: `referee_fraud_${Date.now()}`,
+      refereeUsername: 'fraud_user',
+      rewardAmount: 0,
+      status: 'rejected',
+      createdAt: new Date().toISOString(),
+    });
+
+    // Record device duplicate referral
+    await recordReferral({
+      id: `ref_dup_${Date.now()}`,
+      referrerId: user7Id,
+      refereeId: `referee_dup_${Date.now()}`,
+      refereeUsername: 'dup_user',
+      rewardAmount: 0,
+      status: 'rejected_duplicate',
+      createdAt: new Date().toISOString(),
+    });
+
+    // Record pending referral
+    await recordReferral({
+      id: `ref_pend_${Date.now()}`,
+      referrerId: user7Id,
+      refereeId: `referee_pend_${Date.now()}`,
+      refereeUsername: 'pending_user',
+      rewardAmount: 10,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    });
+
+    const validCount7 = await getValidReferralCount(user7Id);
+    assert(validCount7 === 0, 'Case 7: Self-referrals and invalid/fraud referrals yield valid count 0');
+
+    const elig7 = await checkWithdrawalReferralEligibility(user7Id);
+    assert(elig7.eligible === false, 'Case 7: Eligibility is false with only invalid referrals');
+
+    let threwFraudError = false;
+    try {
+      await redeemGiftCardWithdrawal(user7Id, 10);
+    } catch (err: any) {
+      threwFraudError = true;
+    }
+    assert(threwFraudError, 'Case 7: Withdrawal blocked when only invalid referrals exist');
+    const u7Check = await getUser(user7Id);
+    assert(u7Check?.balance === 40, 'Case 7: Balance preserved at 40');
+
+    // ----------------------------------------------------------------
+    // Case 8: Concurrent withdrawal requests cannot bypass the rule or deduct balance twice
+    // ----------------------------------------------------------------
+    const user8Id = `usr_ref_test_8_${Date.now()}`;
+    await saveUser({
+      id: user8Id,
+      telegramId: 881008,
+      username: 'ref_tester_8',
+      firstName: 'RefTester8',
+      balance: 50,
+      lifetimeEarnings: 50,
+      referralEarnings: 0,
+      referralCode: `REF8_${Date.now()}`,
+      dailyStreak: 0,
+      isBanned: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      signupBonusClaimed: true,
+    });
+    setMockChannelMembership(`*_${881008}`, { isMember: true, status: 'member' });
+
+    // User 8 has 0 completed withdrawals and 0 referrals.
+    // Fire two concurrent withdrawal requests simultaneously!
+    const [concResult1, concResult2] = await Promise.allSettled([
+      redeemGiftCardWithdrawal(user8Id, 10),
+      redeemGiftCardWithdrawal(user8Id, 10),
+    ]);
+
+    const successes = [concResult1, concResult2].filter((r) => r.status === 'fulfilled');
+    const rejections = [concResult1, concResult2].filter((r) => r.status === 'rejected');
+
+    assert(successes.length === 1, 'Case 8: Exactly ONE concurrent withdrawal succeeds');
+    assert(rejections.length === 1, 'Case 8: Competing concurrent withdrawal is blocked by referral requirement');
+
+    const u8Final = await getUser(user8Id);
+    assert(u8Final?.balance === 40, 'Case 8: Balance deducted exactly once (from 50 to 40, not 30)');
+
+    const u8Withdrawals = await getUserWithdrawals(user8Id);
+    const u8SuccessW = u8Withdrawals.filter((w) => w.status === 'success');
+    assert(u8SuccessW.length === 1, 'Case 8: Exactly one successful withdrawal record exists for user 8');
+
+    // ----------------------------------------------------------------
+    // Case 9: Existing withdrawal history and balances remain unchanged
+    // ----------------------------------------------------------------
+    const allExistingW = await getAllWithdrawals();
+    assert(allExistingW.length > 0, 'Case 9: Existing withdrawal history is preserved intact');
+    const allUsersCount = memStore.users.size;
+    assert(allUsersCount >= 8, 'Case 9: All users remain intact');
+
+    // ----------------------------------------------------------------
+    // Case 10: All unrelated features continue working
+    // ----------------------------------------------------------------
+    // Verify admin settings persistence
+    const currentSettings = await getAppSettings();
+    assert(currentSettings.minWithdrawalAmount === 10, 'Case 10: Settings structure remains intact');
+    assert(currentSettings.withdrawalReferralRequirementEnabled === true, 'Case 10: Referral requirement enabled in settings');
+
+    // Verify task system works
+    const testTask = await saveTask({
+      id: `task_sanity_${Date.now()}`,
+      title: 'Sanity Task',
+      description: 'Verifies unrelated tasks feature works',
+      destinationUrl: 'https://example.com',
+      rewardAmount: 5,
+      taskType: 'website',
+      timerSeconds: 1,
+      isActive: true,
+      sortOrder: 1,
+      createdAt: new Date().toISOString(),
+    });
+    assert(testTask.id.startsWith('task_sanity_'), 'Case 10: Unrelated task creation succeeds');
+    await deleteTask(testTask.id);
+
+    // Verify Force Join check works
+    const chanCheck = await verifyMandatoryWithdrawalMembership(881001);
+    assert(chanCheck.isVerified === true, 'Case 10: Unrelated channel verification operates normally');
   }
 
   console.log('\n==================================================');

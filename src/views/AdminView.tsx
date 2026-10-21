@@ -2372,7 +2372,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         </div>
                         <input
                           type="text"
-                          placeholder="e.g. @teleearnofficial or -1001234567890"
+                          placeholder="e.g. @yourchannel or -1001234567890"
                           value={editingTask.channelId || ''}
                           onChange={(e) => setEditingTask({ ...editingTask, channelId: e.target.value })}
                           className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"
@@ -2388,7 +2388,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         </label>
                         <input
                           type="text"
-                          placeholder="https://t.me/teleearnofficial or https://t.me/+inviteCode"
+                          placeholder="https://t.me/yourchannel or https://t.me/+inviteCode"
                           value={editingTask.destinationUrl === 'https://' ? '' : (editingTask.destinationUrl || '')}
                           onChange={(e) => setEditingTask({ ...editingTask, destinationUrl: e.target.value })}
                           className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-mono"

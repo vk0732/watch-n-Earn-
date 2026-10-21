@@ -542,12 +542,21 @@ async function handleCallbackQuery(
     });
 
     // Verification & Claim button
-    inlineKeyboard.push([
-      {
-        text: `✅ Verify & Claim ₹${scratchInfo.amount} Bonus`,
-        callback_data: 'claim_scratch_bonus',
-      },
-    ]);
+    if (channels.length > 0) {
+      inlineKeyboard.push([
+        {
+          text: `✅ Verify & Claim ₹${scratchInfo.amount} Bonus`,
+          callback_data: 'claim_scratch_bonus',
+        },
+      ]);
+    } else {
+      inlineKeyboard.push([
+        {
+          text: `🎁 Claim ₹${scratchInfo.amount} Bonus`,
+          callback_data: 'claim_scratch_bonus',
+        },
+      ]);
+    }
 
     // Open Mini App button as fallback/convenience
     inlineKeyboard.push([
@@ -558,12 +567,16 @@ async function handleCallbackQuery(
     ]);
 
     const revealText =
-      `🎉 <b>Scratch Card Revealed!</b>\n\n` +
-      `💰 You revealed a guaranteed <b>₹${scratchInfo.amount} Signup Bonus</b>!\n` +
-      `<i>(This reward is reserved for your account and pending verification)</i>\n\n` +
-      `<b>Complete 2 quick steps to claim:</b>\n` +
-      `1. Join our official sponsor channel(s) below\n` +
-      `2. Tap <b>"Verify & Claim ₹${scratchInfo.amount} Bonus"</b>`;
+      channels.length > 0
+        ? `🎉 <b>Scratch Card Revealed!</b>\n\n` +
+          `💰 You revealed a guaranteed <b>₹${scratchInfo.amount} Signup Bonus</b>!\n` +
+          `<i>(This reward is reserved for your account and pending verification)</i>\n\n` +
+          `<b>Complete 2 quick steps to claim:</b>\n` +
+          `1. Join our official sponsor channel(s) below\n` +
+          `2. Tap <b>"Verify & Claim ₹${scratchInfo.amount} Bonus"</b>`
+        : `🎉 <b>Scratch Card Revealed!</b>\n\n` +
+          `💰 You revealed a guaranteed <b>₹${scratchInfo.amount} Signup Bonus</b>!\n\n` +
+          `Tap <b>"Claim ₹${scratchInfo.amount} Bonus"</b> below to credit it to your balance!`;
 
     await sendTelegramMessage(chatId, revealText, { inline_keyboard: inlineKeyboard });
     return;
@@ -747,6 +760,9 @@ async function handleCallbackQuery(
           await saveUser(user);
         }
 
+        const settings = await getAppSettings();
+        const currentBotName = formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchVEarnBot');
+
         const botErrors = stillUnjoined.filter(
           (item) => item.status === 'chat_not_found' || item.status === 'bot_not_admin'
         );
@@ -755,7 +771,7 @@ async function handleCallbackQuery(
           const firstErr = botErrors[0];
           await answerTelegramCallback(
             cb.id,
-            `⚠️ Bot Access Issue: @WatchXEarnBot is not an Admin in ${firstErr.channel.channelId || firstErr.channel.title}`
+            `⚠️ Bot Access Issue: @${currentBotName} is not an Admin in ${firstErr.channel.channelId || firstErr.channel.title}`
           );
         } else {
           await answerTelegramCallback(
@@ -795,7 +811,7 @@ async function handleCallbackQuery(
                 `${i + 1}. <b>${item.channel.title}</b> (<code>${item.channel.channelId}</code>)\n   <i>${item.error}</i>`
             )
             .join('\n\n');
-          messageText = `⚠️ <b>Bot Permission Notice</b>\n\n@WatchXEarnBot cannot check members in the following channel(s):\n\n${botErrorNotes}\n\n👉 <b>If you are the admin:</b> Please add @WatchXEarnBot to the channel as an Administrator with 'View members' permissions.\n👉 <b>If you are a user:</b> Please contact support to resolve this issue.`;
+          messageText = `⚠️ <b>Bot Permission Notice</b>\n\n@${currentBotName} cannot check members in the following channel(s):\n\n${botErrorNotes}\n\n👉 <b>If you are the admin:</b> Please add @${currentBotName} to the channel as an Administrator with 'View members' permissions.\n👉 <b>If you are a user:</b> Please contact support to resolve this issue.`;
         } else {
           const channelNotes = stillUnjoined
             .map((item, i) => `${i + 1}. <b>${item.channel.title}</b>${item.error ? `\n   <i>(${item.error})</i>` : ''}`)

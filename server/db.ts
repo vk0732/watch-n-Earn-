@@ -113,7 +113,7 @@ export const memStore = {
     payoutLiveEnabled: false,
     botUsername: formatBotUsername(process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot'),
     payoutBotToken: process.env.PAYOUT_BOT_TOKEN || '',
-    payoutChannelId: process.env.PAYOUT_CHANNEL_ID || '@TeleEarnPayouts',
+    payoutChannelId: process.env.PAYOUT_CHANNEL_ID || '',
     payoutAdminChatId: process.env.PAYOUT_ADMIN_CHAT_ID || '',
     deviceVerificationEnabled: true,
     blockDuplicateDevices: true,
@@ -196,31 +196,8 @@ function initSeeds() {
     defaultTasks.forEach((t) => memStore.tasks.set(t.id, t));
   }
 
-  if (memStore.channels.size === 0) {
-    const defaultChannels: ForceJoinChannel[] = [
-      {
-        id: 'chan_main_updates',
-        title: 'TeleEarn Official Announcements',
-        username: 'TeleEarnOfficial',
-        channelId: '@TeleEarnOfficial',
-        inviteLink: 'https://t.me/telegram',
-        isPrivate: false,
-        isEnabled: true,
-        order: 1,
-      },
-      {
-        id: 'chan_payment_proofs',
-        title: 'Live Payment Proofs Channel',
-        username: 'TeleEarnPayouts',
-        channelId: '@TeleEarnPayouts',
-        inviteLink: 'https://t.me/telegram',
-        isPrivate: false,
-        isEnabled: true,
-        order: 2,
-      },
-    ];
-    defaultChannels.forEach((c) => memStore.channels.set(c.id, c));
-  }
+  // Force-join channels are left empty by default.
+  // Admins configure their own verified sponsor channels via the Admin Panel.
 
   if (memStore.taskBots.size === 0) {
     const defaultBots: TaskBot[] = [
@@ -294,6 +271,9 @@ export async function getAppSettings(): Promise<AppSettings> {
         };
       }
       merged.botUsername = formatBotUsername(merged.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot');
+      if (merged.payoutChannelId === '@TeleEarnPayouts') {
+        merged.payoutChannelId = process.env.PAYOUT_CHANNEL_ID || '';
+      }
       merged.dailyCheckinRewardDifference =
         typeof merged.dailyCheckinRewardDifference === 'number' && merged.dailyCheckinRewardDifference > 0
           ? merged.dailyCheckinRewardDifference
@@ -2170,18 +2150,48 @@ export async function redeemGiftCardWithdrawal(
 export async function getForceJoinChannels(onlyEnabled = true): Promise<ForceJoinChannel[]> {
   try {
     const snap = await getDocs(collection(db, getColName('force_join_channels')));
+    memStore.channels.clear();
     if (!snap.empty) {
-      memStore.channels.clear();
       snap.forEach((d) => {
         const item = d.data() as ForceJoinChannel;
+        const cid = (item.channelId || '').toLowerCase();
+        const uname = (item.username || '').toLowerCase();
+        const id = (item.id || d.id || '').toLowerCase();
+        // Discard any legacy TeleEarn seed channels
+        if (
+          cid === '@teleearnofficial' ||
+          cid === '@teleearnpayouts' ||
+          uname === 'teleearnofficial' ||
+          uname === 'teleearnpayouts' ||
+          id === 'chan_main_updates' ||
+          id === 'chan_payment_proofs'
+        ) {
+          return;
+        }
         memStore.channels.set(item.id || d.id, { ...item, id: item.id || d.id });
       });
     }
   } catch (err) {
-    // Keep memStore
+    // Keep memStore in case of temporary network glitch
   }
 
-  let list = Array.from(memStore.channels.values());
+  let list = Array.from(memStore.channels.values()).filter((c) => {
+    const cid = (c.channelId || '').toLowerCase();
+    const uname = (c.username || '').toLowerCase();
+    const id = (c.id || '').toLowerCase();
+    if (
+      cid === '@teleearnofficial' ||
+      cid === '@teleearnpayouts' ||
+      uname === 'teleearnofficial' ||
+      uname === 'teleearnpayouts' ||
+      id === 'chan_main_updates' ||
+      id === 'chan_payment_proofs'
+    ) {
+      return false;
+    }
+    return true;
+  });
+
   if (onlyEnabled) {
     list = list.filter((c) => c.isEnabled);
   }

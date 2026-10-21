@@ -4,6 +4,7 @@ import {
   getUser,
   memStore,
   saveForceJoinChannel,
+  deleteForceJoinChannel,
   getForceJoinChannels,
 } from '../server/db.ts';
 import {
@@ -24,6 +25,19 @@ async function runLiveMembershipTests() {
   const userId = telegramId.toString();
   const chatId = telegramId;
   const appUrl = 'https://teleearn-preview.app';
+
+  // Register a test channel for the verification suite
+  const testChannel = {
+    id: 'chan_test_suite_sponsor',
+    title: 'Test Suite Channel',
+    username: 'test_suite_sponsor',
+    channelId: '@test_suite_sponsor',
+    inviteLink: 'https://t.me/test_suite_sponsor',
+    isPrivate: false,
+    isEnabled: true,
+    order: 1,
+  };
+  await saveForceJoinChannel(testChannel);
 
   // Retrieve all enabled channels
   const activeChannels = await getForceJoinChannels(true);
@@ -95,7 +109,7 @@ async function runLiveMembershipTests() {
   mockAllChannelsMembership(false, 'left', 'Please join the channel and try again.');
 
   // Verify status check function itself reflects this
-  const liveCheck = await checkTelegramChannelMembership(activeChannels[0]?.channelId || '@TeleEarnOfficial', telegramId);
+  const liveCheck = await checkTelegramChannelMembership(activeChannels[0]?.channelId || '@test_suite_sponsor', telegramId);
   assert.strictEqual(liveCheck.isMember, false, 'Live getChatMember returns not member');
   assert.strictEqual(liveCheck.status, 'left', 'Status is left');
 
@@ -162,8 +176,9 @@ async function runLiveMembershipTests() {
   assert.strictEqual(user?.forceJoinVerified, false, 'API error must not grant access');
   console.log('  ✓ Safe API error handling: user remains unverified.');
 
-  // Clean up mock overrides
+  // Clean up mock overrides and test channel
   clearMockChannelMemberships();
+  await deleteForceJoinChannel(testChannel.id);
 
   console.log('\n====================================================');
   console.log('🎉 ALL LIVE CHANNEL MEMBERSHIP TESTS PASSED PERFECTLY!');

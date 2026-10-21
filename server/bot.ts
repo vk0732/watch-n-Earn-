@@ -104,6 +104,61 @@ function logTelegramUpdate(type: string, fromId?: number, chatId?: number, textS
 }
 
 /**
+ * Validates that a candidate URL is a valid, publicly accessible HTTPS URL.
+ * Telegram Bot API inline keyboards strictly require HTTPS for web_app buttons.
+ * Localhost, HTTP, and raw IP addresses are invalid and rejected by Telegram.
+ */
+export function isValidMiniAppUrl(url?: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed.startsWith('https://')) return false;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:') return false;
+    // Reject localhost or raw IP addresses
+    if (parsed.hostname === 'localhost' || /^(\d{1,3}\.){3}\d{1,3}$/.test(parsed.hostname)) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolves the Telegram Mini App HTTPS URL.
+ * Priority order:
+ * 1. MINI_APP_URL environment variable (if valid HTTPS)
+ * 2. Provided appUrl argument (if valid HTTPS)
+ * 3. APP_URL environment variable (if valid HTTPS)
+ * 4. Fallback to verified production Mini App URL ('https://teleearn-six.vercel.app')
+ *
+ * If no valid HTTPS URL can be resolved, logs an explicit diagnostic configuration error
+ * and returns "" so that broken/malformed buttons are never sent to Telegram.
+ */
+export function getMiniAppUrl(providedUrl?: string): string {
+  if (process.env.MINI_APP_URL && isValidMiniAppUrl(process.env.MINI_APP_URL)) {
+    return process.env.MINI_APP_URL.trim();
+  }
+  if (providedUrl && isValidMiniAppUrl(providedUrl)) {
+    return providedUrl.trim();
+  }
+  if (process.env.APP_URL && isValidMiniAppUrl(process.env.APP_URL)) {
+    return process.env.APP_URL.trim();
+  }
+  const fallback = 'https://teleearn-six.vercel.app';
+  if (isValidMiniAppUrl(fallback)) {
+    return fallback;
+  }
+  console.error(
+    '[Mini App Configuration Error]: Missing or invalid HTTPS Mini App URL. ' +
+    'Telegram Web Apps strictly require an HTTPS domain URL (no HTTP or raw IP addresses). ' +
+    'Please set MINI_APP_URL in your environment configuration.'
+  );
+  return '';
+}
+
+/**
  * Handle incoming Telegram webhook/polling updates
  */
 export async function handleTelegramBotUpdate(update: TelegramUpdate, appUrl: string) {
@@ -422,7 +477,7 @@ async function handleStartCommand(
   if (!isAlreadyClaimed) {
     const scratchInfo = await getOrAssignSignupScratchBonus(userId);
     const maxBonus = settings.maxScratchSignupBonus || 10;
-    const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+    const miniAppUrl = getMiniAppUrl(appUrl);
 
     // Clean up previous message if user repeated /start
     const prevSession = activeVerificationSessions.get(chatId);
@@ -449,11 +504,11 @@ async function handleStartCommand(
       ],
     ];
 
-    if (webAppUrl && webAppUrl.startsWith('https://')) {
+    if (miniAppUrl) {
       scratchInlineKeyboard.push([
         {
           text: '🎮 Open Watch & Earn Mini App',
-          web_app: { url: webAppUrl },
+          web_app: { url: miniAppUrl },
         },
       ]);
     }
@@ -482,14 +537,14 @@ async function handleStartCommand(
 
   const welcomeText = `🚀 <b>Welcome to Watch & Earn!</b>\n\n💰 <b>Your Available Balance:</b> ₹${user.balance.toFixed(2)}\n🎁 <b>Signup Bonus:</b> Credited!\n\nEarn money by watching videos, visiting partner sites, and inviting friends!\nRedeem instant <b>Amazon Gift Cards</b> directly to your account anytime.`;
 
-  const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+  const miniAppUrl = getMiniAppUrl(appUrl);
 
   const keyboardRows: any[][] = [];
-  if (webAppUrl && webAppUrl.startsWith('https://')) {
+  if (miniAppUrl) {
     keyboardRows.push([
       {
         text: '🎮 Open Watch & Earn Mini App',
-        web_app: { url: webAppUrl },
+        web_app: { url: miniAppUrl },
       },
     ]);
   }
@@ -536,7 +591,7 @@ async function handleCallbackQuery(
 
     const scratchInfo = await getOrAssignSignupScratchBonus(userId.toString());
     const channels = await getForceJoinChannels(true);
-    const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+    const miniAppUrl = getMiniAppUrl(appUrl);
 
     const inlineKeyboard: any[][] = [];
 
@@ -573,11 +628,11 @@ async function handleCallbackQuery(
     }
 
     // Open Mini App button if HTTPS is configured
-    if (webAppUrl && webAppUrl.startsWith('https://')) {
+    if (miniAppUrl) {
       inlineKeyboard.push([
         {
           text: '🎮 Open Watch & Earn Mini App',
-          web_app: { url: webAppUrl },
+          web_app: { url: miniAppUrl },
         },
       ]);
     }
@@ -613,16 +668,29 @@ async function handleCallbackQuery(
 
       if (alreadyClaimed) {
         await answerTelegramCallback(cb.id, '⚠️ Signup bonus already claimed!');
-        const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+        const miniAppUrl = getMiniAppUrl(appUrl);
+        const user = await getUser(userId.toString());
         const inlineKeyboard: any[][] = [];
-        if (webAppUrl && webAppUrl.startsWith('https://')) {
+        if (miniAppUrl) {
           inlineKeyboard.push([
             {
               text: '🎮 Open Watch & Earn Mini App',
-              web_app: { url: webAppUrl },
+              web_app: { url: miniAppUrl },
             },
           ]);
         }
+        inlineKeyboard.push([
+          {
+            text: '👥 Invite Friends',
+            url: `https://t.me/share/url?url=${encodeURIComponent(
+              `https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchVEarnBot')}?start=${user?.referralCode || ''}`
+            )}&text=${encodeURIComponent('Join Watch & Earn and earn instant cash daily!')}`,
+          },
+          {
+            text: '💬 Support',
+            url: `https://t.me/${(settings.supportTelegramUsername || 'TeleEarnSupport').replace(/^@+/, '')}`,
+          },
+        ]);
         await sendTelegramMessage(
           chatId,
           `ℹ️ You have already claimed your Signup Bonus!\n\n👇 Tap below to explore tasks and earn more:`,
@@ -645,7 +713,7 @@ async function handleCallbackQuery(
         }
       }
 
-      const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+      const miniAppUrl = getMiniAppUrl(appUrl);
 
       if (!allJoined) {
         const scratchInfo = await getOrAssignSignupScratchBonus(userId.toString());
@@ -668,11 +736,11 @@ async function handleCallbackQuery(
             callback_data: 'claim_scratch_bonus',
           },
         ]);
-        if (webAppUrl && webAppUrl.startsWith('https://')) {
+        if (miniAppUrl) {
           inlineKeyboard.push([
             {
               text: '🎮 Open Watch & Earn Mini App',
-              web_app: { url: webAppUrl },
+              web_app: { url: miniAppUrl },
             },
           ]);
         }
@@ -722,11 +790,11 @@ async function handleCallbackQuery(
         `👇 Tap below to launch the Mini App and start completing tasks:`;
 
       const successKeyboard: any[][] = [];
-      if (webAppUrl && webAppUrl.startsWith('https://')) {
+      if (miniAppUrl) {
         successKeyboard.push([
           {
             text: '🎮 Open Watch & Earn Mini App',
-            web_app: { url: webAppUrl },
+            web_app: { url: miniAppUrl },
           },
         ]);
       }
@@ -736,6 +804,10 @@ async function handleCallbackQuery(
           url: `https://t.me/share/url?url=${encodeURIComponent(
             `https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchVEarnBot')}?start=${user?.referralCode || ''}`
           )}&text=${encodeURIComponent('Join Watch & Earn and earn instant cash daily!')}`,
+        },
+        {
+          text: '💬 Support',
+          url: `https://t.me/${(settings.supportTelegramUsername || 'TeleEarnSupport').replace(/^@+/, '')}`,
         },
       ]);
 
@@ -884,18 +956,31 @@ async function handleCallbackQuery(
       }
 
       // C. Send clean success message with Launch Mini App button
-      const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+      const miniAppUrl = getMiniAppUrl(appUrl);
+      const settings = await getAppSettings();
       const successText = `✅ <b>Channels Verified!</b>\n\n🎉 Your account is unlocked.\n💰 Explore tasks and earn rewards!\n\n👇 Tap below to launch the Mini App.`;
 
       const verifyKeyboard: any[][] = [];
-      if (webAppUrl && webAppUrl.startsWith('https://')) {
+      if (miniAppUrl) {
         verifyKeyboard.push([
           {
             text: '🎮 Launch Watch & Earn Mini App',
-            web_app: { url: webAppUrl },
+            web_app: { url: miniAppUrl },
           },
         ]);
       }
+      verifyKeyboard.push([
+        {
+          text: '👥 Invite Friends',
+          url: `https://t.me/share/url?url=${encodeURIComponent(
+            `https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchVEarnBot')}?start=${user?.referralCode || ''}`
+          )}&text=${encodeURIComponent('Join Watch & Earn and earn instant cash daily!')}`,
+        },
+        {
+          text: '💬 Support',
+          url: `https://t.me/${(settings.supportTelegramUsername || 'TeleEarnSupport').replace(/^@+/, '')}`,
+        },
+      ]);
 
       await sendTelegramMessage(
         chatId,
@@ -909,8 +994,22 @@ async function handleCallbackQuery(
 }
 
 async function handleHelpCommand(chatId: number, appUrl: string) {
+  const miniAppUrl = getMiniAppUrl(appUrl);
   const helpText = `📖 <b>TeleEarn Help & Commands</b>\n\n• /start - Launch bot and open dashboard\n• /balance - Check current cash balance\n• /help - View this help menu\n\n<b>How to Earn:</b>\n1. Open the Mini App\n2. Complete Watch & Earn tasks\n3. Claim Daily Check-In\n4. Share your referral link for +₹25 per friend!\n5. Redeem instant Amazon Gift Cards once you reach the minimum balance.`;
-  await sendTelegramMessage(chatId, helpText);
+  const helpKeyboard: any[][] = [];
+  if (miniAppUrl) {
+    helpKeyboard.push([
+      {
+        text: '🎮 Open Watch & Earn Mini App',
+        web_app: { url: miniAppUrl },
+      },
+    ]);
+  }
+  await sendTelegramMessage(
+    chatId,
+    helpText,
+    helpKeyboard.length > 0 ? { inline_keyboard: helpKeyboard } : undefined
+  );
 }
 
 async function handleBalanceCommand(telegramId: number, chatId: number, appUrl: string) {
@@ -949,14 +1048,14 @@ async function handleReferralCommand(telegramId: number, chatId: number, appUrl:
 }
 
 async function handleTasksCommand(chatId: number, appUrl: string) {
-  const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+  const miniAppUrl = getMiniAppUrl(appUrl);
   const text = `🎯 <b>Watch & Earn Tasks</b>\n\nComplete quick video and visit tasks directly in the Mini App to earn instant cash!\n\nTap below to start earning now:`;
   const taskKeyboard: any[][] = [];
-  if (webAppUrl && webAppUrl.startsWith('https://')) {
+  if (miniAppUrl) {
     taskKeyboard.push([
       {
         text: '🚀 Open Tasks in Mini App',
-        web_app: { url: `${webAppUrl}#tasks` },
+        web_app: { url: `${miniAppUrl}#tasks` },
       },
     ]);
   }

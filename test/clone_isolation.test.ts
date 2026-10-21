@@ -146,6 +146,146 @@ async function runTests() {
     process.env.ADMIN_TELEGRAM_IDS = originalAdmins;
   }
 
+  // Test 5: Mini App Button Validation & Dynamic HTTPS Resolution
+  console.log('\nTest Suite C5: Mini App Button Validation & HTTPS Resolution');
+  {
+    const { isValidMiniAppUrl, getMiniAppUrl } = await import('../server/bot.ts');
+
+    // 1. URL validation tests
+    assert.strictEqual(isValidMiniAppUrl('https://teleearn-six.vercel.app'), true);
+    assert.strictEqual(isValidMiniAppUrl('https://custom-clone.example.com'), true);
+    assert.strictEqual(isValidMiniAppUrl('http://178.93.119.55:3002'), false, 'HTTP must be rejected');
+    assert.strictEqual(isValidMiniAppUrl('https://178.93.119.55:3002'), false, 'Raw IP must be rejected');
+    assert.strictEqual(isValidMiniAppUrl('https://localhost:3000'), false, 'Localhost must be rejected');
+    assert.strictEqual(isValidMiniAppUrl(''), false, 'Empty string must be rejected');
+    assert.strictEqual(isValidMiniAppUrl(undefined as any), false, 'Undefined must be rejected');
+    console.log('  ✓ PASS: isValidMiniAppUrl strictly accepts HTTPS domains and rejects HTTP, IPs, and localhost');
+    passed++;
+
+    // 2. getMiniAppUrl fallback resolution
+    const origMini = process.env.MINI_APP_URL;
+    const origApp = process.env.APP_URL;
+
+    // Test priority 1: MINI_APP_URL
+    process.env.MINI_APP_URL = 'https://custom-mini.vercel.app';
+    assert.strictEqual(getMiniAppUrl('https://other.com'), 'https://custom-mini.vercel.app');
+    console.log('  ✓ PASS: getMiniAppUrl prioritizes MINI_APP_URL environment variable');
+    passed++;
+
+    // Test fallback to verified production Mini App URL when given raw IP / HTTP
+    delete process.env.MINI_APP_URL;
+    process.env.APP_URL = 'http://178.93.119.55:3002';
+    const fallbackUrl = getMiniAppUrl('http://178.93.119.55:3002');
+    assert.strictEqual(fallbackUrl, 'https://teleearn-six.vercel.app');
+    console.log('  ✓ PASS: getMiniAppUrl safely falls back to verified HTTPS production URL when given HTTP/IP');
+    passed++;
+
+    // 3. Test bot message keyboards include web_app button with HTTPS URL
+    const originalFetch = globalThis.fetch;
+    const origToken = process.env.TELEGRAM_BOT_TOKEN;
+    process.env.TELEGRAM_BOT_TOKEN = '8935005914:AAFakeTestTokenForFetchIntercept';
+    const intercepted: Array<{ url: string; body: any }> = [];
+
+    globalThis.fetch = async (url: any, init?: any) => {
+      const urlStr = String(url);
+      if (urlStr.includes('api.telegram.org')) {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        intercepted.push({ url: urlStr, body });
+        if (urlStr.includes('sendMessage')) {
+          return new Response(JSON.stringify({ ok: true, result: { message_id: 9999 } }), { status: 200 });
+        }
+        if (urlStr.includes('answerCallbackQuery')) {
+          return new Response(JSON.stringify({ ok: true, result: true }), { status: 200 });
+        }
+      }
+      return originalFetch(url, init);
+    };
+
+    try {
+      const testUserId = 777123456;
+      const { saveUser } = await import('../server/db.ts');
+      await saveUser({
+        id: testUserId.toString(),
+        telegramId: testUserId,
+        username: 'claimeduser',
+        balance: 100,
+        lifetimeEarnings: 100,
+        referralEarnings: 0,
+        referralCode: 'ref_claimed_777',
+        referredBy: null,
+        dailyStreak: 1,
+        isBanned: false,
+        signupBonusClaimed: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      // Send /start for already claimed user
+      intercepted.length = 0;
+      await handleTelegramBotUpdate(
+        {
+          update_id: 991,
+          message: {
+            message_id: 11,
+            from: { id: testUserId, first_name: 'ClaimedTester' },
+            chat: { id: testUserId, type: 'private' },
+            date: Math.floor(Date.now() / 1000),
+            text: '/start',
+          },
+        },
+        'http://178.93.119.55:3002'
+      );
+
+      const sentMsg = intercepted.find((c) => c.url.includes('sendMessage'));
+      assert(sentMsg, 'SendMessage must have been called');
+      const keyboard = sentMsg.body.reply_markup?.inline_keyboard;
+      assert(Array.isArray(keyboard) && keyboard.length >= 2, 'Keyboard must have at least 2 rows');
+
+      // Row 1 must have web_app button
+      const row1Btn = keyboard[0][0];
+      assert.strictEqual(row1Btn.text, '🎮 Open Watch & Earn Mini App');
+      assert(row1Btn.web_app && row1Btn.web_app.url.startsWith('https://'), 'Must have HTTPS web_app URL');
+
+      // Row 2 must preserve Invite Friends and Support
+      const row2Texts = keyboard[1].map((b: any) => b.text);
+      assert(row2Texts.includes('👥 Invite Friends'), 'Must preserve Invite Friends');
+      assert(row2Texts.includes('💬 Support'), 'Must preserve Support');
+      console.log('  ✓ PASS: /start for claimed user includes Web App button in Row 1 and preserves Invite/Support in Row 2');
+      passed++;
+
+      // Send claim_scratch_bonus callback for claimed user
+      intercepted.length = 0;
+      await handleTelegramBotUpdate(
+        {
+          update_id: 992,
+          callback_query: {
+            id: 'cb_test_already_claimed',
+            from: { id: testUserId, first_name: 'ClaimedTester' },
+            message: { chat: { id: testUserId }, message_id: 12 },
+            data: 'claim_scratch_bonus',
+          },
+        },
+        'http://178.93.119.55:3002'
+      );
+
+      const claimSentMsg = intercepted.find((c) => c.url.includes('sendMessage'));
+      assert(claimSentMsg, 'SendMessage must have been called on claim attempt');
+      const claimKb = claimSentMsg.body.reply_markup?.inline_keyboard;
+      assert(Array.isArray(claimKb) && claimKb.length >= 2, 'Post-claim keyboard must have at least 2 rows');
+      assert.strictEqual(claimKb[0][0].text, '🎮 Open Watch & Earn Mini App');
+      assert(claimKb[0][0].web_app && claimKb[0][0].web_app.url.startsWith('https://'));
+      console.log('  ✓ PASS: claim_scratch_bonus keyboard includes Web App button in Row 1 and preserves working buttons');
+      passed++;
+    } finally {
+      globalThis.fetch = originalFetch;
+      process.env.TELEGRAM_BOT_TOKEN = origToken;
+      if (origMini) process.env.MINI_APP_URL = origMini;
+      else delete process.env.MINI_APP_URL;
+      if (origApp) process.env.APP_URL = origApp;
+      else delete process.env.APP_URL;
+    }
+  }
+
   console.log('\n==================================================');
   console.log(`  CLONE ISOLATION SUITE: ALL ${passed} TESTS PASSED ✓`);
   console.log('==================================================\n');

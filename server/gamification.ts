@@ -10,6 +10,7 @@ import {
   getAppSettings,
   getUserCompletedTaskIds,
   recordAdminAudit,
+  getColName,
 } from './db.ts';
 import type {
   GamificationSettings,
@@ -277,7 +278,7 @@ export async function executeSpinWheel(userId: string): Promise<{
     (memStore as any).spinRecords.set(spinId, spinRecord);
 
     try {
-      await setDoc(doc(db, 'spin_records', spinId), cleanDocData(spinRecord));
+      await setDoc(doc(db, getColName('spin_records'), spinId), cleanDocData(spinRecord));
     } catch (err) {
       console.warn('[Gamification] Spin record firestore sync fallback:', err);
     }
@@ -347,7 +348,7 @@ export async function grantReferralScratchCard(referrerId: string, referralId: s
   scratchCardsMap.set(cardId, newCard);
 
   try {
-    await setDoc(doc(db, 'scratch_cards', cardId), cleanDocData(newCard));
+    await setDoc(doc(db, getColName('scratch_cards'), cardId), cleanDocData(newCard));
   } catch (err) {
     console.warn('[Gamification] Scratch card firestore sync fallback:', err);
   }
@@ -396,7 +397,7 @@ export async function revealScratchCard(userId: string, cardId: string): Promise
     scratchCardsMap.set(cardId, card);
 
     try {
-      await setDoc(doc(db, 'scratch_cards', cardId), cleanDocData(card), { merge: true });
+      await setDoc(doc(db, getColName('scratch_cards'), cardId), cleanDocData(card), { merge: true });
     } catch (err) {
       console.warn('[Gamification] Scratch card reveal firestore sync fallback:', err);
     }

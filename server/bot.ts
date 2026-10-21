@@ -17,6 +17,7 @@ import {
   deleteTelegramMessage,
   answerTelegramCallback,
   formatBotUsername,
+  isTelegramAdmin,
 } from './telegram.ts';
 import type { UserProfile, ReferralRecord } from '../src/types/index.ts';
 
@@ -36,6 +37,33 @@ export interface TelegramFrom {
   last_name?: string;
   username?: string;
   language_code?: string;
+}
+
+export interface TelegramChatMemberUpdated {
+  chat: {
+    id: number;
+    title?: string;
+    username?: string;
+    type: string;
+  };
+  from: TelegramFrom;
+  date: number;
+  old_chat_member: {
+    status: string;
+  };
+  new_chat_member: {
+    status: string;
+    can_be_edited?: boolean;
+    can_manage_chat?: boolean;
+    can_change_info?: boolean;
+    can_post_messages?: boolean;
+    can_edit_messages?: boolean;
+    can_delete_messages?: boolean;
+    can_invite_users?: boolean;
+    can_restrict_members?: boolean;
+    can_pin_messages?: boolean;
+    can_promote_members?: boolean;
+  };
 }
 
 export interface TelegramUpdate {
@@ -59,6 +87,8 @@ export interface TelegramUpdate {
     };
     data?: string;
   };
+  my_chat_member?: TelegramChatMemberUpdated;
+  chat_member?: TelegramChatMemberUpdated;
 }
 
 /**
@@ -82,6 +112,18 @@ export async function handleTelegramBotUpdate(update: TelegramUpdate, appUrl: st
       const cb = update.callback_query;
       logTelegramUpdate('CALLBACK', cb.from?.id, cb.message?.chat?.id, cb.data);
       await handleCallbackQuery(cb, appUrl);
+      return;
+    }
+
+    if (update.my_chat_member) {
+      const mcm = update.my_chat_member;
+      logTelegramUpdate(
+        'MY_CHAT_MEMBER',
+        mcm.from?.id,
+        mcm.chat?.id,
+        `status:${mcm.new_chat_member?.status}`
+      );
+      await handleMyChatMemberUpdate(mcm);
       return;
     }
 
@@ -119,6 +161,44 @@ export async function handleTelegramBotUpdate(update: TelegramUpdate, appUrl: st
     }
   } catch (err: any) {
     console.error(`[Telegram Update Handler Error]: ${err.message}`);
+  }
+}
+
+/**
+ * Handles bot administrator status updates in channels/supergroups.
+ * When the bot is added as an administrator to a private channel, Telegram sends a my_chat_member update.
+ * If the user who added the bot is an authorized admin, the bot automatically messages them
+ * the channel title and exact numeric ID (-100...) for seamless Force Join setup.
+ */
+export async function handleMyChatMemberUpdate(mcm: TelegramChatMemberUpdated) {
+  try {
+    const chat = mcm.chat;
+    const from = mcm.from;
+    const newStatus = mcm.new_chat_member?.status;
+    const oldStatus = mcm.old_chat_member?.status;
+
+    console.log(
+      `[Telegram Bot Admin Event] Bot status in chat "${chat.title || chat.id}" (${chat.id}): ${oldStatus} -> ${newStatus}`
+    );
+
+    // If bot was promoted to administrator
+    if (newStatus === 'administrator') {
+      const channelTitle = chat.title || 'Private Channel';
+      const numericId = chat.id;
+
+      // If the promoter is an authorized administrator, notify them with the exact ID
+      if (from?.id && isTelegramAdmin(from.id)) {
+        await sendTelegramMessage(
+          from.id,
+          `🎉 <b>Bot Promoted to Channel Administrator!</b>\n\n` +
+            `📢 <b>Channel:</b> ${channelTitle}\n` +
+            `🆔 <b>Channel Numeric ID:</b> <code>${numericId}</code>\n\n` +
+            `💡 <i>Copy the numeric ID above and paste it into the <b>Channel ID</b> field in your Watch & Earn Admin Panel (Force Join Channels).</i>`
+        );
+      }
+    }
+  } catch (err: any) {
+    console.error('[handleMyChatMemberUpdate Error]:', err.message);
   }
 }
 
@@ -226,7 +306,7 @@ export async function startBotPolling(appUrl: string): Promise<{ success: boolea
     while (pollingActive) {
       try {
         const timeout = 25; // seconds
-        const pollUrl = `https://api.telegram.org/bot${token}/getUpdates?offset=${lastUpdateId + 1}&timeout=${timeout}&allowed_updates=["message","callback_query"]`;
+        const pollUrl = `https://api.telegram.org/bot${token}/getUpdates?offset=${lastUpdateId + 1}&timeout=${timeout}&allowed_updates=["message","callback_query","my_chat_member","chat_member"]`;
         
         const response = await fetch(pollUrl, {
           signal: pollingAbortController?.signal,

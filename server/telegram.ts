@@ -939,7 +939,11 @@ export async function setTelegramWebhook(
 
   try {
     const url = `https://api.telegram.org/bot${token}/setWebhook`;
-    const body: any = { url: webhookUrl, drop_pending_updates: false };
+    const body: any = {
+      url: webhookUrl,
+      drop_pending_updates: false,
+      allowed_updates: ['message', 'callback_query', 'my_chat_member', 'chat_member'],
+    };
     if (secretToken) body.secret_token = secretToken;
 
     const res = await fetch(url, {

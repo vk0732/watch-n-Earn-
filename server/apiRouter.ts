@@ -52,6 +52,7 @@ import {
   hasUserClaimedSignupBonus,
   checkWithdrawalReferralEligibility,
   getValidReferralCount,
+  DB_PREFIX,
 } from './db.ts';
 import {
   startBroadcast,
@@ -277,6 +278,8 @@ apiRouter.get('/health', (req, res) => {
     botConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && !process.env.TELEGRAM_BOT_TOKEN.includes('ABCdefGHIjklMNOpqrSTUvwxYZ')),
     botUsername: formatBotUsername(process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot'),
     database: 'Firebase Firestore',
+    dbPrefix: DB_PREFIX || '(default)',
+    isolatedNamespace: Boolean(DB_PREFIX || process.env.FIRESTORE_DATABASE_ID || process.env.FIREBASE_PROJECT_ID),
   });
 });
 
@@ -1258,8 +1261,20 @@ apiRouter.post('/admin/channels', extractTelegramUser, requireAdmin, async (req,
       chData.id = `chan_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     }
 
-    const rawId = (chData.channelId || '').trim();
-    const rawUrl = (chData.inviteLink || '').trim();
+    let rawId = (chData.channelId || '').trim();
+    let rawUrl = (chData.inviteLink || '').trim();
+
+    // Auto-detect if user accidentally swapped Channel ID and Invite Link
+    if (
+      (/(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/(?:\+|joinchat\/)/i.test(rawId) || rawId.startsWith('+')) &&
+      (/^-100\d+$/.test(rawUrl) || /^-?\d+$/.test(rawUrl) || /(?:t\.me|telegram\.me)\/c\/\d+/i.test(rawUrl))
+    ) {
+      const temp = rawId;
+      rawId = rawUrl;
+      rawUrl = temp;
+      chData.channelId = rawId;
+      chData.inviteLink = rawUrl;
+    }
 
     const parsed = formatChannelIdentifier(rawId);
     if (!parsed.ok) {

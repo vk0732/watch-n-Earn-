@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
-import { db, cleanDocData, memStore } from './db.ts';
+import { db, cleanDocData, memStore, getColName } from './db.ts';
 
 export type GatewayProvider = 'cashfree' | 'razorpayx' | 'paytm' | 'paynit' | 'custom';
 export type GatewayEnvironment = 'test' | 'live';
@@ -179,7 +179,7 @@ export async function getStoredGatewayConfig(): Promise<StoredGatewayConfig> {
   }
 
   try {
-    const docRef = doc(db, 'payment_gateway_config', 'settings');
+    const docRef = doc(db, getColName('payment_gateway_config'), 'settings');
     const snap = await getDoc(docRef);
     if (snap.exists()) {
       inMemoryGatewayConfig = snap.data() as StoredGatewayConfig;
@@ -380,7 +380,7 @@ export async function saveGatewayConfig(
   // Persist to Firestore and memory cache
   inMemoryGatewayConfig = updated;
   try {
-    const docRef = doc(db, 'payment_gateway_config', 'settings');
+    const docRef = doc(db, getColName('payment_gateway_config'), 'settings');
     await setDoc(docRef, cleanDocData(updated), { merge: true });
   } catch (err) {
     console.warn('[PaymentSecurity] Firestore saveGatewayConfig fallback:', err);
@@ -415,7 +415,7 @@ export async function removeGatewayCredentials(adminId: string): Promise<StoredG
 
   inMemoryGatewayConfig = updated;
   try {
-    const docRef = doc(db, 'payment_gateway_config', 'settings');
+    const docRef = doc(db, getColName('payment_gateway_config'), 'settings');
     await deleteDoc(docRef);
   } catch (err) {
     console.warn('[PaymentSecurity] Firestore delete fallback:', err);
@@ -438,7 +438,7 @@ export async function recordConnectionTestResult(
 
   inMemoryGatewayConfig = current;
   try {
-    const docRef = doc(db, 'payment_gateway_config', 'settings');
+    const docRef = doc(db, getColName('payment_gateway_config'), 'settings');
     await setDoc(
       docRef,
       {

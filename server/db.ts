@@ -37,9 +37,34 @@ import type {
 import { formatBotUsername, checkTelegramChannelMembership } from './telegram.ts';
 import { isSupabaseEnabled, supabaseRedeemGiftCard, supabaseCreditBalance, supabaseBulkResetBalances } from './supabase.ts';
 
+// Multi-Tier Database Isolation Configuration for Independent Clones
+export const DB_PREFIX = (process.env.DB_PREFIX || process.env.COLLECTION_PREFIX || '').trim();
+
+export function getColName(collectionName: string): string {
+  return DB_PREFIX ? `${DB_PREFIX}_${collectionName}` : collectionName;
+}
+
+const customFirebaseConfig = process.env.FIREBASE_CONFIG_JSON
+  ? JSON.parse(process.env.FIREBASE_CONFIG_JSON)
+  : {
+      ...firebaseConfig,
+      projectId: process.env.FIREBASE_PROJECT_ID || firebaseConfig.projectId,
+      apiKey: process.env.FIREBASE_API_KEY || firebaseConfig.apiKey,
+      authDomain: process.env.FIREBASE_AUTH_DOMAIN || firebaseConfig.authDomain,
+      storageBucket: process.env.FIREBASE_STORAGE_BUCKET || firebaseConfig.storageBucket,
+      messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || firebaseConfig.messagingSenderId,
+      appId: process.env.FIREBASE_APP_ID || firebaseConfig.appId,
+    };
+
+const firestoreDatabaseId = (
+  process.env.FIRESTORE_DATABASE_ID ||
+  firebaseConfig.firestoreDatabaseId ||
+  '(default)'
+).trim();
+
 // Initialize Firebase App
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-export const db: Firestore = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+const app = getApps().length === 0 ? initializeApp(customFirebaseConfig) : getApp();
+export const db: Firestore = getFirestore(app, firestoreDatabaseId);
 
 // In-Memory Fallback store to guarantee zero downtime and blazing fast tests
 export const memStore = {
@@ -246,7 +271,7 @@ export function cleanDocData<T>(obj: T): any {
    ======================================================== */
 export async function getAppSettings(): Promise<AppSettings> {
   try {
-    const docRef = doc(db, 'app_settings', 'general');
+    const docRef = doc(db, getColName('app_settings'), 'general');
     const snap = await getDoc(docRef);
     if (snap.exists()) {
       const data = snap.data() as AppSettings;
@@ -290,7 +315,7 @@ export async function updateAppSettings(newSettings: Partial<AppSettings>): Prom
   }
   memStore.settings = { ...memStore.settings, ...newSettings };
   try {
-    const docRef = doc(db, 'app_settings', 'general');
+    const docRef = doc(db, getColName('app_settings'), 'general');
     await setDoc(docRef, cleanDocData(memStore.settings), { merge: true });
   } catch (err) {
     console.warn('[DB] Firestore updateAppSettings fallback:', err);
@@ -303,7 +328,7 @@ export async function updateAppSettings(newSettings: Partial<AppSettings>): Prom
    ======================================================== */
 export async function getUser(userId: string): Promise<UserProfile | null> {
   try {
-    const docRef = doc(db, 'users', userId);
+    const docRef = doc(db, getColName('users'), userId);
     const snap = await getDoc(docRef);
     if (snap.exists()) {
       const data = snap.data() as UserProfile;
@@ -325,7 +350,7 @@ export async function getUserByReferralCode(code: string): Promise<UserProfile |
     }
   }
   try {
-    const q = query(collection(db, 'users'), where('referralCode', '==', code.trim()));
+    const q = query(collection(db, getColName('users')), where('referralCode', '==', code.trim()));
     const snap = await getDocs(q);
     if (!snap.empty) {
       const user = snap.docs[0].data() as UserProfile;
@@ -355,7 +380,7 @@ export async function saveUser(user: UserProfile): Promise<UserProfile> {
   memStore.users.set(user.id, user);
 
   try {
-    const docRef = doc(db, 'users', user.id);
+    const docRef = doc(db, getColName('users'), user.id);
     await setDoc(docRef, cleanDocData(user), { merge: true });
   } catch (err) {
     console.warn(`[DB] Firestore saveUser(${user.id}) fallback:`, err);
@@ -366,7 +391,7 @@ export async function saveUser(user: UserProfile): Promise<UserProfile> {
 export async function searchUsers(searchTerm?: string): Promise<UserProfile[]> {
   try {
     if (memStore.users.size < 50) {
-      const snap = await getDocs(collection(db, 'users'));
+      const snap = await getDocs(collection(db, getColName('users')));
       snap.forEach((d) => {
         const u = d.data() as UserProfile;
         memStore.users.set(u.id || d.id, { ...u, id: u.id || d.id });
@@ -427,8 +452,8 @@ export async function atomicCreditBalance(
 
     // 2. Firestore ACID Transaction
     try {
-      const userDocRef = doc(db, 'users', userId);
-      const txDocRef = doc(db, 'transactions', txId);
+      const userDocRef = doc(db, getColName('users'), userId);
+      const txDocRef = doc(db, getColName('transactions'), txId);
 
       const result = await runTransaction(db, async (txn) => {
         const userDoc = await txn.get(userDocRef);
@@ -539,7 +564,7 @@ export async function atomicCreditBalance(
 
 export async function getUserTransactions(userId: string, limit = 50): Promise<Transaction[]> {
   try {
-    const q = query(collection(db, 'transactions'), where('userId', '==', userId));
+    const q = query(collection(db, getColName('transactions')), where('userId', '==', userId));
     const snap = await getDocs(q);
     if (!snap.empty) {
       const items: Transaction[] = [];
@@ -568,7 +593,7 @@ export async function getUserTransactions(userId: string, limit = 50): Promise<T
    ======================================================== */
 export async function getAllTasks(onlyActive = false): Promise<Task[]> {
   try {
-    const snap = await getDocs(collection(db, 'tasks'));
+    const snap = await getDocs(collection(db, getColName('tasks')));
     if (!snap.empty) {
       memStore.tasks.clear();
       snap.forEach((d) => {
@@ -591,7 +616,7 @@ export async function getTaskById(taskId: string): Promise<Task | null> {
   const task = memStore.tasks.get(taskId);
   if (task) return task;
   try {
-    const snap = await getDoc(doc(db, 'tasks', taskId));
+    const snap = await getDoc(doc(db, getColName('tasks'), taskId));
     if (snap.exists()) {
       const data = snap.data() as Task;
       memStore.tasks.set(taskId, data);
@@ -606,7 +631,7 @@ export async function getTaskById(taskId: string): Promise<Task | null> {
 export async function saveTask(task: Task): Promise<Task> {
   memStore.tasks.set(task.id, task);
   try {
-    await setDoc(doc(db, 'tasks', task.id), cleanDocData(task), { merge: true });
+    await setDoc(doc(db, getColName('tasks'), task.id), cleanDocData(task), { merge: true });
   } catch (err) {
     console.warn('[DB] saveTask fallback:', err);
   }
@@ -616,7 +641,7 @@ export async function saveTask(task: Task): Promise<Task> {
 export async function deleteTask(taskId: string): Promise<boolean> {
   memStore.tasks.delete(taskId);
   try {
-    await deleteDoc(doc(db, 'tasks', taskId));
+    await deleteDoc(doc(db, getColName('tasks'), taskId));
   } catch (err) {
     console.warn('[DB] deleteTask fallback:', err);
   }
@@ -628,7 +653,7 @@ export async function deleteTask(taskId: string): Promise<boolean> {
    ======================================================== */
 export async function getAllTaskBots(onlyEnabled = false): Promise<TaskBot[]> {
   try {
-    const snap = await getDocs(collection(db, 'task_bots'));
+    const snap = await getDocs(collection(db, getColName('task_bots')));
     if (!snap.empty) {
       memStore.taskBots.clear();
       snap.forEach((d) => {
@@ -649,7 +674,7 @@ export async function getTaskBotById(id: string): Promise<TaskBot | null> {
   const bot = memStore.taskBots.get(id);
   if (bot) return bot;
   try {
-    const snap = await getDoc(doc(db, 'task_bots', id));
+    const snap = await getDoc(doc(db, getColName('task_bots'), id));
     if (snap.exists()) {
       const data = snap.data() as TaskBot;
       memStore.taskBots.set(id, data);
@@ -664,7 +689,7 @@ export async function getTaskBotById(id: string): Promise<TaskBot | null> {
 export async function saveTaskBot(bot: TaskBot): Promise<TaskBot> {
   memStore.taskBots.set(bot.id, bot);
   try {
-    await setDoc(doc(db, 'task_bots', bot.id), cleanDocData(bot), { merge: true });
+    await setDoc(doc(db, getColName('task_bots'), bot.id), cleanDocData(bot), { merge: true });
   } catch (err) {
     console.warn('[DB] saveTaskBot fallback:', err);
   }
@@ -674,7 +699,7 @@ export async function saveTaskBot(bot: TaskBot): Promise<TaskBot> {
 export async function deleteTaskBot(id: string): Promise<boolean> {
   memStore.taskBots.delete(id);
   try {
-    await deleteDoc(doc(db, 'task_bots', id));
+    await deleteDoc(doc(db, getColName('task_bots'), id));
   } catch (err) {
     console.warn('[DB] deleteTaskBot fallback:', err);
   }
@@ -784,14 +809,14 @@ export async function hasUserClaimedSignupBonus(userId: string, generation?: num
   }
 
   try {
-    const snap = await getDoc(doc(db, 'bonus_claims', claimKey));
+    const snap = await getDoc(doc(db, getColName('bonus_claims'), claimKey));
     if (snap.exists()) {
       const data = snap.data() as BonusClaimRecord;
       memStore.bonusClaims.set(claimKey, data);
       return true;
     }
     if (currentGen === 1) {
-      const snapOld = await getDoc(doc(db, 'bonus_claims', `claim_user_${userId}`));
+      const snapOld = await getDoc(doc(db, getColName('bonus_claims'), `claim_user_${userId}`));
       if (snapOld.exists()) {
         const data = snapOld.data() as BonusClaimRecord;
         memStore.userBonusClaims.set(userId, data);
@@ -836,14 +861,14 @@ export async function hasDeviceClaimedSignupBonus(
   }
   if (deviceId) {
     try {
-      const snap = await getDoc(doc(db, 'bonus_claims', `claim_device_${deviceId}_gen_${currentGen}`));
+      const snap = await getDoc(doc(db, getColName('bonus_claims'), `claim_device_${deviceId}_gen_${currentGen}`));
       if (snap.exists()) {
         const data = snap.data() as BonusClaimRecord;
         memStore.bonusClaims.set(`claim_device_${deviceId}_gen_${currentGen}`, data);
         return { claimed: true, claimedByUserId: data.userId };
       }
       if (currentGen === 1) {
-        const snapOld = await getDoc(doc(db, 'bonus_claims', `claim_device_${deviceId}`));
+        const snapOld = await getDoc(doc(db, getColName('bonus_claims'), `claim_device_${deviceId}`));
         if (snapOld.exists()) {
           const data = snapOld.data() as BonusClaimRecord;
           memStore.deviceClaims.set(deviceId, data);
@@ -997,9 +1022,9 @@ export async function atomicClaimSignupBonus({
     }
 
     try {
-      await setDoc(doc(db, 'bonus_claims', claimRecord.id), cleanDocData(claimRecord));
+      await setDoc(doc(db, getColName('bonus_claims'), claimRecord.id), cleanDocData(claimRecord));
       if (deviceId) {
-        await setDoc(doc(db, 'bonus_claims', `claim_device_${deviceId}_gen_${currentGen}`), cleanDocData(claimRecord));
+        await setDoc(doc(db, getColName('bonus_claims'), `claim_device_${deviceId}_gen_${currentGen}`), cleanDocData(claimRecord));
       }
     } catch (err) {
       console.warn('[DB] Bonus claim sync fallback:', err);
@@ -1198,7 +1223,7 @@ export async function atomicClaimReferralReward({
     memStore.referralClaims.set(refereeId, claimRecord);
 
     try {
-      await setDoc(doc(db, 'bonus_claims', claimRecord.id), cleanDocData(claimRecord));
+      await setDoc(doc(db, getColName('bonus_claims'), claimRecord.id), cleanDocData(claimRecord));
     } catch (err) {
       console.warn('[DB] Referral claim sync fallback:', err);
     }
@@ -1241,7 +1266,7 @@ export async function getTaskCompletion(userId: string, taskId: string): Promise
   const comp = memStore.taskCompletions.get(id);
   if (comp) return comp;
   try {
-    const snap = await getDoc(doc(db, 'task_completions', id));
+    const snap = await getDoc(doc(db, getColName('task_completions'), id));
     if (snap.exists()) {
       const data = snap.data() as TaskCompletion;
       memStore.taskCompletions.set(id, data);
@@ -1256,7 +1281,7 @@ export async function getTaskCompletion(userId: string, taskId: string): Promise
 export async function getUserCompletedTaskIds(userId: string): Promise<Set<string>> {
   const set = new Set<string>();
   try {
-    const q = query(collection(db, 'task_completions'), where('userId', '==', userId));
+    const q = query(collection(db, getColName('task_completions')), where('userId', '==', userId));
     const snap = await getDocs(q);
     if (!snap.empty) {
       snap.forEach((d) => {
@@ -1281,7 +1306,7 @@ export async function getUserCompletedTaskIds(userId: string): Promise<Set<strin
 export async function recordTaskCompletion(completion: TaskCompletion): Promise<TaskCompletion> {
   memStore.taskCompletions.set(completion.id, completion);
   try {
-    await setDoc(doc(db, 'task_completions', completion.id), cleanDocData(completion));
+    await setDoc(doc(db, getColName('task_completions'), completion.id), cleanDocData(completion));
   } catch (err) {
     console.warn('[DB] recordTaskCompletion fallback:', err);
   }
@@ -1293,7 +1318,7 @@ export async function recordTaskCompletion(completion: TaskCompletion): Promise<
    ======================================================== */
 export async function getReferralsByReferrer(referrerId: string): Promise<ReferralRecord[]> {
   try {
-    const q = query(collection(db, 'referrals'), where('referrerId', '==', referrerId));
+    const q = query(collection(db, getColName('referrals')), where('referrerId', '==', referrerId));
     const snap = await getDocs(q);
     if (!snap.empty) {
       const items: ReferralRecord[] = [];
@@ -1317,7 +1342,7 @@ export async function getReferralsByReferrer(referrerId: string): Promise<Referr
 export async function recordReferral(referral: ReferralRecord): Promise<ReferralRecord> {
   memStore.referrals.set(referral.id, referral);
   try {
-    await setDoc(doc(db, 'referrals', referral.id), cleanDocData(referral));
+    await setDoc(doc(db, getColName('referrals'), referral.id), cleanDocData(referral));
   } catch (err) {
     console.warn('[DB] recordReferral fallback:', err);
   }
@@ -1338,7 +1363,7 @@ export async function createWithdrawalRequest(
 
 export async function getUserWithdrawals(userId: string): Promise<Withdrawal[]> {
   try {
-    const q = query(collection(db, 'withdrawals'), where('userId', '==', userId));
+    const q = query(collection(db, getColName('withdrawals')), where('userId', '==', userId));
     const snap = await getDocs(q);
     if (!snap.empty) {
       const items: Withdrawal[] = [];
@@ -1361,7 +1386,7 @@ export async function getUserWithdrawals(userId: string): Promise<Withdrawal[]> 
 
 export async function getAllWithdrawals(status?: string): Promise<Withdrawal[]> {
   try {
-    const snap = await getDocs(collection(db, 'withdrawals'));
+    const snap = await getDocs(collection(db, getColName('withdrawals')));
     if (!snap.empty) {
       snap.forEach((d) => {
         const item = d.data() as Withdrawal;
@@ -1487,7 +1512,7 @@ export async function updateWithdrawalStatus(
   let withdrawal = memStore.withdrawals.get(orderId);
   if (!withdrawal) {
     try {
-      const snap = await getDoc(doc(db, 'withdrawals', orderId));
+      const snap = await getDoc(doc(db, getColName('withdrawals'), orderId));
       if (snap.exists()) {
         withdrawal = snap.data() as Withdrawal;
         memStore.withdrawals.set(orderId, withdrawal);
@@ -1532,7 +1557,7 @@ export async function updateWithdrawalStatus(
   }
 
   try {
-    await setDoc(doc(db, 'withdrawals', orderId), cleanDocData(withdrawal), { merge: true });
+    await setDoc(doc(db, getColName('withdrawals'), orderId), cleanDocData(withdrawal), { merge: true });
   } catch (err) {
     console.warn('[DB] updateWithdrawalStatus Firestore sync fallback:', err);
   }
@@ -1552,7 +1577,7 @@ export async function getAllGiftCardCodes(filter?: {
   denomination?: number;
 }): Promise<GiftCardCode[]> {
   try {
-    const snap = await getDocs(collection(db, 'gift_card_codes'));
+    const snap = await getDocs(collection(db, getColName('gift_card_codes')));
     if (!snap.empty) {
       snap.forEach((d) => {
         const item = d.data() as GiftCardCode;
@@ -1670,7 +1695,7 @@ export async function addGiftCardCodes(
       addedCount++;
 
       try {
-        await setDoc(doc(db, 'gift_card_codes', codeId), cleanDocData(newCard));
+        await setDoc(doc(db, getColName('gift_card_codes'), codeId), cleanDocData(newCard));
       } catch (err) {
         console.warn('[DB] addGiftCardCodes Firestore sync fallback:', err);
       }
@@ -1707,7 +1732,7 @@ export async function invalidateGiftCardCode(id: string, reason?: string): Promi
     memStore.giftCardCodes.set(id, card);
 
     try {
-      await setDoc(doc(db, 'gift_card_codes', id), cleanDocData(card), { merge: true });
+      await setDoc(doc(db, getColName('gift_card_codes'), id), cleanDocData(card), { merge: true });
     } catch (err) {
       console.warn('[DB] invalidateGiftCardCode Firestore sync fallback:', err);
     }
@@ -1735,7 +1760,7 @@ export async function deleteGiftCardCode(id: string): Promise<boolean> {
 
     memStore.giftCardCodes.delete(id);
     try {
-      await deleteDoc(doc(db, 'gift_card_codes', id));
+      await deleteDoc(doc(db, getColName('gift_card_codes'), id));
     } catch (err) {
       console.warn('[DB] deleteGiftCardCode Firestore sync fallback:', err);
     }
@@ -1785,7 +1810,7 @@ export async function redeemGiftCardWithdrawal(
       if (!existingWithdrawal) {
         try {
           const q = query(
-            collection(db, 'withdrawals'),
+            collection(db, getColName('withdrawals')),
             where('userId', '==', userId),
             where('idempotencyKey', '==', cleanKey)
           );
@@ -1952,10 +1977,10 @@ export async function redeemGiftCardWithdrawal(
     const redeemedAt = new Date().toISOString();
 
     try {
-      const userDocRef = doc(db, 'users', userId);
-      const codeDocRef = doc(db, 'gift_card_codes', selectedCode.id);
-      const wthDocRef = doc(db, 'withdrawals', orderId);
-      const txDocRef = doc(db, 'transactions', txId);
+      const userDocRef = doc(db, getColName('users'), userId);
+      const codeDocRef = doc(db, getColName('gift_card_codes'), selectedCode.id);
+      const wthDocRef = doc(db, getColName('withdrawals'), orderId);
+      const txDocRef = doc(db, getColName('transactions'), txId);
 
       const txnResult = await runTransaction(db, async (txn) => {
         // A. Re-read user inside transaction for fresh ground-truth balance
@@ -2136,7 +2161,7 @@ export async function redeemGiftCardWithdrawal(
    ======================================================== */
 export async function getForceJoinChannels(onlyEnabled = true): Promise<ForceJoinChannel[]> {
   try {
-    const snap = await getDocs(collection(db, 'force_join_channels'));
+    const snap = await getDocs(collection(db, getColName('force_join_channels')));
     if (!snap.empty) {
       memStore.channels.clear();
       snap.forEach((d) => {
@@ -2158,7 +2183,7 @@ export async function getForceJoinChannels(onlyEnabled = true): Promise<ForceJoi
 export async function saveForceJoinChannel(channel: ForceJoinChannel): Promise<ForceJoinChannel> {
   memStore.channels.set(channel.id, channel);
   try {
-    await setDoc(doc(db, 'force_join_channels', channel.id), cleanDocData(channel), { merge: true });
+    await setDoc(doc(db, getColName('force_join_channels'), channel.id), cleanDocData(channel), { merge: true });
   } catch (err) {
     console.warn('[DB] saveForceJoinChannel fallback:', err);
   }
@@ -2168,7 +2193,7 @@ export async function saveForceJoinChannel(channel: ForceJoinChannel): Promise<F
 export async function deleteForceJoinChannel(id: string): Promise<boolean> {
   memStore.channels.delete(id);
   try {
-    await deleteDoc(doc(db, 'force_join_channels', id));
+    await deleteDoc(doc(db, getColName('force_join_channels'), id));
   } catch (err) {
     console.warn('[DB] deleteForceJoinChannel fallback:', err);
   }
@@ -2196,7 +2221,7 @@ export async function recordAdminAudit(
   if (memStore.auditLogs.length > 200) memStore.auditLogs.pop();
 
   try {
-    await setDoc(doc(db, 'admin_audit_logs', log.id), cleanDocData(log));
+    await setDoc(doc(db, getColName('admin_audit_logs'), log.id), cleanDocData(log));
   } catch (err) {
     console.warn('[DB] recordAdminAudit fallback:', err);
   }
@@ -2210,21 +2235,21 @@ export async function getAdminAuditLogs(limit = 50): Promise<AdminAuditLog[]> {
 export async function getDashboardStats(): Promise<DashboardStats> {
   try {
     if (memStore.users.size < 50) {
-      const snap = await getDocs(collection(db, 'users'));
+      const snap = await getDocs(collection(db, getColName('users')));
       snap.forEach((d) => {
         const u = d.data() as UserProfile;
         memStore.users.set(u.id || d.id, { ...u, id: u.id || d.id });
       });
     }
     if (memStore.withdrawals.size < 20) {
-      const snap = await getDocs(collection(db, 'withdrawals'));
+      const snap = await getDocs(collection(db, getColName('withdrawals')));
       snap.forEach((d) => {
         const w = d.data() as Withdrawal;
         memStore.withdrawals.set(w.id || d.id, { ...w, id: w.id || d.id });
       });
     }
     if (memStore.transactions.size < 50) {
-      const snap = await getDocs(collection(db, 'transactions'));
+      const snap = await getDocs(collection(db, getColName('transactions')));
       snap.forEach((d) => {
         const t = d.data() as Transaction;
         memStore.transactions.set(t.id || d.id, { ...t, id: t.id || d.id });

@@ -216,6 +216,7 @@ async function runTests() {
         dailyStreak: 1,
         isBanned: false,
         signupBonusClaimed: true,
+        signupBonusClaimedGeneration: 99,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });

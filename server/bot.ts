@@ -131,7 +131,7 @@ export function isValidMiniAppUrl(url?: string): boolean {
  * 1. MINI_APP_URL environment variable (if valid HTTPS)
  * 2. Provided appUrl argument (if valid HTTPS)
  * 3. APP_URL environment variable (if valid HTTPS)
- * 4. Fallback to verified production Mini App URL ('https://teleearn-six.vercel.app')
+ * 4. Fallback to verified production Mini App URL ('https://178-93-119-55.sslip.io')
  *
  * If no valid HTTPS URL can be resolved, logs an explicit diagnostic configuration error
  * and returns "" so that broken/malformed buttons are never sent to Telegram.
@@ -146,7 +146,7 @@ export function getMiniAppUrl(providedUrl?: string): string {
   if (process.env.APP_URL && isValidMiniAppUrl(process.env.APP_URL)) {
     return process.env.APP_URL.trim();
   }
-  const fallback = 'https://teleearn-six.vercel.app';
+  const fallback = 'https://178-93-119-55.sslip.io';
   if (isValidMiniAppUrl(fallback)) {
     return fallback;
   }

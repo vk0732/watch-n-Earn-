@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import crypto from 'node:crypto';
 import { getColName, DB_PREFIX } from '../server/db.ts';
 import {
   formatChannelIdentifier,
@@ -6,6 +7,7 @@ import {
   isTelegramAdmin,
   setMockChannelMembership,
   clearMockChannelMemberships,
+  verifyTelegramInitData,
 } from '../server/telegram.ts';
 import { handleTelegramBotUpdate, handleMyChatMemberUpdate, TelegramUpdate } from '../server/bot.ts';
 
@@ -176,7 +178,7 @@ async function runTests() {
     delete process.env.MINI_APP_URL;
     process.env.APP_URL = 'http://178.93.119.55:3002';
     const fallbackUrl = getMiniAppUrl('http://178.93.119.55:3002');
-    assert.strictEqual(fallbackUrl, 'https://teleearn-six.vercel.app');
+    assert.strictEqual(fallbackUrl, 'https://178-93-119-55.sslip.io');
     console.log('  ✓ PASS: getMiniAppUrl safely falls back to verified HTTPS production URL when given HTTP/IP');
     passed++;
 
@@ -285,6 +287,90 @@ async function runTests() {
       if (origApp) process.env.APP_URL = origApp;
       else delete process.env.APP_URL;
     }
+  }
+
+  // Test 6: Telegram WebApp initData Cryptographic Verification & Security Bounds
+  console.log('\nTest Suite C6: WebApp initData Cryptographic Verification & Tamper Resistance');
+  {
+    const cloneBotToken = '8935005914:AAFakeTestSecretForHMACVerification12345';
+    const originalToken = process.env.TELEGRAM_BOT_TOKEN;
+    const originalEnv = process.env.NODE_ENV;
+    process.env.TELEGRAM_BOT_TOKEN = cloneBotToken;
+
+    const testUser = { id: 2022247489, first_name: 'TestAdmin', username: 'testadmin' };
+    const authDate = Math.floor(Date.now() / 1000);
+    const userJson = JSON.stringify(testUser);
+
+    // Build valid HMAC-SHA256 data_check_string according to Telegram Bot API specification
+    const checkString = `auth_date=${authDate}\nuser=${userJson}`;
+    const secretKey = crypto.createHmac('sha256', 'WebAppData').update(cloneBotToken).digest();
+    const validHash = crypto.createHmac('sha256', secretKey).update(checkString).digest('hex');
+    const validInitData = `auth_date=${authDate}&user=${encodeURIComponent(userJson)}&hash=${validHash}`;
+
+    // 1. Valid initData verification
+    const verified = verifyTelegramInitData(validInitData, cloneBotToken);
+    assert.strictEqual(verified.isValid, true);
+    assert.strictEqual(verified.user?.id, 2022247489);
+    assert.strictEqual(verified.isSimulated, false);
+    console.log('  ✓ PASS: Valid initData verified successfully via HMAC-SHA256');
+    passed++;
+
+    // 2. Tampered hash is rejected
+    const tamperedInitData = `auth_date=${authDate}&user=${encodeURIComponent(userJson)}&hash=tampered_corrupted_hash_987654`;
+    const tamperedResult = verifyTelegramInitData(tamperedInitData, cloneBotToken);
+    assert.strictEqual(tamperedResult.isValid, false);
+    assert.match(tamperedResult.error || '', /Cryptographic hash mismatch/);
+    console.log('  ✓ PASS: Tampered hash strictly rejected with cryptographic mismatch');
+    passed++;
+
+    // 3. Missing or empty hash is rejected (security check: no empty string bypass)
+    const emptyHashInitData = `auth_date=${authDate}&user=${encodeURIComponent(userJson)}&hash=`;
+    const emptyResult = verifyTelegramInitData(emptyHashInitData, cloneBotToken);
+    assert.strictEqual(emptyResult.isValid, false);
+    assert.match(emptyResult.error || '', /Hash missing/);
+    console.log('  ✓ PASS: Empty hash strictly rejected (no bypass possible)');
+    passed++;
+
+    // 4. Mismatched bot token (e.g. original bot token vs clone bot token)
+    const otherBotToken = '1234567890:AAOtherDifferentBotToken';
+    const mismatchResult = verifyTelegramInitData(validInitData, otherBotToken);
+    assert.strictEqual(mismatchResult.isValid, false);
+    assert.match(mismatchResult.error || '', /Cryptographic hash mismatch/);
+    console.log('  ✓ PASS: Mismatched bot token strictly rejected (original token vs clone token isolation)');
+    passed++;
+
+    // 5. Expired auth_date (> 24 hours) is rejected
+    const expiredAuthDate = authDate - 86500;
+    const expiredCheckString = `auth_date=${expiredAuthDate}\nuser=${userJson}`;
+    const expiredHash = crypto.createHmac('sha256', secretKey).update(expiredCheckString).digest('hex');
+    const expiredInitData = `auth_date=${expiredAuthDate}&user=${encodeURIComponent(userJson)}&hash=${expiredHash}`;
+    const expiredResult = verifyTelegramInitData(expiredInitData, cloneBotToken);
+    assert.strictEqual(expiredResult.isValid, false);
+    assert.match(expiredResult.error || '', /expired/);
+    console.log('  ✓ PASS: Expired auth_date (> 24 hours) strictly rejected');
+    passed++;
+
+    // 6. Future auth_date is rejected
+    const futureAuthDate = authDate + 600;
+    const futureCheckString = `auth_date=${futureAuthDate}\nuser=${userJson}`;
+    const futureHash = crypto.createHmac('sha256', secretKey).update(futureCheckString).digest('hex');
+    const futureInitData = `auth_date=${futureAuthDate}&user=${encodeURIComponent(userJson)}&hash=${futureHash}`;
+    const futureResult = verifyTelegramInitData(futureInitData, cloneBotToken);
+    assert.strictEqual(futureResult.isValid, false);
+    assert.match(futureResult.error || '', /future/);
+    console.log('  ✓ PASS: Future auth_date (> 5 minutes clock drift) strictly rejected');
+    passed++;
+
+    // 7. In production mode, simulated auth is rejected
+    process.env.NODE_ENV = 'production';
+    const simInitData = `auth_date=${authDate}&user=${encodeURIComponent(userJson)}&hash=dummy_preview_hash&is_simulated=true`;
+    const prodSimResult = verifyTelegramInitData(simInitData, cloneBotToken);
+    assert.strictEqual(prodSimResult.isValid, false);
+    console.log('  ✓ PASS: Simulated auth strictly rejected when NODE_ENV === production');
+    passed++;
+
+    process.env.TELEGRAM_BOT_TOKEN = originalToken;
+    process.env.NODE_ENV = originalEnv;
   }
 
   console.log('\n==================================================');

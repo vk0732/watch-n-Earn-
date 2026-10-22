@@ -57,11 +57,16 @@ export function verifyTelegramInitData(
       return { isValid: false, user: null, error: 'Malformed user JSON in initData' };
     }
 
+    // Enforce that hash is present. An initData without a hash must NEVER pass.
+    if (!hash) {
+      return { isValid: false, user: null, error: 'Hash missing from initData' };
+    }
+
+    const isProduction = process.env.NODE_ENV === 'production';
+
     // If in sandbox preview mode or token is not configured or dummy placeholder
     const isExplicitlySimulated =
-      params.get('is_simulated') === 'true' ||
-      hash === 'dummy_preview_hash' ||
-      hash === '';
+      params.get('is_simulated') === 'true' && hash === 'dummy_preview_hash';
 
     const isTokenUnsetOrPlaceholder =
       !token ||
@@ -70,16 +75,21 @@ export function verifyTelegramInitData(
       token === 'YOUR_TELEGRAM_BOT_TOKEN';
 
     if (isExplicitlySimulated || isTokenUnsetOrPlaceholder) {
+      if (!isProduction) {
+        return {
+          isValid: true,
+          user,
+          authDate: Number(params.get('auth_date') || Math.floor(Date.now() / 1000)),
+          isSimulated: true,
+        };
+      }
       return {
-        isValid: true,
-        user,
-        authDate: Number(params.get('auth_date') || Date.now() / 1000),
-        isSimulated: true,
+        isValid: false,
+        user: null,
+        error: isTokenUnsetOrPlaceholder
+          ? 'Bot token is not configured on server'
+          : 'Simulated authentication disabled in production',
       };
-    }
-
-    if (!hash) {
-      return { isValid: false, user: null, error: 'Hash missing from initData' };
     }
 
     // Calculate secret key: HMAC_SHA256('WebAppData', botToken)
@@ -111,24 +121,29 @@ export function verifyTelegramInitData(
       safeHashCompare(calculatedHashRaw, hash);
 
     if (!isValidHash) {
-      // In development / preview environments, if the user opened in browser with mock hash,
-      // allow fallback only if explicitly marked as dummy_preview_hash
-      if (hash === 'dummy_preview_hash') {
+      // In development / preview environments, allow fallback only if explicitly marked as dummy_preview_hash
+      if (!isProduction && hash === 'dummy_preview_hash') {
         return {
           isValid: true,
           user,
-          authDate: Number(params.get('auth_date') || Date.now() / 1000),
+          authDate: Number(params.get('auth_date') || Math.floor(Date.now() / 1000)),
           isSimulated: true,
         };
       }
       return { isValid: false, user: null, error: 'Cryptographic hash mismatch. Unauthorized initData.' };
     }
 
-    // Check expiration (24 hours)
+    // Check expiration (24 hours) and validity
     const authDate = Number(params.get('auth_date') || 0);
     const now = Math.floor(Date.now() / 1000);
-    if (authDate > 0 && now - authDate > 86400) {
+    if (!authDate || authDate <= 0) {
+      return { isValid: false, user: null, error: 'Missing or invalid auth_date in initData' };
+    }
+    if (now - authDate > 86400) {
       return { isValid: false, user: null, error: 'Telegram initData session expired (> 24 hours)' };
+    }
+    if (authDate > now + 300) {
+      return { isValid: false, user: null, error: 'Telegram initData auth_date is in the future' };
     }
 
     return {

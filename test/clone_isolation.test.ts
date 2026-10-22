@@ -279,6 +279,37 @@ async function runTests() {
       assert(claimKb[0][0].web_app && claimKb[0][0].web_app.url.startsWith('https://'));
       console.log('  ✓ PASS: claim_scratch_bonus keyboard includes Web App button in Row 1 and preserves working buttons');
       passed++;
+
+      // Send /start for an UNCLAIMED user (testing single Scratch & Win web_app button)
+      const unclaimedTgId = 888222333;
+      intercepted.length = 0;
+      await handleTelegramBotUpdate(
+        {
+          update_id: 993,
+          message: {
+            message_id: 13,
+            from: { id: unclaimedTgId, first_name: 'UnclaimedTester' },
+            chat: { id: unclaimedTgId, type: 'private' },
+            date: Math.floor(Date.now() / 1000),
+            text: '/start',
+          },
+        },
+        'http://178.93.119.55:3002'
+      );
+
+      const unclaimedSentMsg = intercepted.find((c) => c.url.includes('sendMessage'));
+      assert(unclaimedSentMsg, 'SendMessage must have been called for unclaimed /start');
+      const unclaimedKb = unclaimedSentMsg.body.reply_markup?.inline_keyboard;
+      assert(Array.isArray(unclaimedKb), 'Keyboard must be an array');
+      assert.strictEqual(unclaimedKb.length, 1, 'Unclaimed /start must have EXACTLY ONE button row');
+      assert.strictEqual(unclaimedKb[0].length, 1, 'Unclaimed /start must have EXACTLY ONE button');
+
+      const singleBtn = unclaimedKb[0][0];
+      assert.match(singleBtn.text, /^🎁 Scratch & Win — Up to ₹\d+/, 'Button text must be Scratch & Win');
+      assert(singleBtn.web_app && typeof singleBtn.web_app.url === 'string' && singleBtn.web_app.url.startsWith('https://'), 'Button must be a web_app button with valid HTTPS URL');
+      assert.strictEqual(singleBtn.callback_data, undefined, 'Button must NOT have callback_data');
+      console.log('  ✓ PASS: /start for unclaimed user displays EXACTLY ONE button: 🎁 Scratch & Win (web_app, no callback_data)');
+      passed++;
     } finally {
       globalThis.fetch = originalFetch;
       process.env.TELEGRAM_BOT_TOKEN = origToken;

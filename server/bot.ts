@@ -495,22 +495,20 @@ async function handleStartCommand(
         `Your exclusive Signup Scratch Card is ready with a guaranteed cash reward.\n\n` +
         `👇 Tap below to scratch your card:`;
 
-    const scratchInlineKeyboard: any[][] = [
-      [
-        {
-          text: `🎁 Scratch & Win — Up to ₹${maxBonus}`,
-          callback_data: 'scratch_signup',
-        },
-      ],
-    ];
+    const scratchInlineKeyboard: any[][] = [];
 
     if (miniAppUrl) {
       scratchInlineKeyboard.push([
         {
-          text: '🎮 Open Watch & Earn Mini App',
+          text: `🎁 Scratch & Win — Up to ₹${maxBonus}`,
           web_app: { url: miniAppUrl },
         },
       ]);
+    } else {
+      console.error(
+        '[Mini App Configuration Error]: Missing or invalid HTTPS Mini App URL for Scratch & Win button. ' +
+        'Telegram Web Apps strictly require an HTTPS domain URL.'
+      );
     }
 
     const scratchKeyboard = {
@@ -587,69 +585,30 @@ async function handleCallbackQuery(
   const triggeringMsgId = cb.message.message_id;
 
   if (cb.data === 'scratch_signup') {
-    await answerTelegramCallback(cb.id, '🎉 Scratching card...');
+    await answerTelegramCallback(cb.id, '🎁 Opening Scratch & Win in Mini App...');
 
-    const scratchInfo = await getOrAssignSignupScratchBonus(userId.toString());
-    const channels = await getForceJoinChannels(true);
+    const settings = await getAppSettings();
+    const maxBonus = settings.maxScratchSignupBonus || 10;
     const miniAppUrl = getMiniAppUrl(appUrl);
 
-    const inlineKeyboard: any[][] = [];
-
-    // Sponsor channels to join
-    channels.forEach((ch) => {
-      const joinUrl =
-        (ch.inviteLink || '').trim() ||
-        (ch.channelId?.startsWith('@') ? `https://t.me/${ch.channelId.replace('@', '')}` : '');
-      if (joinUrl) {
-        inlineKeyboard.push([
-          {
-            text: `📢 Join ${ch.title}`,
-            url: joinUrl,
-          },
-        ]);
-      }
-    });
-
-    // Verification & Claim button
-    if (channels.length > 0) {
-      inlineKeyboard.push([
-        {
-          text: `✅ Verify & Claim ₹${scratchInfo.amount} Bonus`,
-          callback_data: 'claim_scratch_bonus',
-        },
-      ]);
-    } else {
-      inlineKeyboard.push([
-        {
-          text: `🎁 Claim ₹${scratchInfo.amount} Bonus`,
-          callback_data: 'claim_scratch_bonus',
-        },
-      ]);
-    }
-
-    // Open Mini App button if HTTPS is configured
     if (miniAppUrl) {
-      inlineKeyboard.push([
-        {
-          text: '🎮 Open Watch & Earn Mini App',
-          web_app: { url: miniAppUrl },
-        },
-      ]);
+      const inlineKeyboard: any[][] = [
+        [
+          {
+            text: `🎁 Scratch & Win — Up to ₹${maxBonus}`,
+            web_app: { url: miniAppUrl },
+          },
+        ],
+      ];
+
+      await sendTelegramMessage(
+        chatId,
+        `🎁 <b>Scratch & Win Inside Mini App</b>\n\n` +
+        `Your Signup Scratch Card is ready! Tap below to scratch and reveal your guaranteed cash bonus inside the Mini App:\n\n` +
+        `👇 Tap below to scratch your card:`,
+        { inline_keyboard: inlineKeyboard }
+      );
     }
-
-    const revealText =
-      channels.length > 0
-        ? `🎉 <b>Scratch Card Revealed!</b>\n\n` +
-          `💰 You revealed a guaranteed <b>₹${scratchInfo.amount} Signup Bonus</b>!\n` +
-          `<i>(This reward is reserved for your account and pending verification)</i>\n\n` +
-          `<b>Complete 2 quick steps to claim:</b>\n` +
-          `1. Join our official sponsor channel(s) below\n` +
-          `2. Tap <b>"Verify & Claim ₹${scratchInfo.amount} Bonus"</b>`
-        : `🎉 <b>Scratch Card Revealed!</b>\n\n` +
-          `💰 You revealed a guaranteed <b>₹${scratchInfo.amount} Signup Bonus</b>!\n\n` +
-          `Tap <b>"Claim ₹${scratchInfo.amount} Bonus"</b> below to credit it to your balance!`;
-
-    await sendTelegramMessage(chatId, revealText, { inline_keyboard: inlineKeyboard });
     return;
   }
 

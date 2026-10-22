@@ -270,7 +270,7 @@ export async function getAppSettings(): Promise<AppSettings> {
           welcomeMessage: memStore.settings.templates?.welcomeMessage,
         };
       }
-      merged.botUsername = formatBotUsername(merged.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot');
+      merged.botUsername = formatBotUsername(process.env.TELEGRAM_BOT_USERNAME || merged.botUsername || 'WatchVEarnBot');
       if (merged.payoutChannelId === '@TeleEarnPayouts') {
         merged.payoutChannelId = process.env.PAYOUT_CHANNEL_ID || '';
       }

@@ -989,7 +989,7 @@ apiRouter.get('/referrals/stats', extractTelegramUser, async (req, res) => {
       user = await saveUser(user);
     }
 
-    const botUsername = formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot');
+    const botUsername = formatBotUsername(process.env.TELEGRAM_BOT_USERNAME || settings.botUsername || 'WatchVEarnBot');
     const referralLink = `https://t.me/${botUsername}?start=${user.referralCode}`;
 
     res.json({

@@ -551,7 +551,7 @@ async function handleStartCommand(
   keyboardRows.push([
     {
       text: '👥 Invite Friends',
-      url: `https://t.me/share/url?url=${encodeURIComponent(`https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchVEarnBot')}?start=${user.referralCode}`)}&text=${encodeURIComponent('Join Watch & Earn and earn instant cash daily!')}`,
+      url: `https://t.me/share/url?url=${encodeURIComponent(`https://t.me/${formatBotUsername(process.env.TELEGRAM_BOT_USERNAME || settings.botUsername || 'WatchVEarnBot')}?start=${user.referralCode}`)}&text=${encodeURIComponent('Join Watch & Earn and earn instant cash daily!')}`,
     },
     {
       text: '💬 Support',
@@ -683,7 +683,7 @@ async function handleCallbackQuery(
           {
             text: '👥 Invite Friends',
             url: `https://t.me/share/url?url=${encodeURIComponent(
-              `https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchVEarnBot')}?start=${user?.referralCode || ''}`
+              `https://t.me/${formatBotUsername(process.env.TELEGRAM_BOT_USERNAME || settings.botUsername || 'WatchVEarnBot')}?start=${user?.referralCode || ''}`
             )}&text=${encodeURIComponent('Join Watch & Earn and earn instant cash daily!')}`,
           },
           {
@@ -802,7 +802,7 @@ async function handleCallbackQuery(
         {
           text: '👥 Invite Friends (+₹10)',
           url: `https://t.me/share/url?url=${encodeURIComponent(
-            `https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchVEarnBot')}?start=${user?.referralCode || ''}`
+            `https://t.me/${formatBotUsername(process.env.TELEGRAM_BOT_USERNAME || settings.botUsername || 'WatchVEarnBot')}?start=${user?.referralCode || ''}`
           )}&text=${encodeURIComponent('Join Watch & Earn and earn instant cash daily!')}`,
         },
         {
@@ -973,7 +973,7 @@ async function handleCallbackQuery(
         {
           text: '👥 Invite Friends',
           url: `https://t.me/share/url?url=${encodeURIComponent(
-            `https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchVEarnBot')}?start=${user?.referralCode || ''}`
+            `https://t.me/${formatBotUsername(process.env.TELEGRAM_BOT_USERNAME || settings.botUsername || 'WatchVEarnBot')}?start=${user?.referralCode || ''}`
           )}&text=${encodeURIComponent('Join Watch & Earn and earn instant cash daily!')}`,
         },
         {
@@ -1031,7 +1031,7 @@ async function handleReferralCommand(telegramId: number, chatId: number, appUrl:
     return;
   }
 
-  const botUsername = formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot');
+  const botUsername = formatBotUsername(process.env.TELEGRAM_BOT_USERNAME || settings.botUsername || 'WatchVEarnBot');
   const refLink = `https://t.me/${botUsername}?start=${user.referralCode}`;
   const text = `👥 <b>Referral Program</b>\n\nShare your link with friends to earn <b>+₹${settings.referralReward}</b> for every friend that joins!\n\n🔗 <b>Your Invite Link:</b>\n<code>${refLink}</code>\n\n💰 <b>Total Referral Earnings:</b> ₹${user.referralEarnings.toFixed(2)}`;
   

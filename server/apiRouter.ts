@@ -52,6 +52,8 @@ import {
   hasUserClaimedSignupBonus,
   checkWithdrawalReferralEligibility,
   getValidReferralCount,
+  getOrRegisterDeviceOwner,
+  isDeviceRestrictedForUser,
   DB_PREFIX,
   getDbPrefix,
 } from './db.ts';
@@ -396,19 +398,34 @@ apiRouter.post('/auth/verify-telegram', async (req, res) => {
       return res.status(500).json({ error: 'Failed to initialize user' });
     }
 
+    // Register or verify device ownership on auth
+    let deviceWarning: string | undefined;
+    const deviceOwnerCheck = await getOrRegisterDeviceOwner(userId, tgUser.id, deviceId, fingerprintHash);
+    if (!deviceOwnerCheck.isPrimaryAccount && deviceOwnerCheck.primaryUserId !== userId) {
+      user.isDuplicateAccount = true;
+      user.duplicateReason = '⚠️ Multiple accounts detected on this device. Rewards are restricted to the primary registered account.';
+      user.primaryDeviceId = deviceOwnerCheck.primaryUserId;
+      deviceWarning = user.duplicateReason;
+      await saveUser(user);
+    }
+
     // 4. Scratch Card Signup Bonus: Assign or retrieve pending scratch bonus without crediting balance
     let signupBonusMessage: string | undefined;
-    let deviceWarning: string | undefined;
     let pendingBonus = user.pendingSignupBonus || 0;
 
     const currentGen = settings.resetGeneration || 1;
     const isClaimed = await hasUserClaimedSignupBonus(userId, currentGen);
 
     if (!isClaimed) {
-      const scratchInfo = await getOrAssignSignupScratchBonus(userId);
-      pendingBonus = scratchInfo.amount;
-      user = (await getUser(userId)) || user;
-      signupBonusMessage = `🎁 Scratch & Win up to ₹${scratchInfo.maxBonus} Signup Bonus!`;
+      if (user.isDuplicateAccount) {
+        pendingBonus = 0;
+        signupBonusMessage = user.duplicateReason;
+      } else {
+        const scratchInfo = await getOrAssignSignupScratchBonus(userId);
+        pendingBonus = scratchInfo.amount;
+        user = (await getUser(userId)) || user;
+        signupBonusMessage = `🎁 Scratch & Win up to ₹${scratchInfo.maxBonus} Signup Bonus!`;
+      }
     }
 
     // 5. Atomic Referral Reward Claim for Inviter (with Device-Switching Abuse Prevention)
@@ -513,6 +530,15 @@ apiRouter.post('/auth/signup-scratch/claim', extractTelegramUser, async (req, re
     if (alreadyClaimed) {
       return res.status(400).json({
         error: 'Signup bonus has already been claimed by this account.',
+      });
+    }
+
+    // 1B. Same-Device Anti-Abuse: Restrict signup bonus to primary account on device
+    const deviceCheck = await isDeviceRestrictedForUser(user.id, deviceId, fingerprintHash);
+    if (deviceCheck.restricted) {
+      return res.status(403).json({
+        error: deviceCheck.reason || '⚠️ Signup bonus is restricted to the primary account registered on this device.',
+        isDeviceDuplicate: true,
       });
     }
 
@@ -646,6 +672,15 @@ apiRouter.post('/rewards/daily-checkin', extractTelegramUser, async (req, res) =
       });
     }
 
+    // 1B. Enforce Same-Device Restriction: Daily Check-In is restricted to primary account
+    const deviceCheck = await isDeviceRestrictedForUser(user.id, user.deviceId, user.deviceFingerprint);
+    if (deviceCheck.restricted) {
+      return res.status(403).json({
+        error: deviceCheck.reason || '⚠️ Daily check-in rewards are restricted to the primary account registered on this device.',
+        isDeviceDuplicate: true,
+      });
+    }
+
     // 2. Mandatory Telegram channel membership re-verification before claiming
     // Administrators bypass channel membership check
     if (!isTelegramAdmin(user.telegramId)) {
@@ -773,6 +808,15 @@ apiRouter.post('/tasks/complete', extractTelegramUser, requireLiveChannelMembers
   try {
     const task = await getTaskById(taskId);
     if (!task || !task.isActive) return res.status(404).json({ error: 'Task not found or inactive' });
+
+    // Enforce Same-Device Restriction: Task completion rewards are restricted to primary account
+    const deviceCheck = await isDeviceRestrictedForUser(user.id, user.deviceId, user.deviceFingerprint);
+    if (deviceCheck.restricted) {
+      return res.status(403).json({
+        error: deviceCheck.reason || '⚠️ Task completion rewards are restricted to the primary account registered on this device.',
+        isDeviceDuplicate: true,
+      });
+    }
 
     // Idempotency: verify user has not already claimed this task
     const existingComp = await getTaskCompletion(user.id, taskId);
@@ -920,6 +964,15 @@ apiRouter.post('/task-bots/:id/complete', extractTelegramUser, async (req, res) 
   try {
     const bot = await getTaskBotById(botId);
     if (!bot || !bot.isEnabled) return res.status(404).json({ error: 'Task Bot not found or disabled' });
+
+    // Enforce Same-Device Restriction: Task Bot rewards are restricted to primary account
+    const deviceCheck = await isDeviceRestrictedForUser(user.id, user.deviceId, user.deviceFingerprint);
+    if (deviceCheck.restricted) {
+      return res.status(403).json({
+        error: deviceCheck.reason || '⚠️ Task rewards are restricted to the primary account registered on this device.',
+        isDeviceDuplicate: true,
+      });
+    }
 
     const existingComp = await getTaskCompletion(user.id, `bot_${bot.id}`);
     if (existingComp) return res.status(400).json({ error: 'You have already received rewards for this Task Bot' });
@@ -2297,6 +2350,14 @@ apiRouter.get('/gamification/status', extractTelegramUser, async (req, res) => {
 apiRouter.post('/gamification/spin', extractTelegramUser, requireLiveChannelMembership, async (req, res) => {
   try {
     const user = (req as any).user as UserProfile;
+    const deviceCheck = await isDeviceRestrictedForUser(user.id, user.deviceId, user.deviceFingerprint);
+    if (deviceCheck.restricted) {
+      return res.status(403).json({
+        error: deviceCheck.reason || '⚠️ Spin rewards are restricted to the primary account registered on this device.',
+        isDeviceDuplicate: true,
+      });
+    }
+
     const result = await executeSpinWheel(user.id);
     res.json(result);
   } catch (err: any) {
@@ -2308,6 +2369,14 @@ apiRouter.post('/gamification/spin', extractTelegramUser, requireLiveChannelMemb
 apiRouter.post('/gamification/scratch-cards/:id/reveal', extractTelegramUser, requireLiveChannelMembership, async (req, res) => {
   try {
     const user = (req as any).user as UserProfile;
+    const deviceCheck = await isDeviceRestrictedForUser(user.id, user.deviceId, user.deviceFingerprint);
+    if (deviceCheck.restricted) {
+      return res.status(403).json({
+        error: deviceCheck.reason || '⚠️ Scratch card rewards are restricted to the primary account registered on this device.',
+        isDeviceDuplicate: true,
+      });
+    }
+
     const cardId = req.params.id;
     const result = await revealScratchCard(user.id, cardId);
     res.json(result);

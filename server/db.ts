@@ -87,6 +87,8 @@ export const memStore = {
   channels: new Map<string, ForceJoinChannel>(),
   deviceFingerprints: new Map<string, string>(), // fingerprint -> userId
   ipHashes: new Map<string, string>(), // ipHash -> userId
+  deviceOwners: new Map<string, string>(), // deviceId -> primaryUserId
+  fingerprintOwners: new Map<string, string>(), // fingerprintHash -> primaryUserId
   // Server-side Anti-Fraud & Bonus Claim Registry
   bonusClaims: new Map<string, BonusClaimRecord>(),
   deviceClaims: new Map<string, BonusClaimRecord>(), // deviceId -> claim
@@ -768,6 +770,173 @@ export function registerDeviceFingerprint(userId: string, fingerprint?: string, 
   }
 }
 
+export interface DeviceRegistration {
+  id: string; // e.g. dev_reg_<deviceId> or fp_reg_<fingerprintHash>
+  type: 'device_id' | 'fingerprint';
+  primaryUserId: string;
+  primaryTelegramId: number;
+  registeredAt: string;
+  associatedUserIds: string[];
+}
+
+export async function getOrRegisterDeviceOwner(
+  userId: string,
+  telegramId: number,
+  deviceId?: string,
+  fingerprintHash?: string
+): Promise<{
+  isPrimaryAccount: boolean;
+  primaryUserId: string;
+  conflictingDeviceId?: string;
+}> {
+  if (!deviceId && !fingerprintHash) {
+    return { isPrimaryAccount: true, primaryUserId: userId };
+  }
+
+  let existingOwnerUserId: string | null = null;
+  let conflictingIdentifier: string | undefined;
+
+  // 1. Check in-memory maps
+  if (deviceId && memStore.deviceOwners.has(deviceId)) {
+    existingOwnerUserId = memStore.deviceOwners.get(deviceId)!;
+    conflictingIdentifier = deviceId;
+  } else if (fingerprintHash && memStore.fingerprintOwners.has(fingerprintHash)) {
+    existingOwnerUserId = memStore.fingerprintOwners.get(fingerprintHash)!;
+    conflictingIdentifier = fingerprintHash;
+  }
+
+  // 2. Check bonus claim records as secondary proof of previous device claim
+  if (!existingOwnerUserId && deviceId) {
+    const devClaim = memStore.deviceClaims.get(deviceId);
+    if (devClaim?.userId) {
+      existingOwnerUserId = devClaim.userId;
+      conflictingIdentifier = deviceId;
+      memStore.deviceOwners.set(deviceId, existingOwnerUserId);
+    }
+  }
+
+  // 3. Persistent store lookup (Firestore)
+  if (!existingOwnerUserId && deviceId) {
+    try {
+      const snap = await getDoc(doc(db, getColName('device_registrations'), `dev_reg_${deviceId}`));
+      if (snap.exists()) {
+        const data = snap.data() as DeviceRegistration;
+        existingOwnerUserId = data.primaryUserId;
+        conflictingIdentifier = deviceId;
+        memStore.deviceOwners.set(deviceId, existingOwnerUserId);
+      }
+    } catch {}
+  }
+
+  if (!existingOwnerUserId && fingerprintHash) {
+    try {
+      const snap = await getDoc(doc(db, getColName('device_registrations'), `fp_reg_${fingerprintHash}`));
+      if (snap.exists()) {
+        const data = snap.data() as DeviceRegistration;
+        existingOwnerUserId = data.primaryUserId;
+        conflictingIdentifier = fingerprintHash;
+        memStore.fingerprintOwners.set(fingerprintHash, existingOwnerUserId);
+      }
+    } catch {}
+  }
+
+  // 4. Decision: If registered to another user, mark as secondary/duplicate account
+  if (existingOwnerUserId && existingOwnerUserId !== userId) {
+    return {
+      isPrimaryAccount: false,
+      primaryUserId: existingOwnerUserId,
+      conflictingDeviceId: conflictingIdentifier,
+    };
+  }
+
+  // 5. If not registered, register current user as the PRIMARY account
+  const primaryUserId = existingOwnerUserId || userId;
+  const now = new Date().toISOString();
+
+  if (deviceId) {
+    memStore.deviceOwners.set(deviceId, primaryUserId);
+    try {
+      const regDoc: DeviceRegistration = {
+        id: `dev_reg_${deviceId}`,
+        type: 'device_id',
+        primaryUserId,
+        primaryTelegramId: telegramId,
+        registeredAt: now,
+        associatedUserIds: [userId],
+      };
+      await setDoc(doc(db, getColName('device_registrations'), `dev_reg_${deviceId}`), cleanDocData(regDoc));
+    } catch {}
+  }
+
+  if (fingerprintHash) {
+    memStore.fingerprintOwners.set(fingerprintHash, primaryUserId);
+    try {
+      const regDoc: DeviceRegistration = {
+        id: `fp_reg_${fingerprintHash}`,
+        type: 'fingerprint',
+        primaryUserId,
+        primaryTelegramId: telegramId,
+        registeredAt: now,
+        associatedUserIds: [userId],
+      };
+      await setDoc(doc(db, getColName('device_registrations'), `fp_reg_${fingerprintHash}`), cleanDocData(regDoc));
+    } catch {}
+  }
+
+  return {
+    isPrimaryAccount: true,
+    primaryUserId,
+  };
+}
+
+export async function isDeviceRestrictedForUser(
+  userId: string,
+  deviceId?: string,
+  fingerprintHash?: string
+): Promise<{
+  restricted: boolean;
+  reason?: string;
+  primaryUserId?: string;
+}> {
+  const settings = await getAppSettings();
+  if (!settings.deviceVerificationEnabled) {
+    return { restricted: false };
+  }
+
+  const user = await getUser(userId);
+  if (user?.isDuplicateAccount) {
+    return {
+      restricted: true,
+      reason: user.duplicateReason || '⚠️ Same-device multi-accounting detected. Rewards are restricted to the primary account on this device.',
+      primaryUserId: user.primaryDeviceId,
+    };
+  }
+
+  const effectiveDeviceId = deviceId || user?.deviceId;
+  const effectiveFp = fingerprintHash || user?.deviceFingerprint;
+
+  if (!effectiveDeviceId && !effectiveFp) {
+    return { restricted: false };
+  }
+
+  const reg = await getOrRegisterDeviceOwner(
+    userId,
+    user?.telegramId || Number(userId) || 0,
+    effectiveDeviceId,
+    effectiveFp
+  );
+
+  if (!reg.isPrimaryAccount && reg.primaryUserId !== userId) {
+    return {
+      restricted: true,
+      reason: '⚠️ Multiple accounts detected on this device. Rewards are restricted to the primary registered account.',
+      primaryUserId: reg.primaryUserId,
+    };
+  }
+
+  return { restricted: false };
+}
+
 export async function hasUserClaimedSignupBonus(userId: string, generation?: number): Promise<boolean> {
   const settings = await getAppSettings();
   const currentGen = generation || settings.resetGeneration || 1;
@@ -933,9 +1102,17 @@ export async function atomicClaimSignupBonus({
     if (settings.deviceVerificationEnabled && settings.blockDuplicateDevices) {
       let conflictingClaimUserId: string | undefined;
 
-      const devCheck = await hasDeviceClaimedSignupBonus(deviceId, fingerprintHash, currentGen);
-      if (devCheck.claimed && devCheck.claimedByUserId !== userId) {
-        conflictingClaimUserId = devCheck.claimedByUserId;
+      // Check device ownership restriction first
+      const devRestrict = await isDeviceRestrictedForUser(userId, deviceId, fingerprintHash);
+      if (devRestrict.restricted && devRestrict.primaryUserId !== userId) {
+        conflictingClaimUserId = devRestrict.primaryUserId;
+      }
+
+      if (!conflictingClaimUserId) {
+        const devCheck = await hasDeviceClaimedSignupBonus(deviceId, fingerprintHash, currentGen);
+        if (devCheck.claimed && devCheck.claimedByUserId !== userId) {
+          conflictingClaimUserId = devCheck.claimedByUserId;
+        }
       }
 
       if (conflictingClaimUserId) {
@@ -1154,21 +1331,76 @@ export async function atomicClaimReferralReward({
       return { success: false, reason: 'Referrer account is suspended.' };
     }
 
-    // 4. One Device Referral Anti-Fraud Check:
-    // "5. The same device cannot generate multiple referral rewards by switching Telegram accounts."
-    if (settings.deviceVerificationEnabled && settings.blockDuplicateDevices && refereeDeviceId) {
+    // 4. Circular referral check (e.g. A referred B, B cannot refer A)
+    if (referrerUser.referredBy === refereeId) {
+      const refRecord: ReferralRecord = {
+        id: `${referrerId}_${refereeId}`,
+        referrerId,
+        refereeId,
+        refereeUsername,
+        rewardAmount: 0,
+        status: 'rejected',
+        rejectionReason: 'Circular referral detected: Referrer was already referred by referee',
+        createdAt: new Date().toISOString(),
+      };
+      await recordReferral(refRecord);
+
+      await recordAdminAudit(
+        'ANTI_FRAUD',
+        'CIRCULAR_REFERRAL_BLOCKED',
+        `Blocked circular referral: Referrer ${referrerId} was already referred by referee ${refereeId}.`,
+        referrerId
+      );
+
+      return {
+        success: false,
+        reason: 'Circular referral detected: Referrer was already referred by referee.',
+        isAbuseDetected: true,
+      };
+    }
+
+    // 5. One Device Referral Anti-Fraud Check:
+    if (settings.deviceVerificationEnabled && settings.blockDuplicateDevices) {
+      // 5A. Check if referee is on the exact same device/fingerprint as referrer
       const isSameDeviceAsReferrer = Boolean(
-        referrerUser.deviceId && referrerUser.deviceId === refereeDeviceId
+        (refereeDeviceId && referrerUser.deviceId && referrerUser.deviceId === refereeDeviceId) ||
+        (refereeFingerprintHash && referrerUser.deviceFingerprint && referrerUser.deviceFingerprint === refereeFingerprintHash) ||
+        (refereeDeviceId && memStore.deviceOwners.get(refereeDeviceId) === referrerId) ||
+        (refereeFingerprintHash && memStore.fingerprintOwners.get(refereeFingerprintHash) === referrerId)
+      );
+
+      // 5B. Check if referee is a secondary account on an already-registered device
+      const refereeDeviceCheck = await isDeviceRestrictedForUser(
+        refereeId,
+        refereeDeviceId,
+        refereeFingerprintHash
+      );
+
+      // 5C. Check if device has already generated a referral reward
+      const deviceAlreadyReferred = Boolean(
+        refereeDeviceId && memStore.deviceClaims.has(`ref_device_${refereeDeviceId}`)
       );
 
       let deviceCollisionWithPreviousClaim = false;
-      const existingDeviceClaim = memStore.deviceClaims.get(refereeDeviceId);
-      if (existingDeviceClaim && existingDeviceClaim.userId === referrerId) {
-        deviceCollisionWithPreviousClaim = true;
+      if (refereeDeviceId) {
+        const existingDeviceClaim = memStore.deviceClaims.get(refereeDeviceId);
+        if (existingDeviceClaim && existingDeviceClaim.userId === referrerId) {
+          deviceCollisionWithPreviousClaim = true;
+        }
       }
 
-      if (isSameDeviceAsReferrer || deviceCollisionWithPreviousClaim) {
-        // Block referral reward!
+      if (
+        isSameDeviceAsReferrer ||
+        refereeDeviceCheck.restricted ||
+        deviceAlreadyReferred ||
+        deviceCollisionWithPreviousClaim
+      ) {
+        const rejectionReason = isSameDeviceAsReferrer
+          ? 'Device collision: Referee is on same device context as referrer'
+          : refereeDeviceCheck.restricted
+          ? 'Referee account is a secondary account on an already-registered device'
+          : 'Device collision: This device has already generated a referral reward';
+
         const refRecord: ReferralRecord = {
           id: `${referrerId}_${refereeId}`,
           referrerId,
@@ -1176,7 +1408,7 @@ export async function atomicClaimReferralReward({
           refereeUsername,
           rewardAmount: 0,
           status: 'rejected',
-          rejectionReason: 'Device collision: Referee is on same device context as referrer',
+          rejectionReason,
           createdAt: new Date().toISOString(),
         };
         await recordReferral(refRecord);
@@ -1184,13 +1416,13 @@ export async function atomicClaimReferralReward({
         await recordAdminAudit(
           'ANTI_FRAUD',
           'REFERRAL_DEVICE_FRAUD_BLOCKED',
-          `Blocked referral reward for referrer ${referrerId}: referee ${refereeId} joined from the same device context (${refereeDeviceId}).`,
+          `Blocked referral reward for referrer ${referrerId}: ${rejectionReason} (referee ${refereeId}, device ${refereeDeviceId || refereeFingerprintHash}).`,
           referrerId
         );
 
         return {
           success: false,
-          reason: 'Device collision: Referee used the same device context as the referrer.',
+          reason: `Same-device referral abuse detected: ${rejectionReason}.`,
           isAbuseDetected: true,
         };
       }
@@ -1209,6 +1441,9 @@ export async function atomicClaimReferralReward({
     };
     memStore.bonusClaims.set(claimRecord.id, claimRecord);
     memStore.referralClaims.set(refereeId, claimRecord);
+    if (refereeDeviceId) {
+      memStore.deviceClaims.set(`ref_device_${refereeDeviceId}`, claimRecord);
+    }
 
     try {
       await setDoc(doc(db, getColName('bonus_claims'), claimRecord.id), cleanDocData(claimRecord));

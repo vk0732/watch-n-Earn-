@@ -1,6 +1,17 @@
 import assert from 'node:assert';
 import crypto from 'node:crypto';
-import { getColName, DB_PREFIX } from '../server/db.ts';
+import {
+  getColName,
+  DB_PREFIX,
+  saveUser,
+  getUser,
+  atomicClaimSignupBonus,
+  atomicClaimReferralReward,
+  isDeviceRestrictedForUser,
+  getOrRegisterDeviceOwner,
+  getUserTransactions,
+  memStore,
+} from '../server/db.ts';
 import {
   formatChannelIdentifier,
   checkBotChannelAccess,
@@ -402,6 +413,216 @@ async function runTests() {
 
     process.env.TELEGRAM_BOT_TOKEN = originalToken;
     process.env.NODE_ENV = originalEnv;
+  }
+
+  // Test 7: Same-Device Anti-Abuse & Referral Protection
+  console.log('\nTest Suite C7: Same-Device Multi-Account & Referral Abuse Protection');
+  {
+    const devX = `dev_test_shared_hardware_${Date.now()}`;
+    const fpX = `fp_test_shared_canvas_${Date.now()}`;
+    const devY = `dev_test_separate_phone_${Date.now()}`;
+    const fpY = `fp_test_separate_canvas_${Date.now()}`;
+
+    // Create Primary User A on Device X
+    const userA_id = `user_device_owner_a_${Date.now()}`;
+    await saveUser({
+      id: userA_id,
+      telegramId: 11111101,
+      username: 'owner_user_a',
+      balance: 0,
+      lifetimeEarnings: 0,
+      referralEarnings: 0,
+      referralCode: `ref_${userA_id}`,
+      referredBy: null,
+      dailyStreak: 0,
+      isBanned: false,
+      deviceId: devX,
+      deviceFingerprint: fpX,
+      signupBonusClaimed: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // 1. Primary User A registers as device owner
+    const regA = await getOrRegisterDeviceOwner(userA_id, 11111101, devX, fpX);
+    assert.strictEqual(regA.isPrimaryAccount, true);
+    assert.strictEqual(regA.primaryUserId, userA_id);
+    console.log('  ✓ PASS: Primary user successfully established as device owner');
+    passed++;
+
+    // 2. Primary User A claims signup bonus (succeeds)
+    const claimA = await atomicClaimSignupBonus({
+      userId: userA_id,
+      telegramId: 11111101,
+      deviceId: devX,
+      fingerprintHash: fpX,
+    });
+    assert.strictEqual(claimA.success, true);
+    const refreshedA = await getUser(userA_id);
+    assert.strictEqual(refreshedA?.signupBonusClaimed, true);
+    assert(refreshedA && refreshedA.balance > 0, 'User A balance credited with signup bonus');
+    console.log(`  ✓ PASS: Primary user A claimed signup bonus (balance = ₹${refreshedA?.balance})`);
+    passed++;
+
+    // 3. Create Secondary User B on the SAME Device X
+    const userB_id = `user_device_abuser_b_${Date.now()}`;
+    await saveUser({
+      id: userB_id,
+      telegramId: 11111102,
+      username: 'abuser_user_b',
+      balance: 0,
+      lifetimeEarnings: 0,
+      referralEarnings: 0,
+      referralCode: `ref_${userB_id}`,
+      referredBy: userA_id,
+      dailyStreak: 0,
+      isBanned: false,
+      deviceId: devX,
+      deviceFingerprint: fpX,
+      signupBonusClaimed: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Device restriction check for User B
+    const devCheckB = await isDeviceRestrictedForUser(userB_id, devX, fpX);
+    assert.strictEqual(devCheckB.restricted, true);
+    assert.strictEqual(devCheckB.primaryUserId, userA_id);
+    console.log('  ✓ PASS: Secondary user B on same device is correctly restricted');
+    passed++;
+
+    // 4. Secondary User B attempts signup bonus (MUST BE REJECTED)
+    const claimB = await atomicClaimSignupBonus({
+      userId: userB_id,
+      telegramId: 11111102,
+      deviceId: devX,
+      fingerprintHash: fpX,
+    });
+    assert.strictEqual(claimB.success, false);
+    assert.strictEqual(claimB.isDeviceDuplicate, true);
+    const refreshedB = await getUser(userB_id);
+    assert.strictEqual(refreshedB?.balance, 0, 'Secondary user balance strictly remains 0');
+    assert.strictEqual(refreshedB?.signupBonusClaimed, false);
+    console.log('  ✓ PASS: Multiple account signup bonus on same device strictly rejected');
+    passed++;
+
+    // 5. Daily check-in restriction for secondary user
+    const checkinRestrictionB = await isDeviceRestrictedForUser(userB_id, devX, fpX);
+    assert.strictEqual(checkinRestrictionB.restricted, true);
+    console.log('  ✓ PASS: Daily check-in restricted for secondary account on same device');
+    passed++;
+
+    // 6. Task reward restriction for secondary user
+    const taskRestrictionB = await isDeviceRestrictedForUser(userB_id, devX, fpX);
+    assert.strictEqual(taskRestrictionB.restricted, true);
+    console.log('  ✓ PASS: Task rewards restricted for secondary account on same device');
+    passed++;
+
+    // 7. Referral Abuse Tests
+    // 7A: Self-referral attempt (User A refers User A)
+    const selfRef = await atomicClaimReferralReward({
+      referrerId: userA_id,
+      refereeId: userA_id,
+      refereeUsername: 'owner_user_a',
+      refereeDeviceId: devX,
+      refereeFingerprintHash: fpX,
+    });
+    assert.strictEqual(selfRef.success, false);
+    assert.match(selfRef.reason || '', /Self-referral/);
+    console.log('  ✓ PASS: Self-referral strictly rejected');
+    passed++;
+
+    // 7B: Same-device referral (User A refers User B on same Device X)
+    const sameDevRef = await atomicClaimReferralReward({
+      referrerId: userA_id,
+      refereeId: userB_id,
+      refereeUsername: 'abuser_user_b',
+      refereeDeviceId: devX,
+      refereeFingerprintHash: fpX,
+    });
+    assert.strictEqual(sameDevRef.success, false);
+    assert.strictEqual(sameDevRef.isAbuseDetected, true);
+    console.log('  ✓ PASS: Referral between accounts on the same device strictly rejected');
+    passed++;
+
+    // 7C: Circular referral attempt
+    const userA_ref = await getUser(userA_id);
+    if (userA_ref) {
+      userA_ref.referredBy = userB_id;
+      await saveUser(userA_ref);
+    }
+    const circularRef = await atomicClaimReferralReward({
+      referrerId: userA_id,
+      refereeId: userB_id,
+      refereeUsername: 'abuser_user_b',
+      refereeDeviceId: devY,
+      refereeFingerprintHash: fpY,
+    });
+    assert.strictEqual(circularRef.success, false);
+    assert.match(circularRef.reason || '', /Circular referral/);
+    console.log('  ✓ PASS: Circular referral strictly rejected');
+    passed++;
+
+    // Reset user A's referredBy
+    if (userA_ref) {
+      userA_ref.referredBy = null;
+      await saveUser(userA_ref);
+    }
+
+    // 8. Legitimate Referral: User A on Device X refers User C on a separate Device Y
+    const userC_id = `user_legit_c_${Date.now()}`;
+    await saveUser({
+      id: userC_id,
+      telegramId: 11111103,
+      username: 'legit_user_c',
+      balance: 0,
+      lifetimeEarnings: 0,
+      referralEarnings: 0,
+      referralCode: `ref_${userC_id}`,
+      referredBy: userA_id,
+      dailyStreak: 0,
+      isBanned: false,
+      deviceId: devY,
+      deviceFingerprint: fpY,
+      signupBonusClaimed: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const initialReferrerBalance = (await getUser(userA_id))?.balance || 0;
+    const legitRef = await atomicClaimReferralReward({
+      referrerId: userA_id,
+      refereeId: userC_id,
+      refereeUsername: 'legit_user_c',
+      refereeDeviceId: devY,
+      refereeFingerprintHash: fpY,
+    });
+    assert.strictEqual(legitRef.success, true);
+    const finalReferrerBalance = (await getUser(userA_id))?.balance || 0;
+    assert.strictEqual(finalReferrerBalance, initialReferrerBalance + 10, 'Referrer credited +10 for legitimate referral');
+    console.log('  ✓ PASS: Legitimate referral between separate users on separate devices credited successfully');
+    passed++;
+
+    // 9. Repeated / Duplicate Referral Claim Attempt
+    const repeatRef = await atomicClaimReferralReward({
+      referrerId: userA_id,
+      refereeId: userC_id,
+      refereeUsername: 'legit_user_c',
+      refereeDeviceId: devY,
+      refereeFingerprintHash: fpY,
+    });
+    assert.strictEqual(repeatRef.success, false);
+    const balanceAfterRepeat = (await getUser(userA_id))?.balance || 0;
+    assert.strictEqual(balanceAfterRepeat, finalReferrerBalance, 'Balance not incremented on duplicate retry');
+    console.log('  ✓ PASS: Duplicate referral claim strictly blocked by idempotency');
+    passed++;
+
+    // 10. Ledger integrity verification
+    const txnsA = await getUserTransactions(userA_id);
+    const refTx = txnsA.filter((t) => t.type === 'referral_reward');
+    assert.strictEqual(refTx.length, 1, 'Exactly one referral transaction recorded in persistent ledger');
+    console.log('  ✓ PASS: Wallet ledger accurately records atomic transactions');
+    passed++;
   }
 
   console.log('\n==================================================');

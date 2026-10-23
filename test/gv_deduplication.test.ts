@@ -44,8 +44,8 @@ async function runGVDeduplicationTests() {
       telegramId: 9001001,
       username: 'user_a',
       firstName: 'Alice',
-      balance: 100,
-      totalEarned: 100,
+      balance: 5000,
+      totalEarned: 5000,
       referralCode: `ref_${userAId}`,
       referralCount: 5,
       completedTaskIds: [],
@@ -65,8 +65,8 @@ async function runGVDeduplicationTests() {
       telegramId: 9001002,
       username: 'user_b',
       firstName: 'Bob',
-      balance: 100,
-      totalEarned: 100,
+      balance: 5000,
+      totalEarned: 5000,
       referralCode: `ref_${userBId}`,
       referralCount: 5,
       completedTaskIds: [],
@@ -81,17 +81,18 @@ async function runGVDeduplicationTests() {
     await saveUser(userB);
 
     // Import exactly ONE unique test gift card code
+    const DENOM_1 = 991;
     const testCode1 = `TEST-CODE-AAA-${runId}-111`;
-    const importRes = await addGiftCardCodes([testCode1], 10, 'TestAdmin');
+    const importRes = await addGiftCardCodes([testCode1], DENOM_1, 'TestAdmin');
     assertExact(importRes.added, 1, 'Exactly one code added');
     pass('Imported 1 isolated test code');
 
     // 1. User A redeems the single available code
-    const wthA = await redeemGiftCardWithdrawal(userAId, 10);
+    const wthA = await redeemGiftCardWithdrawal(userAId, DENOM_1);
     assertExact(wthA.giftCardCode, testCode1, 'User A received the exact code');
-    assertExact(wthA.withdrawal.amount, 10, 'Withdrawal amount is 10');
-    assertExact(wthA.user.balance, 90, 'User A balance deducted to 90');
-    pass('User A claimed code successfully (balance 100 -> 90)');
+    assertExact(wthA.withdrawal.amount, DENOM_1, `Withdrawal amount is ${DENOM_1}`);
+    assertExact(wthA.user.balance, 5000 - DENOM_1, `User A balance deducted to ${5000 - DENOM_1}`);
+    pass(`User A claimed code successfully (balance 5000 -> ${5000 - DENOM_1})`);
 
     // Verify code is now in assignedGVCodes
     assertTruthy(memStore.assignedGVCodes.has(testCode1), 'Code recorded in assignedGVCodes set');
@@ -101,7 +102,7 @@ async function runGVDeduplicationTests() {
     // 2. User B attempts to redeem - MUST FAIL because stock (1 code) is depleted!
     let failedAsExpected = false;
     try {
-      await redeemGiftCardWithdrawal(userBId, 10);
+      await redeemGiftCardWithdrawal(userBId, DENOM_1);
     } catch (err: any) {
       failedAsExpected = true;
       assertTruthy(err.message.includes('out of stock'), 'Error message says out of stock');
@@ -110,7 +111,7 @@ async function runGVDeduplicationTests() {
 
     // Verify User B balance was strictly UNTOUCHED
     const freshUserB = await getUser(userBId);
-    assertExact(freshUserB?.balance, 100, 'User B balance untouched at 100 on out-of-stock');
+    assertExact(freshUserB?.balance, 5000, 'User B balance untouched at 5000 on out-of-stock');
     pass('User B strictly blocked with out-of-stock and zero balance deduction');
 
     // Verify code was NEVER reassigned
@@ -124,8 +125,9 @@ async function runGVDeduplicationTests() {
   console.log('\nTest Suite D2: Concurrent Allocation & Race Condition Prevention');
   {
     // Add exactly ONE code for two competing concurrent requests
+    const DENOM_2 = 992;
     const concCode = `TEST-CONC-RACE-${runId}-222`;
-    await addGiftCardCodes([concCode], 10, 'TestAdmin');
+    await addGiftCardCodes([concCode], DENOM_2, 'TestAdmin');
 
     const userCId = `test_user_c_${runId}`;
     const userC: UserProfile = {
@@ -133,8 +135,8 @@ async function runGVDeduplicationTests() {
       telegramId: 9001003,
       username: 'user_c',
       firstName: 'Charlie',
-      balance: 50,
-      totalEarned: 50,
+      balance: 1000,
+      totalEarned: 1000,
       referralCode: `ref_${userCId}`,
       referralCount: 5,
       completedTaskIds: [],
@@ -154,8 +156,8 @@ async function runGVDeduplicationTests() {
       telegramId: 9001004,
       username: 'user_d',
       firstName: 'Dave',
-      balance: 50,
-      totalEarned: 50,
+      balance: 1000,
+      totalEarned: 1000,
       referralCode: `ref_${userDId}`,
       referralCount: 5,
       completedTaskIds: [],
@@ -171,8 +173,8 @@ async function runGVDeduplicationTests() {
 
     // Launch concurrent withdrawals simultaneously
     const results = await Promise.allSettled([
-      redeemGiftCardWithdrawal(userCId, 10),
-      redeemGiftCardWithdrawal(userDId, 10),
+      redeemGiftCardWithdrawal(userCId, DENOM_2),
+      redeemGiftCardWithdrawal(userDId, DENOM_2),
     ]);
 
     const successes = results.filter((r) => r.status === 'fulfilled');
@@ -191,17 +193,18 @@ async function runGVDeduplicationTests() {
 
   console.log('\nTest Suite D3: Repeated Clicks & Persistent Idempotency');
   {
+    const DENOM_3 = 993;
     const idemCode = `TEST-IDEM-CODE-${runId}-333`;
-    await addGiftCardCodes([idemCode], 10, 'TestAdmin');
+    await addGiftCardCodes([idemCode], DENOM_3, 'TestAdmin');
 
     const userAId = `test_user_a_${runId}`;
     const idemKey = `idem_key_${runId}_123`;
-    const firstRedeem = await redeemGiftCardWithdrawal(userAId, 10, idemKey);
+    const firstRedeem = await redeemGiftCardWithdrawal(userAId, DENOM_3, idemKey);
     assertExact(firstRedeem.giftCardCode, idemCode, 'First attempt receives code');
     const balAfterFirst = firstRedeem.user.balance;
 
     // Retry with identical idempotencyKey
-    const retryRedeem = await redeemGiftCardWithdrawal(userAId, 10, idemKey);
+    const retryRedeem = await redeemGiftCardWithdrawal(userAId, DENOM_3, idemKey);
     assertExact(retryRedeem.withdrawal.id, firstRedeem.withdrawal.id, 'Idempotent retry returns identical order');
     assertExact(retryRedeem.giftCardCode, idemCode, 'Idempotent retry returns identical code');
     assertExact(retryRedeem.user.balance, balAfterFirst, 'Idempotent retry does NOT deduct balance a second time');
@@ -210,14 +213,15 @@ async function runGVDeduplicationTests() {
 
   console.log('\nTest Suite D4: Stale Firestore Overwrite Protection');
   {
+    const DENOM_4 = 994;
     const staleCode = `TEST-STALE-OVERWRITE-${runId}-444`;
-    await addGiftCardCodes([staleCode], 10, 'TestAdmin');
+    await addGiftCardCodes([staleCode], DENOM_4, 'TestAdmin');
 
     const userBId = `test_user_b_${runId}`;
     const userAId = `test_user_a_${runId}`;
 
     // User redeems code
-    const rRes = await redeemGiftCardWithdrawal(userBId, 10);
+    const rRes = await redeemGiftCardWithdrawal(userBId, DENOM_4);
     assertExact(rRes.giftCardCode, staleCode, 'Redeemed stale test code');
 
     // Find doc in memStore
@@ -246,7 +250,7 @@ async function runGVDeduplicationTests() {
     // Verify it cannot be redeemed again
     let failedStale = false;
     try {
-      await redeemGiftCardWithdrawal(userAId, 10);
+      await redeemGiftCardWithdrawal(userAId, DENOM_4);
     } catch (e: any) {
       failedStale = true;
     }

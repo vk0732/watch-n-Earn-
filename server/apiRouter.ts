@@ -25,6 +25,7 @@ import {
   redeemGiftCardWithdrawal,
   getAllGiftCardCodes,
   getGiftCardInventoryStats,
+  getGiftCardAuditReport,
   addGiftCardCodes,
   invalidateGiftCardCode,
   deleteGiftCardCode,
@@ -1720,6 +1721,16 @@ apiRouter.get('/admin/gift-cards/stats', extractTelegramUser, requireAdmin, asyn
   try {
     const stats = await getGiftCardInventoryStats();
     res.json({ stats });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Comprehensive Gift Card Audit & Conflict Review Report for Admins
+apiRouter.get('/admin/gift-cards/audit-report', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const report = await getGiftCardAuditReport();
+    res.json({ report });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

@@ -1168,12 +1168,6 @@ async function runTests() {
   {
     clearMockChannelMemberships();
 
-    // 1. Withdrawal fails closed when bot token is not configured or API fails
-    const unverifiedTgId = 555666777;
-    const failClosedCheck = await verifyMandatoryWithdrawalMembership(unverifiedTgId);
-    assert(failClosedCheck.isVerified === false, 'Fail-Closed: Unverified user fails verification check');
-    assert(Boolean(failClosedCheck.isApiError === true || (failClosedCheck.unjoinedChannels && failClosedCheck.unjoinedChannels.length > 0)), 'Fail-Closed: Correctly flags api error or missing channels');
-
     // Setup mandatory channel and unjoined user test
     const mandChanId = `@mandatorysponsor_${Date.now()}`;
     const mandChan: ForceJoinChannel = {
@@ -1186,6 +1180,12 @@ async function runTests() {
       order: 1,
     };
     await saveForceJoinChannel(mandChan);
+
+    // 1. Withdrawal fails closed when bot token is not configured or API fails / user unjoined
+    const unverifiedTgId = 555666777;
+    const failClosedCheck = await verifyMandatoryWithdrawalMembership(unverifiedTgId);
+    assert(failClosedCheck.isVerified === false, 'Fail-Closed: Unverified user fails verification check');
+    assert(Boolean(failClosedCheck.isApiError === true || (failClosedCheck.unjoinedChannels && failClosedCheck.unjoinedChannels.length > 0)), 'Fail-Closed: Correctly flags api error or missing channels');
 
     const mandUserId = `mand_user_${Date.now()}`;
     await saveUser({

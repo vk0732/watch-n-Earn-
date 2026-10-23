@@ -12,3 +12,5 @@ coverage/
 *serviceAccount*.json
 firebase-credentials.json
 .vercel
+data/
+backups/

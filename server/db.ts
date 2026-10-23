@@ -1,6 +1,9 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import fs from 'fs';
+import path from 'path';
+
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getFirestore,
@@ -74,6 +77,25 @@ const firestoreDatabaseId = (
 const app = getApps().length === 0 ? initializeApp(customFirebaseConfig) : getApp();
 export const db: Firestore = getFirestore(app, firestoreDatabaseId);
 
+// Firestore Quota Circuit Breaker: Prevents hanging 10-second stalls when quota is exceeded
+let firestoreQuotaExhaustedUntil = 0;
+
+export function isFirestoreAvailable(): boolean {
+  return Date.now() > firestoreQuotaExhaustedUntil;
+}
+
+export function reportFirestoreError(err: any): void {
+  const msg = (err && (err.message || String(err))) || '';
+  if (
+    msg.includes('Quota limit exceeded') ||
+    msg.includes('RESOURCE_EXHAUSTED') ||
+    msg.includes('resource-exhausted')
+  ) {
+    // 60-second circuit breaker cooldown so requests execute in < 1ms via memStore & local store
+    firestoreQuotaExhaustedUntil = Date.now() + 60_000;
+  }
+}
+
 // In-Memory Fallback store to guarantee zero downtime and blazing fast tests
 export const memStore = {
   users: new Map<string, UserProfile>(),
@@ -95,6 +117,11 @@ export const memStore = {
   userBonusClaims: new Map<string, BonusClaimRecord>(), // userId -> claim
   deviceFingerprintClaims: new Map<string, BonusClaimRecord>(), // fingerprintHash -> claim
   referralClaims: new Map<string, BonusClaimRecord>(), // refereeId -> claim
+  // AUTHORITATIVE GV REDEMPTION & DEDUPLICATION REGISTRY (P0 PROTECTION)
+  assignedGVCodes: new Set<string>(), // normalized uppercase codes that have EVER been assigned
+  gvAssignmentRecords: new Map<string, { code: string; orderId: string; userId: string; assignedAt: string }>(),
+  gvReservedCodes: new Set<string>(), // in-flight allocated codes to prevent concurrent race conditions
+  gvConflictFlags: [] as Array<{ codeMasked: string; count: number; withdrawalIds: string[]; reason: string }>,
   settings: {
     signupBonus: 20, // PRD: ₹10-₹25 configurable
     maxScratchSignupBonus: 10, // Admin-configurable Maximum Scratch Signup Bonus (default: ₹10)
@@ -257,6 +284,9 @@ export function cleanDocData<T>(obj: T): any {
    SETTINGS REPOSITORY
    ======================================================== */
 export async function getAppSettings(): Promise<AppSettings> {
+  if (!isFirestoreAvailable()) {
+    return memStore.settings;
+  }
   try {
     const docRef = doc(db, getColName('app_settings'), 'general');
     const snap = await getDoc(docRef);
@@ -294,6 +324,7 @@ export async function getAppSettings(): Promise<AppSettings> {
       return merged;
     }
   } catch (err) {
+    reportFirestoreError(err);
     console.warn('[DB] Using local app_settings fallback:', err);
   }
   return memStore.settings;
@@ -304,10 +335,14 @@ export async function updateAppSettings(newSettings: Partial<AppSettings>): Prom
     newSettings.botUsername = formatBotUsername(newSettings.botUsername);
   }
   memStore.settings = { ...memStore.settings, ...newSettings };
+  if (!isFirestoreAvailable()) {
+    return memStore.settings;
+  }
   try {
     const docRef = doc(db, getColName('app_settings'), 'general');
     await setDoc(docRef, cleanDocData(memStore.settings), { merge: true });
   } catch (err) {
+    reportFirestoreError(err);
     console.warn('[DB] Firestore updateAppSettings fallback:', err);
   }
   return memStore.settings;
@@ -317,6 +352,12 @@ export async function updateAppSettings(newSettings: Partial<AppSettings>): Prom
    USERS REPOSITORY
    ======================================================== */
 export async function getUser(userId: string): Promise<UserProfile | null> {
+  const cached = memStore.users.get(userId);
+  if (cached) return cached;
+
+  if (!isFirestoreAvailable()) {
+    return null;
+  }
   try {
     const docRef = doc(db, getColName('users'), userId);
     const snap = await getDoc(docRef);
@@ -326,6 +367,7 @@ export async function getUser(userId: string): Promise<UserProfile | null> {
       return data;
     }
   } catch (err) {
+    reportFirestoreError(err);
     console.warn(`[DB] Firestore getUser(${userId}) fallback:`, err);
   }
   return memStore.users.get(userId) || null;
@@ -373,6 +415,7 @@ export async function saveUser(user: UserProfile): Promise<UserProfile> {
     const docRef = doc(db, getColName('users'), user.id);
     await setDoc(docRef, cleanDocData(user), { merge: true });
   } catch (err) {
+    reportFirestoreError(err);
     console.warn(`[DB] Firestore saveUser(${user.id}) fallback:`, err);
   }
   return user;
@@ -510,6 +553,7 @@ export async function atomicCreditBalance(
       ) {
         throw err;
       }
+      reportFirestoreError(err);
       console.warn('[DB] atomicCreditBalance Firestore sync fallback:', err);
       // Fallback
       let user = memStore.users.get(userId);
@@ -1540,6 +1584,14 @@ export async function recordTaskCompletion(completion: TaskCompletion): Promise<
    REFERRALS REPOSITORY
    ======================================================== */
 export async function getReferralsByReferrer(referrerId: string): Promise<ReferralRecord[]> {
+  const memList = Array.from(memStore.referrals.values())
+    .filter((r) => r.referrerId === referrerId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  if (!isFirestoreAvailable() || memList.length > 0) {
+    return memList;
+  }
+
   try {
     const q = query(collection(db, getColName('referrals')), where('referrerId', '==', referrerId));
     const snap = await getDocs(q);
@@ -1554,19 +1606,22 @@ export async function getReferralsByReferrer(referrerId: string): Promise<Referr
       return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     }
   } catch (err) {
+    reportFirestoreError(err);
     console.warn('[DB] Firestore getReferralsByReferrer fallback:', err);
   }
 
-  return Array.from(memStore.referrals.values())
-    .filter((r) => r.referrerId === referrerId)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return memList;
 }
 
 export async function recordReferral(referral: ReferralRecord): Promise<ReferralRecord> {
   memStore.referrals.set(referral.id, referral);
+  if (!isFirestoreAvailable()) {
+    return referral;
+  }
   try {
     await setDoc(doc(db, getColName('referrals'), referral.id), cleanDocData(referral));
   } catch (err) {
+    reportFirestoreError(err);
     console.warn('[DB] recordReferral fallback:', err);
   }
   return referral;
@@ -1585,6 +1640,14 @@ export async function createWithdrawalRequest(
 }
 
 export async function getUserWithdrawals(userId: string): Promise<Withdrawal[]> {
+  const memWithdrawals = Array.from(memStore.withdrawals.values())
+    .filter((w) => w.userId === userId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  if (!isFirestoreAvailable() || memWithdrawals.length > 0) {
+    return memWithdrawals;
+  }
+
   try {
     const q = query(collection(db, getColName('withdrawals')), where('userId', '==', userId));
     const snap = await getDocs(q);
@@ -1599,26 +1662,28 @@ export async function getUserWithdrawals(userId: string): Promise<Withdrawal[]> 
       return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     }
   } catch (err) {
+    reportFirestoreError(err);
     console.warn('[DB] Firestore getUserWithdrawals fallback:', err);
   }
 
-  return Array.from(memStore.withdrawals.values())
-    .filter((w) => w.userId === userId)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return memWithdrawals;
 }
 
 export async function getAllWithdrawals(status?: string): Promise<Withdrawal[]> {
-  try {
-    const snap = await getDocs(collection(db, getColName('withdrawals')));
-    if (!snap.empty) {
-      snap.forEach((d) => {
-        const item = d.data() as Withdrawal;
-        const w = { ...item, id: item.id || d.id };
-        memStore.withdrawals.set(w.id, w);
-      });
+  if (isFirestoreAvailable()) {
+    try {
+      const snap = await getDocs(collection(db, getColName('withdrawals')));
+      if (!snap.empty) {
+        snap.forEach((d) => {
+          const item = d.data() as Withdrawal;
+          const w = { ...item, id: item.id || d.id };
+          memStore.withdrawals.set(w.id, w);
+        });
+      }
+    } catch (err) {
+      reportFirestoreError(err);
+      console.warn('[DB] Firestore getAllWithdrawals fallback:', err);
     }
-  } catch (err) {
-    console.warn('[DB] Firestore getAllWithdrawals fallback:', err);
   }
 
   let list = Array.from(memStore.withdrawals.values());
@@ -1792,8 +1857,192 @@ export async function updateWithdrawalStatus(
    AMAZON GIFT CARD INVENTORY & INSTANT REDEMPTION
    ======================================================== */
 
+const GV_LOCAL_REGISTRY_PATH = path.join(process.cwd(), 'data', 'gv_authoritative_registry.json');
+const GV_AUTHORITATIVE_STORE_PATH = path.join(process.cwd(), 'data', 'authoritative_store.json');
+
 /**
- * Fetch all gift card codes from Firestore and cache in memStore
+ * Checks if a code has already been successfully redeemed in ANY withdrawal record.
+ */
+export function isCodeAssignedInAnyWithdrawal(normCode: string): boolean {
+  if (!normCode) return false;
+  const clean = normCode.trim().toUpperCase();
+  for (const w of memStore.withdrawals.values()) {
+    if (w.status === 'success' && w.giftCardCode && w.giftCardCode.trim().toUpperCase() === clean) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Persists the authoritative assigned GV codes registry to durable disk storage.
+ */
+export function persistGVRegistry(): void {
+  try {
+    const dataDir = path.join(process.cwd(), 'data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    const payload = {
+      updatedAt: new Date().toISOString(),
+      assignedCodesCount: memStore.assignedGVCodes.size,
+      assignedCodes: Array.from(memStore.assignedGVCodes),
+      assignments: Array.from(memStore.gvAssignmentRecords.values()),
+      conflictFlags: memStore.gvConflictFlags,
+    };
+    fs.writeFileSync(GV_LOCAL_REGISTRY_PATH, JSON.stringify(payload, null, 2), { mode: 0o600 });
+  } catch (err) {
+    console.warn('[DB] persistGVRegistry error:', err);
+  }
+}
+
+/**
+ * Authoritative Cross-Collection Reconciliation Engine:
+ * Reconciles inventory docs against all historical withdrawals and durable disk journal.
+ * Enforces ONE CODE = ONE USER, PERMANENTLY.
+ */
+export function reconcileGVRegistry(): void {
+  // 1. Seed from authoritative local store file if memStore is empty (e.g. on server reboot / Firestore quota limit)
+  try {
+    const dataDir = path.join(process.cwd(), 'data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+
+    if (memStore.giftCardCodes.size === 0 && fs.existsSync(GV_AUTHORITATIVE_STORE_PATH)) {
+      const raw = fs.readFileSync(GV_AUTHORITATIVE_STORE_PATH, 'utf-8');
+      const store = JSON.parse(raw);
+      if (Array.isArray(store.giftCardCodes)) {
+        for (const gc of store.giftCardCodes) {
+          memStore.giftCardCodes.set(gc.id, gc);
+        }
+      }
+      if (Array.isArray(store.withdrawals)) {
+        for (const w of store.withdrawals) {
+          memStore.withdrawals.set(w.id, w);
+        }
+      }
+      if (Array.isArray(store.users)) {
+        for (const u of store.users) {
+          memStore.users.set(u.id, u);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[DB] reconcileGVRegistry store load warning:', err);
+  }
+
+  // 2. Load assigned codes from durable disk registry if present
+  try {
+    if (fs.existsSync(GV_LOCAL_REGISTRY_PATH)) {
+      const raw = fs.readFileSync(GV_LOCAL_REGISTRY_PATH, 'utf-8');
+      const reg = JSON.parse(raw);
+      if (Array.isArray(reg.assignedCodes)) {
+        for (const c of reg.assignedCodes) {
+          if (c && typeof c === 'string') {
+            memStore.assignedGVCodes.add(c.trim().toUpperCase());
+          }
+        }
+      }
+      if (Array.isArray(reg.assignments)) {
+        for (const asgn of reg.assignments) {
+          if (asgn && asgn.code) {
+            const norm = asgn.code.trim().toUpperCase();
+            memStore.assignedGVCodes.add(norm);
+            memStore.gvAssignmentRecords.set(norm, asgn);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[DB] reconcileGVRegistry journal load warning:', err);
+  }
+
+  // 3. Scan all successful withdrawals and register assigned codes
+  for (const w of memStore.withdrawals.values()) {
+    if (w.status === 'success' && w.giftCardCode) {
+      const norm = w.giftCardCode.trim().toUpperCase();
+      memStore.assignedGVCodes.add(norm);
+      if (!memStore.gvAssignmentRecords.has(norm)) {
+        memStore.gvAssignmentRecords.set(norm, {
+          code: norm,
+          orderId: w.id,
+          userId: w.userId,
+          assignedAt: w.createdAt,
+        });
+      }
+    }
+  }
+
+  // 4. Reconcile inventory records: Any code in assignedGVCodes can NEVER have status 'available'
+  const conflictsFound = new Map<string, { count: number; withdrawalIds: string[] }>();
+  for (const gc of memStore.giftCardCodes.values()) {
+    const norm = (gc.code || '').trim().toUpperCase();
+    if (!norm) continue;
+
+    if (gc.status === 'redeemed') {
+      memStore.assignedGVCodes.add(norm);
+    } else if (gc.status === 'available') {
+      if (memStore.assignedGVCodes.has(norm) || isCodeAssignedInAnyWithdrawal(norm)) {
+        // CONFLICT RECONCILED: Falsely marked available in DB, but already assigned in historical redemptions!
+        // Lock it as redeemed to permanently prevent reassignment!
+        gc.status = 'redeemed';
+        const existingAsgn = memStore.gvAssignmentRecords.get(norm);
+        gc.assignedWithdrawalId = gc.assignedWithdrawalId || existingAsgn?.orderId || null;
+        gc.assignedUserId = gc.assignedUserId || existingAsgn?.userId || null;
+        memStore.giftCardCodes.set(gc.id, gc);
+        memStore.assignedGVCodes.add(norm);
+
+        const wList = Array.from(memStore.withdrawals.values()).filter(
+          (w) => w.status === 'success' && (w.giftCardCode || '').trim().toUpperCase() === norm
+        );
+        conflictsFound.set(norm, { count: wList.length, withdrawalIds: wList.map((w) => w.id) });
+      }
+    }
+  }
+
+  // 5. Populate conflict flags for admin review (without modifying user balances or deleting records)
+  memStore.gvConflictFlags = [];
+  for (const [normCode, info] of conflictsFound.entries()) {
+    const start = normCode.substring(0, 2);
+    const end = normCode.substring(normCode.length - 2);
+    memStore.gvConflictFlags.push({
+      codeMasked: `${start}***${end}`,
+      count: info.count,
+      withdrawalIds: info.withdrawalIds,
+      reason: 'Status conflict reconciled: Code was marked available in inventory doc, but was already assigned in historical redemptions. Safely locked as redeemed to prevent future duplicate distribution.',
+    });
+  }
+
+  // Also flag historical duplicate distributions for review
+  const codeWithdrawalCount = new Map<string, string[]>();
+  for (const w of memStore.withdrawals.values()) {
+    if (w.status === 'success' && w.giftCardCode) {
+      const norm = w.giftCardCode.trim().toUpperCase();
+      if (!codeWithdrawalCount.has(norm)) codeWithdrawalCount.set(norm, []);
+      codeWithdrawalCount.get(norm)!.push(w.id);
+    }
+  }
+
+  for (const [normCode, wIds] of codeWithdrawalCount.entries()) {
+    if (wIds.length > 1 && !conflictsFound.has(normCode)) {
+      const start = normCode.substring(0, 2);
+      const end = normCode.substring(normCode.length - 2);
+      memStore.gvConflictFlags.push({
+        codeMasked: `${start}***${end}`,
+        count: wIds.length,
+        withdrawalIds: wIds,
+        reason: 'Historical duplicate distribution identified and flagged for review. Code is permanently locked and can never be reassigned.',
+      });
+    }
+  }
+
+  persistGVRegistry();
+}
+
+/**
+ * Fetch all gift card codes from Firestore and cache in memStore.
+ * GUARANTEED: Stale Firestore documents cannot overwrite an already-assigned code back to available.
  */
 export async function getAllGiftCardCodes(filter?: {
   status?: 'available' | 'redeemed' | 'invalidated';
@@ -1804,12 +2053,30 @@ export async function getAllGiftCardCodes(filter?: {
     if (!snap.empty) {
       snap.forEach((d) => {
         const item = d.data() as GiftCardCode;
-        memStore.giftCardCodes.set(item.id || d.id, { ...item, id: item.id || d.id });
+        const id = item.id || d.id;
+        const normCode = (item.code || '').trim().toUpperCase();
+
+        // Stale overwrite guard: If code was already assigned in this deployment or historical withdrawals, NEVER revert to 'available'!
+        if (normCode && memStore.assignedGVCodes.has(normCode)) {
+          item.status = 'redeemed';
+        }
+        const existing = memStore.giftCardCodes.get(id);
+        if (existing && existing.status === 'redeemed' && item.status === 'available') {
+          item.status = 'redeemed';
+          item.assignedUserId = existing.assignedUserId;
+          item.assignedWithdrawalId = existing.assignedWithdrawalId;
+          item.redeemedAt = existing.redeemedAt;
+        }
+
+        memStore.giftCardCodes.set(id, { ...item, id });
       });
     }
   } catch (err) {
     // Keep memStore
   }
+
+  // Cross-reconcile with historical redemptions
+  reconcileGVRegistry();
 
   let list = Array.from(memStore.giftCardCodes.values());
   if (filter?.status) {
@@ -1826,8 +2093,17 @@ export async function getAllGiftCardCodes(filter?: {
  */
 export async function getGiftCardInventoryStats(): Promise<GiftCardInventoryStats> {
   const allCodes = await getAllGiftCardCodes();
-  const available = allCodes.filter((c) => c.status === 'available');
-  const redeemed = allCodes.filter((c) => c.status === 'redeemed');
+  // Filter available ensuring truly unused
+  const available = allCodes.filter((c) => {
+    if (c.status !== 'available') return false;
+    const norm = (c.code || '').trim().toUpperCase();
+    return !memStore.assignedGVCodes.has(norm);
+  });
+  const redeemed = allCodes.filter((c) => {
+    if (c.status === 'redeemed') return true;
+    const norm = (c.code || '').trim().toUpperCase();
+    return memStore.assignedGVCodes.has(norm);
+  });
   const invalidated = allCodes.filter((c) => c.status === 'invalidated');
 
   const availableByDenomination: Record<number, number> = {};
@@ -1846,6 +2122,35 @@ export async function getGiftCardInventoryStats(): Promise<GiftCardInventoryStat
     invalidatedCodes: invalidated.length,
     availableByDenomination,
     totalAvailableValue,
+  };
+}
+
+/**
+ * Detailed audit report of GV codes and historical flagged conflicts for Admin Panel
+ */
+export async function getGiftCardAuditReport(): Promise<{
+  totalCodes: number;
+  availableCodes: number;
+  redeemedCodes: number;
+  invalidatedCodes: number;
+  uniqueAssignedCodesCount: number;
+  flaggedHistoricalDuplicates: Array<{
+    codeMasked: string;
+    count: number;
+    withdrawalIds: string[];
+    reason: string;
+  }>;
+}> {
+  await getAllGiftCardCodes();
+  const stats = await getGiftCardInventoryStats();
+
+  return {
+    totalCodes: stats.totalCodes,
+    availableCodes: stats.availableCodes,
+    redeemedCodes: stats.redeemedCodes,
+    invalidatedCodes: stats.invalidatedCodes,
+    uniqueAssignedCodesCount: memStore.assignedGVCodes.size,
+    flaggedHistoricalDuplicates: memStore.gvConflictFlags,
   };
 }
 
@@ -1892,7 +2197,7 @@ export async function addGiftCardCodes(
 
     for (const rawCode of cleanCodes) {
       const normalized = rawCode.toUpperCase();
-      if (existingCodeSet.has(normalized)) {
+      if (existingCodeSet.has(normalized) || memStore.assignedGVCodes.has(normalized)) {
         duplicateCount++;
         continue;
       }
@@ -1924,6 +2229,8 @@ export async function addGiftCardCodes(
       }
     }
 
+    persistGVRegistry();
+
     return {
       added: addedCount,
       duplicates: duplicateCount,
@@ -1945,7 +2252,8 @@ export async function invalidateGiftCardCode(id: string, reason?: string): Promi
     if (!card) {
       throw new Error('Gift card code not found.');
     }
-    if (card.status === 'redeemed') {
+    const norm = (card.code || '').trim().toUpperCase();
+    if (card.status === 'redeemed' || memStore.assignedGVCodes.has(norm)) {
       throw new Error('Cannot invalidate an already redeemed gift card code.');
     }
 
@@ -1960,6 +2268,7 @@ export async function invalidateGiftCardCode(id: string, reason?: string): Promi
       console.warn('[DB] invalidateGiftCardCode Firestore sync fallback:', err);
     }
 
+    persistGVRegistry();
     return card;
   } finally {
     releaseLock();
@@ -1977,7 +2286,8 @@ export async function deleteGiftCardCode(id: string): Promise<boolean> {
     if (!card) {
       return false;
     }
-    if (card.status === 'redeemed') {
+    const norm = (card.code || '').trim().toUpperCase();
+    if (card.status === 'redeemed' || memStore.assignedGVCodes.has(norm)) {
       throw new Error('Cannot delete an already redeemed gift card code.');
     }
 
@@ -1987,6 +2297,7 @@ export async function deleteGiftCardCode(id: string): Promise<boolean> {
     } catch (err) {
       console.warn('[DB] deleteGiftCardCode Firestore sync fallback:', err);
     }
+    persistGVRegistry();
     return true;
   } finally {
     releaseLock();
@@ -2017,6 +2328,8 @@ export async function redeemGiftCardWithdrawal(
   // Dual-lock isolation: per-user lock (prevents multi-click race conditions) + inventory lock (prevents code reuse)
   const releaseUserLock = await acquireLock(`user_withdrawal_${userId}`);
   const releaseInvLock = await acquireLock('gift_card_allocation');
+
+  let normSelectedCode: string | undefined;
 
   try {
     const user = await getUser(userId);
@@ -2180,19 +2493,40 @@ export async function redeemGiftCardWithdrawal(
       }
     }
 
-    // 6. Find an available code matching requested denomination
+    // 6. Find an available code matching requested denomination with strict single-use verification
+    reconcileGVRegistry();
     await getAllGiftCardCodes();
-    const availableCodes = Array.from(memStore.giftCardCodes.values()).filter(
-      (c) => c.status === 'available' && c.denomination === amount
-    );
+
+    const availableCodes = Array.from(memStore.giftCardCodes.values()).filter((c) => {
+      if (c.status !== 'available') return false;
+      if (c.denomination !== amount) return false;
+      const norm = (c.code || '').trim().toUpperCase();
+      if (!norm) return false;
+
+      // STRICT CHECK 1: Must never have been assigned before
+      if (memStore.assignedGVCodes.has(norm)) return false;
+
+      // STRICT CHECK 2: Must not be in any successful withdrawal record
+      if (isCodeAssignedInAnyWithdrawal(norm)) return false;
+
+      // STRICT CHECK 3: Must not be currently reserved in-flight
+      if (memStore.gvReservedCodes.has(norm)) return false;
+
+      return true;
+    });
 
     if (availableCodes.length === 0) {
       // STRICT REQUIREMENT: If no code is available, throw out of stock and NEVER touch balance
       throw new Error('Gift card temporarily out of stock');
     }
 
-    // Pick first available code
+    // Pick first truly available pristine code
     const selectedCode = availableCodes[0];
+    normSelectedCode = selectedCode.code.trim().toUpperCase();
+
+    // Atomically reserve immediately so concurrent requests under any circumstances cannot pick it
+    memStore.gvReservedCodes.add(normSelectedCode);
+    memStore.assignedGVCodes.add(normSelectedCode);
 
     // 7. Atomic Allocation & Ledger Deduction via Firestore ACID Transaction
     const orderId = `WTH-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
@@ -2309,6 +2643,15 @@ export async function redeemGiftCardWithdrawal(
       memStore.withdrawals.set(orderId, txnResult.withdrawal);
       memStore.transactions.set(txId, txnResult.transaction);
 
+      memStore.assignedGVCodes.add(normSelectedCode);
+      memStore.gvAssignmentRecords.set(normSelectedCode, {
+        code: normSelectedCode,
+        orderId,
+        userId,
+        assignedAt: redeemedAt,
+      });
+      persistGVRegistry();
+
       return txnResult;
     } catch (txnErr: any) {
       if (
@@ -2366,6 +2709,15 @@ export async function redeemGiftCardWithdrawal(
       };
       memStore.transactions.set(txId, transaction);
 
+      memStore.assignedGVCodes.add(normSelectedCode);
+      memStore.gvAssignmentRecords.set(normSelectedCode, {
+        code: normSelectedCode,
+        orderId,
+        userId,
+        assignedAt: redeemedAt,
+      });
+      persistGVRegistry();
+
       return {
         withdrawal,
         transaction,
@@ -2374,6 +2726,9 @@ export async function redeemGiftCardWithdrawal(
       };
     }
   } finally {
+    if (normSelectedCode) {
+      memStore.gvReservedCodes.delete(normSelectedCode);
+    }
     releaseInvLock();
     releaseUserLock();
   }
@@ -2799,4 +3154,12 @@ export async function verifyMandatoryCheckinMembership(
 
   return { isVerified: true };
 }
+
+// Initialize authoritative reconciliation on startup
+try {
+  reconcileGVRegistry();
+} catch (err) {
+  console.warn('[DB] Initial reconcileGVRegistry error:', err);
+}
+
 

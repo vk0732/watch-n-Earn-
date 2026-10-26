@@ -1,24 +1,26 @@
 import dotenv from 'dotenv';
 dotenv.config();
-import { initializeApp, getApps } from 'firebase/app';
-import { getFirestore, collection, getDocs, getCountFromServer } from 'firebase/firestore';
+import { db, getColName } from '../server/db.ts';
+import { collection, getCountFromServer, getDocs, limit, query } from 'firebase/firestore';
 
 async function checkFirestore() {
-  const firebaseConfig = {
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    apiKey: process.env.FIREBASE_API_KEY,
-    authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.FIREBASE_APP_ID,
-  };
+  console.log('Checking Firestore using server/db instance...');
 
-  const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-  const db = getFirestore(app);
+  const colNames = [
+    getColName('users'),
+    'users',
+    'clone_users',
+    getColName('withdrawals'),
+    'withdrawals',
+    'clone_withdrawals',
+    getColName('transactions'),
+    'transactions',
+    'clone_transactions',
+  ];
 
-  console.log(`Checking Firestore for project: ${process.env.FIREBASE_PROJECT_ID}...`);
+  const uniqueCols = Array.from(new Set(colNames));
 
-  for (const colName of ['clone_users', 'users', 'clone_withdrawals', 'withdrawals', 'clone_transactions', 'transactions']) {
+  for (const colName of uniqueCols) {
     try {
       const colRef = collection(db, colName);
       const countSnap = await getCountFromServer(colRef);

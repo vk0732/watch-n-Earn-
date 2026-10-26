@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import {
   getUser,
+  getUserByTelegramId,
   saveUser,
   getAppSettings,
   atomicCreditBalance,
@@ -10,6 +11,7 @@ import {
   hasUserClaimedSignupBonus,
   getOrAssignSignupScratchBonus,
   atomicClaimSignupBonus,
+  acquireLock,
 } from './db.ts';
 import {
   checkTelegramChannelMembership,
@@ -419,46 +421,54 @@ async function handleStartCommand(
   const userId = from.id.toString();
   const settings = await getAppSettings();
 
-  // 1. Check or create user
-  let user = await getUser(userId);
+  // 1. Check or create user with atomic duplicate prevention
+  let user = (await getUserByTelegramId(from.id)) || (await getUser(userId));
   const isNewUser = !user;
 
   if (isNewUser) {
-    // Generate unique referral code
-    const refCode = `ref_${from.id}_${crypto.randomBytes(3).toString('hex')}`;
+    const unlock = await acquireLock(`reg_${from.id}`, 5000);
+    try {
+      user = (await getUserByTelegramId(from.id)) || (await getUser(userId));
+      if (!user) {
+        // Generate unique referral code
+        const refCode = `ref_${from.id}_${crypto.randomBytes(3).toString('hex')}`;
 
-    // Parse referral param from /start command (e.g. /start ref_98765_abc)
-    let inviterUser: UserProfile | null = null;
-    const parts = text.trim().split(/\s+/);
-    if (parts.length > 1) {
-      const param = parts[1].trim();
-      // Strictly look up by registered referral code
-      inviterUser = await getUserByReferralCode(param);
-      // Strictly prevent self-referral
-      if (inviterUser && inviterUser.id === userId) {
-        inviterUser = null;
+        // Parse referral param from /start command (e.g. /start ref_98765_abc)
+        let inviterUser: UserProfile | null = null;
+        const parts = text.trim().split(/\s+/);
+        if (parts.length > 1) {
+          const param = parts[1].trim();
+          // Strictly look up by registered referral code
+          inviterUser = await getUserByReferralCode(param);
+          // Strictly prevent self-referral
+          if (inviterUser && (inviterUser.id === userId || (inviterUser.telegramId && inviterUser.telegramId === from.id))) {
+            inviterUser = null;
+          }
+        }
+
+        const newUser: UserProfile = {
+          id: userId,
+          telegramId: from.id,
+          username: from.username || '',
+          firstName: from.first_name || 'Telegram User',
+          lastName: from.last_name || '',
+          balance: 0,
+          lifetimeEarnings: 0,
+          referralEarnings: 0,
+          referralCode: refCode,
+          referredBy: inviterUser ? inviterUser.id : null,
+          dailyStreak: 0,
+          isBanned: false,
+          signupBonusClaimed: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        user = await saveUser(newUser);
       }
+    } finally {
+      unlock();
     }
-
-    const newUser: UserProfile = {
-      id: userId,
-      telegramId: from.id,
-      username: from.username || '',
-      firstName: from.first_name || 'Telegram User',
-      lastName: from.last_name || '',
-      balance: 0,
-      lifetimeEarnings: 0,
-      referralEarnings: 0,
-      referralCode: refCode,
-      referredBy: inviterUser ? inviterUser.id : null,
-      dailyStreak: 0,
-      isBanned: false,
-      signupBonusClaimed: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    user = await saveUser(newUser);
   } else if (user) {
     // Repeated /start commands must NEVER grant duplicate signup bonuses
     // User already exists; keep existing balance and profile intact.
@@ -972,7 +982,7 @@ async function handleHelpCommand(chatId: number, appUrl: string) {
 }
 
 async function handleBalanceCommand(telegramId: number, chatId: number, appUrl: string) {
-  const user = await getUser(telegramId.toString());
+  const user = (await getUserByTelegramId(telegramId)) || (await getUser(telegramId.toString()));
   if (!user) {
     await sendTelegramMessage(chatId, '❌ Account not found. Type /start to register.');
     return;
@@ -983,7 +993,7 @@ async function handleBalanceCommand(telegramId: number, chatId: number, appUrl: 
 }
 
 async function handleReferralCommand(telegramId: number, chatId: number, appUrl: string) {
-  const user = await getUser(telegramId.toString());
+  const user = (await getUserByTelegramId(telegramId)) || (await getUser(telegramId.toString()));
   const settings = await getAppSettings();
   if (!user) {
     await sendTelegramMessage(chatId, '❌ Account not found. Type /start to register.');

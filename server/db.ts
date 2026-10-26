@@ -17,6 +17,7 @@ import {
   where,
   runTransaction,
   deleteDoc,
+  limit,
   Firestore,
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json' with { type: 'json' };
@@ -99,6 +100,8 @@ export function reportFirestoreError(err: any): void {
 // In-Memory Fallback store to guarantee zero downtime and blazing fast tests
 export const memStore = {
   users: new Map<string, UserProfile>(),
+  telegramIdToUserId: new Map<number, string>(), // numeric telegramId -> userId
+  lastVerifiedUserCount: 0,
   tasks: new Map<string, Task>(),
   taskBots: new Map<string, TaskBot>(),
   taskCompletions: new Map<string, TaskCompletion>(),
@@ -351,26 +354,154 @@ export async function updateAppSettings(newSettings: Partial<AppSettings>): Prom
 /* ========================================================
    USERS REPOSITORY
    ======================================================== */
+
+/**
+ * Returns the verified total number of unique registered users from the database.
+ * Never resets to zero across reboots, syncs, or errors.
+ */
+export function getTotalRegisteredUsersCount(): number {
+  if (memStore.users.size > 0) {
+    memStore.lastVerifiedUserCount = Math.max(memStore.lastVerifiedUserCount, memStore.users.size);
+    return memStore.lastVerifiedUserCount;
+  }
+
+  // If memory is empty (e.g. server restart before background load), load from durable store
+  const loaded = reconcileUsersRegistry();
+  if (loaded > 0) {
+    return loaded;
+  }
+
+  // Safety net: check disk journal
+  if (fs.existsSync(USER_COUNT_JOURNAL_PATH)) {
+    try {
+      const journal = JSON.parse(fs.readFileSync(USER_COUNT_JOURNAL_PATH, 'utf-8'));
+      if (journal && typeof journal.totalUsers === 'number' && journal.totalUsers > 0) {
+        memStore.lastVerifiedUserCount = Math.max(memStore.lastVerifiedUserCount, journal.totalUsers);
+        return memStore.lastVerifiedUserCount;
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  return memStore.lastVerifiedUserCount || 0;
+}
+
+/**
+ * Retrieves a user profile by numeric or string Telegram ID.
+ * Uses fast secondary index, direct memory map, disk store, and Firestore fallback.
+ */
+export async function getUserByTelegramId(telegramId: number | string): Promise<UserProfile | null> {
+  const numId = Number(telegramId);
+  if (!numId || isNaN(numId)) return null;
+
+  // 1. Fast secondary index lookup
+  const mappedId = memStore.telegramIdToUserId.get(numId);
+  if (mappedId && memStore.users.has(mappedId)) {
+    return memStore.users.get(mappedId)!;
+  }
+
+  // 2. Direct map check by String(telegramId) or "user_" + telegramId
+  const direct = memStore.users.get(String(numId)) || memStore.users.get(`user_${numId}`);
+  if (direct) {
+    memStore.telegramIdToUserId.set(numId, direct.id);
+    return direct;
+  }
+
+  // 3. Scan memory store
+  for (const u of memStore.users.values()) {
+    if (u.telegramId && Number(u.telegramId) === numId) {
+      memStore.telegramIdToUserId.set(numId, u.id);
+      return u;
+    }
+  }
+
+  // 4. If memory was empty, reconcile and re-check
+  if (memStore.users.size === 0) {
+    reconcileUsersRegistry();
+    const retryMapped = memStore.telegramIdToUserId.get(numId);
+    if (retryMapped && memStore.users.has(retryMapped)) {
+      return memStore.users.get(retryMapped)!;
+    }
+    const retryDirect = memStore.users.get(String(numId)) || memStore.users.get(`user_${numId}`);
+    if (retryDirect) {
+      memStore.telegramIdToUserId.set(numId, retryDirect.id);
+      return retryDirect;
+    }
+  }
+
+  // 5. Firestore fallback if available
+  if (isFirestoreAvailable()) {
+    try {
+      const q = query(collection(db, getColName('users')), where('telegramId', '==', numId), limit(1));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const u = snap.docs[0].data() as UserProfile;
+        memStore.users.set(u.id, u);
+        memStore.telegramIdToUserId.set(numId, u.id);
+        persistUsersRegistry(false);
+        return u;
+      }
+    } catch (err) {
+      reportFirestoreError(err);
+      console.warn(`[DB] getUserByTelegramId(${telegramId}) fallback:`, err);
+    }
+  }
+
+  return null;
+}
+
 export async function getUser(userId: string): Promise<UserProfile | null> {
+  if (!userId) return null;
+
+  // 1. Direct memory lookup
   const cached = memStore.users.get(userId);
   if (cached) return cached;
 
-  if (!isFirestoreAvailable()) {
-    return null;
+  // 2. If userId is a numeric string (Telegram ID), check secondary index
+  const numId = Number(userId);
+  if (!isNaN(numId) && numId > 0) {
+    const byTg = await getUserByTelegramId(numId);
+    if (byTg) return byTg;
   }
-  try {
-    const docRef = doc(db, getColName('users'), userId);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      const data = snap.data() as UserProfile;
-      memStore.users.set(userId, data);
-      return data;
+
+  // 3. If userId starts with "user_", extract numeric Telegram ID
+  if (userId.startsWith('user_')) {
+    const rawNum = Number(userId.replace('user_', ''));
+    if (!isNaN(rawNum) && rawNum > 0) {
+      const byTg = await getUserByTelegramId(rawNum);
+      if (byTg) return byTg;
     }
-  } catch (err) {
-    reportFirestoreError(err);
-    console.warn(`[DB] Firestore getUser(${userId}) fallback:`, err);
   }
-  return memStore.users.get(userId) || null;
+
+  // 4. If memory is empty, reconcile and retry
+  if (memStore.users.size === 0) {
+    reconcileUsersRegistry();
+    const reloaded = memStore.users.get(userId);
+    if (reloaded) return reloaded;
+  }
+
+  // 5. Firestore check
+  if (isFirestoreAvailable()) {
+    try {
+      const docRef = doc(db, getColName('users'), userId);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const data = snap.data() as UserProfile;
+        memStore.users.set(userId, data);
+        if (data.telegramId) {
+          memStore.telegramIdToUserId.set(Number(data.telegramId), userId);
+        }
+        persistUsersRegistry(false);
+        return data;
+      }
+    } catch (err) {
+      reportFirestoreError(err);
+      console.warn(`[DB] Firestore getUser(${userId}) fallback:`, err);
+    }
+  }
+
+  return null;
 }
 
 export async function getUserByReferralCode(code: string): Promise<UserProfile | null> {
@@ -381,16 +512,34 @@ export async function getUserByReferralCode(code: string): Promise<UserProfile |
       return user;
     }
   }
-  try {
-    const q = query(collection(db, getColName('users')), where('referralCode', '==', code.trim()));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      const user = snap.docs[0].data() as UserProfile;
-      memStore.users.set(user.id, user);
-      return user;
+
+  // If memory is empty, reconcile and search
+  if (memStore.users.size === 0) {
+    reconcileUsersRegistry();
+    for (const user of memStore.users.values()) {
+      if (user.referralCode && user.referralCode.trim().toLowerCase() === cleanCode) {
+        return user;
+      }
     }
-  } catch (err) {
-    console.warn('[DB] getUserByReferralCode fallback:', err);
+  }
+
+  if (isFirestoreAvailable()) {
+    try {
+      const q = query(collection(db, getColName('users')), where('referralCode', '==', code.trim()));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const user = snap.docs[0].data() as UserProfile;
+        memStore.users.set(user.id, user);
+        if (user.telegramId) {
+          memStore.telegramIdToUserId.set(Number(user.telegramId), user.id);
+        }
+        persistUsersRegistry(false);
+        return user;
+      }
+    } catch (err) {
+      reportFirestoreError(err);
+      console.warn('[DB] getUserByReferralCode fallback:', err);
+    }
   }
 
   // Strictly return null for unrecognized / invalid / manipulated codes
@@ -401,19 +550,42 @@ export async function saveUser(user: UserProfile): Promise<UserProfile> {
   user.updatedAt = new Date().toISOString();
 
   // Immutable Referral Attribution Protection: Once attributed, cannot be changed
-  const existingUser = memStore.users.get(user.id);
+  const existingUser =
+    memStore.users.get(user.id) ||
+    (user.telegramId ? memStore.users.get(memStore.telegramIdToUserId.get(Number(user.telegramId)) || '') : null);
+
   if (existingUser && existingUser.referredBy && user.referredBy !== existingUser.referredBy) {
     user.referredBy = existingUser.referredBy;
   }
-  if (existingUser && existingUser.signupBonusClaimed) {
-    user.signupBonusClaimed = true;
+  if (user.signupBonusClaimed === undefined && existingUser?.signupBonusClaimed !== undefined) {
+    user.signupBonusClaimed = existingUser.signupBonusClaimed;
+  }
+  if (user.signupBonusClaimedGeneration === undefined && existingUser?.signupBonusClaimedGeneration !== undefined) {
+    user.signupBonusClaimedGeneration = existingUser.signupBonusClaimedGeneration;
   }
 
+  const isBrandNew =
+    !memStore.users.has(user.id) &&
+    (!user.telegramId || !memStore.telegramIdToUserId.has(Number(user.telegramId)));
+
   memStore.users.set(user.id, user);
+  if (user.telegramId) {
+    memStore.telegramIdToUserId.set(Number(user.telegramId), user.id);
+  }
+
+  // If brand new registration, update count and immediately flush to disk
+  if (isBrandNew) {
+    memStore.lastVerifiedUserCount = Math.max(memStore.lastVerifiedUserCount, memStore.users.size);
+    persistUsersRegistry(true);
+  } else {
+    persistUsersRegistry(false);
+  }
 
   try {
-    const docRef = doc(db, getColName('users'), user.id);
-    await setDoc(docRef, cleanDocData(user), { merge: true });
+    if (isFirestoreAvailable()) {
+      const docRef = doc(db, getColName('users'), user.id);
+      await setDoc(docRef, cleanDocData(user), { merge: true });
+    }
   } catch (err) {
     reportFirestoreError(err);
     console.warn(`[DB] Firestore saveUser(${user.id}) fallback:`, err);
@@ -421,30 +593,32 @@ export async function saveUser(user: UserProfile): Promise<UserProfile> {
   return user;
 }
 
-export async function searchUsers(searchTerm?: string): Promise<UserProfile[]> {
-  try {
-    if (memStore.users.size < 50) {
-      const snap = await getDocs(collection(db, getColName('users')));
-      snap.forEach((d) => {
-        const u = d.data() as UserProfile;
-        memStore.users.set(u.id || d.id, { ...u, id: u.id || d.id });
-      });
-    }
-  } catch (err) {
-    console.warn('[DB] searchUsers Firestore sync fallback:', err);
+export async function getAllUsers(): Promise<UserProfile[]> {
+  if (memStore.users.size === 0) {
+    reconcileUsersRegistry();
+  }
+  return Array.from(memStore.users.values());
+}
+
+export async function searchUsers(searchTerm?: string, limitCount = 50): Promise<UserProfile[]> {
+  if (memStore.users.size === 0) {
+    reconcileUsersRegistry();
+  }
+  const users = Array.from(memStore.users.values());
+  if (!searchTerm) {
+    return limitCount > 0 ? users.slice(0, limitCount) : users;
   }
 
-  const users = Array.from(memStore.users.values());
-  if (!searchTerm) return users.slice(0, 50);
-
   const term = searchTerm.toLowerCase();
-  return users.filter(
+  const filtered = users.filter(
     (u) =>
       u.id.includes(term) ||
-      u.telegramId.toString().includes(term) ||
+      (u.telegramId && u.telegramId.toString().includes(term)) ||
       (u.username && u.username.toLowerCase().includes(term)) ||
-      u.firstName.toLowerCase().includes(term)
+      (u.firstName && u.firstName.toLowerCase().includes(term))
   );
+
+  return limitCount > 0 ? filtered.slice(0, limitCount) : filtered;
 }
 
 /* ========================================================
@@ -1859,6 +2033,135 @@ export async function updateWithdrawalStatus(
 
 const GV_LOCAL_REGISTRY_PATH = path.join(process.cwd(), 'data', 'gv_authoritative_registry.json');
 const GV_AUTHORITATIVE_STORE_PATH = path.join(process.cwd(), 'data', 'authoritative_store.json');
+const USERS_AUTHORITATIVE_PATH = path.join(process.cwd(), 'data', 'authoritative_users.json');
+const USER_COUNT_JOURNAL_PATH = path.join(process.cwd(), 'data', 'last_verified_user_count.json');
+
+let userPersistDebounceTimer: NodeJS.Timeout | null = null;
+export function persistUsersRegistry(immediate = false): void {
+  // Don't overwrite authoritative production database during automated testing
+  if (process.env.NODE_ENV === 'test') {
+    return;
+  }
+  const doSave = () => {
+    try {
+      const dataDir = path.join(process.cwd(), 'data');
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
+      const usersList = Array.from(memStore.users.values()).filter(
+        (u) => !u.id.startsWith('mock_') && !u.id.startsWith('reset_user_') && !u.id.startsWith('persist_user_')
+      );
+      fs.writeFileSync(USERS_AUTHORITATIVE_PATH, JSON.stringify(usersList, null, 2), { mode: 0o600 });
+      memStore.lastVerifiedUserCount = Math.max(memStore.lastVerifiedUserCount, usersList.length);
+      fs.writeFileSync(
+        USER_COUNT_JOURNAL_PATH,
+        JSON.stringify(
+          {
+            totalUsers: memStore.lastVerifiedUserCount,
+            uniqueTelegramIds: memStore.telegramIdToUserId.size,
+            verifiedAt: new Date().toISOString(),
+            status: 'verified',
+          },
+          null,
+          2
+        ),
+        { mode: 0o600 }
+      );
+    } catch (err) {
+      console.warn('[DB] persistUsersRegistry error:', err);
+    }
+  };
+
+  if (immediate) {
+    if (userPersistDebounceTimer) clearTimeout(userPersistDebounceTimer);
+    userPersistDebounceTimer = null;
+    doSave();
+  } else {
+    if (!userPersistDebounceTimer) {
+      userPersistDebounceTimer = setTimeout(() => {
+        userPersistDebounceTimer = null;
+        doSave();
+      }, 500);
+    }
+  }
+}
+
+export function reconcileUsersRegistry(): number {
+  try {
+    const dataDir = path.join(process.cwd(), 'data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+
+    // 1. Seed from authoritative_users.json if present
+    if (fs.existsSync(USERS_AUTHORITATIVE_PATH)) {
+      const raw = fs.readFileSync(USERS_AUTHORITATIVE_PATH, 'utf-8');
+      const usersList = JSON.parse(raw);
+      if (Array.isArray(usersList)) {
+        for (const u of usersList) {
+          if (u && (u.id || u.telegramId)) {
+            const id = String(u.id || `user_${u.telegramId}`);
+            memStore.users.set(id, u);
+            if (u.telegramId) {
+              memStore.telegramIdToUserId.set(Number(u.telegramId), id);
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Cross-check authoritative_store.json
+    if (fs.existsSync(GV_AUTHORITATIVE_STORE_PATH)) {
+      const rawStore = fs.readFileSync(GV_AUTHORITATIVE_STORE_PATH, 'utf-8');
+      const store = JSON.parse(rawStore);
+      if (Array.isArray(store.users)) {
+        for (const u of store.users) {
+          if (u && (u.id || u.telegramId)) {
+            const id = String(u.id || `user_${u.telegramId}`);
+            if (!memStore.users.has(id)) {
+              memStore.users.set(id, u);
+              if (u.telegramId) {
+                memStore.telegramIdToUserId.set(Number(u.telegramId), id);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Update secondary index for all users in memStore
+    for (const [id, u] of memStore.users.entries()) {
+      if (u.telegramId) {
+        memStore.telegramIdToUserId.set(Number(u.telegramId), id);
+      }
+    }
+
+    const count = memStore.users.size;
+    memStore.lastVerifiedUserCount = Math.max(memStore.lastVerifiedUserCount, count);
+
+    if (count > 0) {
+      fs.writeFileSync(
+        USER_COUNT_JOURNAL_PATH,
+        JSON.stringify(
+          {
+            totalUsers: count,
+            uniqueTelegramIds: memStore.telegramIdToUserId.size,
+            verifiedAt: new Date().toISOString(),
+            status: 'verified',
+          },
+          null,
+          2
+        ),
+        { mode: 0o600 }
+      );
+    }
+
+    return count;
+  } catch (err) {
+    console.warn('[DB] reconcileUsersRegistry error:', err);
+    return memStore.users.size;
+  }
+}
 
 /**
  * Checks if a code has already been successfully redeemed in ANY withdrawal record.
@@ -2841,22 +3144,23 @@ export async function getAdminAuditLogs(limit = 50): Promise<AdminAuditLog[]> {
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
+  // Ensure authoritative registries are loaded
+  if (memStore.users.size === 0) {
+    reconcileUsersRegistry();
+  }
+  if (memStore.giftCardCodes.size === 0) {
+    reconcileGVRegistry();
+  }
+
   try {
-    if (memStore.users.size < 50) {
-      const snap = await getDocs(collection(db, getColName('users')));
-      snap.forEach((d) => {
-        const u = d.data() as UserProfile;
-        memStore.users.set(u.id || d.id, { ...u, id: u.id || d.id });
-      });
-    }
-    if (memStore.withdrawals.size < 20) {
+    if (isFirestoreAvailable() && memStore.withdrawals.size < 20) {
       const snap = await getDocs(collection(db, getColName('withdrawals')));
       snap.forEach((d) => {
         const w = d.data() as Withdrawal;
         memStore.withdrawals.set(w.id || d.id, { ...w, id: w.id || d.id });
       });
     }
-    if (memStore.transactions.size < 50) {
+    if (isFirestoreAvailable() && memStore.transactions.size < 50) {
       const snap = await getDocs(collection(db, getColName('transactions')));
       snap.forEach((d) => {
         const t = d.data() as Transaction;
@@ -2864,12 +3168,14 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       });
     }
   } catch (err) {
+    reportFirestoreError(err);
     console.warn('[DB] getDashboardStats Firestore sync fallback:', err);
   }
 
+  const totalUsers = getTotalRegisteredUsersCount();
   const users = Array.from(memStore.users.values());
   const today = new Date().toISOString().split('T')[0];
-  const activeToday = users.filter((u) => u.lastDailyCheckIn === today || u.updatedAt.startsWith(today)).length;
+  const activeToday = users.filter((u) => u.lastDailyCheckIn === today || (u.updatedAt && u.updatedAt.startsWith(today))).length;
 
   const totalRewards = Array.from(memStore.transactions.values())
     .filter((t) => t.amount > 0)
@@ -2881,8 +3187,8 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const failed = withdrawals.filter((w) => w.status === 'failed' || w.status === 'rejected');
 
   return {
-    totalUsers: users.length,
-    activeUsersToday: Math.max(activeToday, users.length > 0 ? 1 : 0),
+    totalUsers,
+    activeUsersToday: Math.max(activeToday, totalUsers > 0 ? 1 : 0),
     totalTaskCompletions: memStore.taskCompletions.size,
     totalRewardsCredited: Math.round(totalRewards * 100) / 100,
     pendingWithdrawalsCount: pending.length,
@@ -2904,7 +3210,7 @@ export async function getBulkBalanceResetPreview(): Promise<BulkBalanceResetPrev
   const currentGeneration = settings.resetGeneration || 1;
   const nextGeneration = currentGeneration + 1;
 
-  const allUsers = await searchUsers();
+  const allUsers = await getAllUsers();
   let totalBalance = 0;
   let affectedCount = 0;
 
@@ -2931,7 +3237,7 @@ export async function atomicResetAllUserBalances(adminId: string): Promise<BulkB
     const nextGeneration = currentGeneration + 1;
     const now = new Date().toISOString();
 
-    const allUsers = await searchUsers();
+    const allUsers = await getAllUsers();
     let affectedCount = 0;
     let totalBalanceReset = 0;
 
@@ -3158,8 +3464,9 @@ export async function verifyMandatoryCheckinMembership(
 // Initialize authoritative reconciliation on startup
 try {
   reconcileGVRegistry();
+  reconcileUsersRegistry();
 } catch (err) {
-  console.warn('[DB] Initial reconcileGVRegistry error:', err);
+  console.warn('[DB] Initial reconciliation error:', err);
 }
 
 

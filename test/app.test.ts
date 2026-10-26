@@ -1045,9 +1045,11 @@ async function runTests() {
     // Create two test users with balances
     const userAId = `reset_user_a_${Date.now()}`;
     const userBId = `reset_user_b_${Date.now()}`;
+    const tgAId = 7770000 + Math.floor(Math.random() * 90000);
+    const tgBId = 8880000 + Math.floor(Math.random() * 90000);
     await saveUser({
       id: userAId,
-      telegramId: 777111,
+      telegramId: tgAId,
       username: 'reset_alice',
       firstName: 'Alice',
       balance: 150,
@@ -1056,12 +1058,13 @@ async function runTests() {
       referralCode: `ref_alice_${Date.now()}`,
       dailyStreak: 3,
       isBanned: false,
+      signupBonusClaimed: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
     await saveUser({
       id: userBId,
-      telegramId: 777222,
+      telegramId: tgBId,
       username: 'reset_bob',
       firstName: 'Bob',
       balance: 250,
@@ -1070,6 +1073,7 @@ async function runTests() {
       referralCode: `ref_bob_${Date.now()}`,
       dailyStreak: 1,
       isBanned: false,
+      signupBonusClaimed: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -1084,14 +1088,14 @@ async function runTests() {
     const curGen = preview.currentGeneration;
     const initialClaim = await atomicClaimSignupBonus({
       userId: userAId,
-      telegramId: 777111,
+      telegramId: tgAId,
     });
     assert(initialClaim.success === true, 'Signup Bonus: Successfully claimed in current generation');
 
     // Duplicate claim under same generation is strictly blocked
     const dupClaim = await atomicClaimSignupBonus({
       userId: userAId,
-      telegramId: 777111,
+      telegramId: tgAId,
     });
     assert(dupClaim.success === false, 'Signup Bonus: Duplicate claim in same generation strictly blocked');
 
@@ -1110,15 +1114,15 @@ async function runTests() {
 
     // Verify user profile integrity: username, telegramId, referral ties, daily streak preserved
     assert(userAAfter?.username === 'reset_alice', 'Bulk Reset Integrity: User A username preserved');
-    assert(userAAfter?.telegramId === 777111, 'Bulk Reset Integrity: User A telegramId preserved');
+    assert(userAAfter?.telegramId === tgAId, 'Bulk Reset Integrity: User A telegramId preserved');
     assert(userAAfter?.dailyStreak === 3, 'Bulk Reset Integrity: User A daily streak preserved');
     assert(userBAfter?.username === 'reset_bob', 'Bulk Reset Integrity: User B username preserved');
-    assert(userBAfter?.telegramId === 777222, 'Bulk Reset Integrity: User B telegramId preserved');
+    assert(userBAfter?.telegramId === tgBId, 'Bulk Reset Integrity: User B telegramId preserved');
 
     // User A can now claim the signup bonus ONCE AGAIN under the new generation!
     const newGenClaim = await atomicClaimSignupBonus({
       userId: userAId,
-      telegramId: 777111,
+      telegramId: tgAId,
     });
     assert(newGenClaim.success === true, 'Signup Bonus: User A successfully re-claims bonus in new generation');
 
@@ -1128,7 +1132,7 @@ async function runTests() {
     // Second claim within new generation blocked again
     const secondNewGenClaim = await atomicClaimSignupBonus({
       userId: userAId,
-      telegramId: 777111,
+      telegramId: tgAId,
     });
     assert(secondNewGenClaim.success === false, 'Signup Bonus: Double claim within new generation blocked');
   }
@@ -1453,7 +1457,7 @@ async function runTests() {
     clearMockChannelMemberships();
 
     // Setup a new user for scratch signup bonus testing
-    const testTgId = 11223344;
+    const testTgId = 11220000 + Math.floor(Math.random() * 90000);
     const scratchUserId = `user_scratch_${Date.now()}`;
     const scratchUser: UserProfile = {
       id: scratchUserId,

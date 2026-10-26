@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import {
   getUser,
+  getUserByTelegramId,
   saveUser,
   getAppSettings,
   updateAppSettings,
@@ -36,6 +37,7 @@ import {
   saveForceJoinChannel,
   deleteForceJoinChannel,
   getDashboardStats,
+  getTotalRegisteredUsersCount,
   recordAdminAudit,
   getAdminAuditLogs,
   searchUsers,
@@ -162,28 +164,36 @@ async function extractTelegramUser(req: Request, res: Response, next: NextFuncti
     return res.status(401).json({ error: result.error || 'Invalid Telegram initData signature' });
   }
 
-  let user = await getUser(result.user.id.toString());
+  let user = (await getUserByTelegramId(result.user.id)) || (await getUser(result.user.id.toString()));
   if (!user) {
-    // Provision user if not yet in database
-    const settings = await getAppSettings();
-    const newUser: UserProfile = {
-      id: result.user.id.toString(),
-      telegramId: result.user.id,
-      username: result.user.username || '',
-      firstName: result.user.first_name || 'Telegram User',
-      lastName: result.user.last_name || '',
-      photoUrl: result.user.photo_url || '',
-      balance: 0,
-      lifetimeEarnings: 0,
-      referralEarnings: 0,
-      referralCode: `ref_${result.user.id}_${Math.random().toString(36).substring(2, 6)}`,
-      dailyStreak: 0,
-      isBanned: false,
-      signupBonusClaimed: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    user = await saveUser(newUser);
+    const unlock = await acquireLock(`reg_${result.user.id}`, 5000);
+    try {
+      user = (await getUserByTelegramId(result.user.id)) || (await getUser(result.user.id.toString()));
+      if (!user) {
+        // Provision user if not yet in database
+        const settings = await getAppSettings();
+        const newUser: UserProfile = {
+          id: result.user.id.toString(),
+          telegramId: result.user.id,
+          username: result.user.username || '',
+          firstName: result.user.first_name || 'Telegram User',
+          lastName: result.user.last_name || '',
+          photoUrl: result.user.photo_url || '',
+          balance: 0,
+          lifetimeEarnings: 0,
+          referralEarnings: 0,
+          referralCode: `ref_${result.user.id}_${Math.random().toString(36).substring(2, 6)}`,
+          dailyStreak: 0,
+          isBanned: false,
+          signupBonusClaimed: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        user = await saveUser(newUser);
+      }
+    } finally {
+      unlock();
+    }
   }
 
   if (user.isBanned) {
@@ -334,7 +344,7 @@ apiRouter.post('/auth/verify-telegram', async (req, res) => {
       );
     }
 
-    let user = await getUser(userId);
+    let user = (await getUserByTelegramId(tgUser.id)) || (await getUser(userId));
     const isNew = !user;
 
     // 3. Secure Referral Code Capture & Validation
@@ -343,39 +353,47 @@ apiRouter.post('/auth/verify-telegram', async (req, res) => {
       const cleanRefCode = refCode.trim();
       inviterUser = await getUserByReferralCode(cleanRefCode);
       // Strictly prevent self-referral
-      if (inviterUser && inviterUser.id === userId) {
+      if (inviterUser && (inviterUser.id === userId || (inviterUser.telegramId && inviterUser.telegramId === tgUser.id))) {
         inviterUser = null;
       }
     }
 
     if (isNew) {
-      // Generate guaranteed collision-resistant unique referral code
-      const uniqueSuffix = crypto.randomBytes(3).toString('hex');
-      const referralCode = `ref_${tgUser.id}_${uniqueSuffix}`;
+      const unlock = await acquireLock(`reg_${tgUser.id}`, 5000);
+      try {
+        user = (await getUserByTelegramId(tgUser.id)) || (await getUser(userId));
+        if (!user) {
+          // Generate guaranteed collision-resistant unique referral code
+          const uniqueSuffix = crypto.randomBytes(3).toString('hex');
+          const referralCode = `ref_${tgUser.id}_${uniqueSuffix}`;
 
-      const newUser: UserProfile = {
-        id: userId,
-        telegramId: tgUser.id,
-        username: tgUser.username || '',
-        firstName: tgUser.first_name || 'Telegram User',
-        lastName: tgUser.last_name || '',
-        photoUrl: tgUser.photo_url || '',
-        balance: 0,
-        lifetimeEarnings: 0,
-        referralEarnings: 0,
-        referralCode,
-        referredBy: inviterUser ? inviterUser.id : null,
-        dailyStreak: 0,
-        isBanned: false,
-        deviceId,
-        deviceFingerprint: fingerprintHash,
-        ipHash,
-        signupBonusClaimed: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
+          const newUser: UserProfile = {
+            id: userId,
+            telegramId: tgUser.id,
+            username: tgUser.username || '',
+            firstName: tgUser.first_name || 'Telegram User',
+            lastName: tgUser.last_name || '',
+            photoUrl: tgUser.photo_url || '',
+            balance: 0,
+            lifetimeEarnings: 0,
+            referralEarnings: 0,
+            referralCode,
+            referredBy: inviterUser ? inviterUser.id : null,
+            dailyStreak: 0,
+            isBanned: false,
+            deviceId,
+            deviceFingerprint: fingerprintHash,
+            ipHash,
+            signupBonusClaimed: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
 
-      user = await saveUser(newUser);
+          user = await saveUser(newUser);
+        }
+      } finally {
+        unlock();
+      }
     } else if (user) {
       // Update profile info while strictly preserving immutable referral attribution
       const updatedUser: UserProfile = {
@@ -1213,7 +1231,12 @@ apiRouter.post('/force-join/verify', extractTelegramUser, async (req, res) => {
 apiRouter.get('/admin/dashboard', extractTelegramUser, requireAdmin, async (req, res) => {
   try {
     const stats = await getDashboardStats();
-    const gatewayStatus = await payoutGateway.getStatus();
+    let gatewayStatus: any = null;
+    try {
+      gatewayStatus = await payoutGateway.getStatus();
+    } catch (gwErr) {
+      console.warn('[Admin Dashboard] Gateway status warning:', gwErr);
+    }
     const settings = await getAppSettings();
 
     res.json({
@@ -1222,7 +1245,26 @@ apiRouter.get('/admin/dashboard', extractTelegramUser, requireAdmin, async (req,
       settings,
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    console.error('[Admin Dashboard Error]:', err);
+    const totalUsers = getTotalRegisteredUsersCount();
+    res.json({
+      stats: {
+        totalUsers,
+        activeUsersToday: 0,
+        totalTaskCompletions: 0,
+        totalRewardsCredited: 0,
+        pendingWithdrawalsCount: 0,
+        pendingWithdrawalsAmount: 0,
+        successfulPayoutsCount: 0,
+        successfulPayoutsAmount: 0,
+        failedPayoutsCount: 0,
+        duplicateDevicesBlocked: 0,
+        totalTaskBots: 0,
+        stale: true,
+      },
+      gatewayStatus: null,
+      settings: await getAppSettings().catch(() => ({})),
+    });
   }
 });
 
@@ -2078,8 +2120,10 @@ apiRouter.post('/payouts/webhook', async (req, res) => {
 apiRouter.get('/admin/users', extractTelegramUser, requireAdmin, async (req, res) => {
   try {
     const query = req.query.q as string;
-    const users = await searchUsers(query);
-    res.json({ users });
+    const limitParam = req.query.limit ? Number(req.query.limit) : 50;
+    const users = await searchUsers(query, limitParam);
+    const totalUsers = getTotalRegisteredUsersCount();
+    res.json({ users, totalUsers });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

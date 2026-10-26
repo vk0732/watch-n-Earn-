@@ -441,7 +441,7 @@ export const api = {
     }),
 
   searchAdminUsers: (q?: string) =>
-    request<{ users: UserProfile[] }>(`/admin/users${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+    request<{ users: UserProfile[]; totalUsers?: number }>(`/admin/users${q ? `?q=${encodeURIComponent(q)}` : ''}`),
 
   toggleUserBan: (userId: string) =>
     request<{ success: boolean; user: UserProfile }>(`/admin/users/${userId}/ban`, {

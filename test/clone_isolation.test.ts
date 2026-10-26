@@ -418,6 +418,11 @@ async function runTests() {
   // Test 7: Same-Device Anti-Abuse & Referral Protection
   console.log('\nTest Suite C7: Same-Device Multi-Account & Referral Abuse Protection');
   {
+    const baseTg = 55500000 + Math.floor(Math.random() * 900000);
+    const tgA = baseTg + 1;
+    const tgB = baseTg + 2;
+    const tgC = baseTg + 3;
+
     const devX = `dev_test_shared_hardware_${Date.now()}`;
     const fpX = `fp_test_shared_canvas_${Date.now()}`;
     const devY = `dev_test_separate_phone_${Date.now()}`;
@@ -427,7 +432,7 @@ async function runTests() {
     const userA_id = `user_device_owner_a_${Date.now()}`;
     await saveUser({
       id: userA_id,
-      telegramId: 11111101,
+      telegramId: tgA,
       username: 'owner_user_a',
       balance: 0,
       lifetimeEarnings: 0,
@@ -444,7 +449,7 @@ async function runTests() {
     });
 
     // 1. Primary User A registers as device owner
-    const regA = await getOrRegisterDeviceOwner(userA_id, 11111101, devX, fpX);
+    const regA = await getOrRegisterDeviceOwner(userA_id, tgA, devX, fpX);
     assert.strictEqual(regA.isPrimaryAccount, true);
     assert.strictEqual(regA.primaryUserId, userA_id);
     console.log('  ✓ PASS: Primary user successfully established as device owner');
@@ -453,7 +458,7 @@ async function runTests() {
     // 2. Primary User A claims signup bonus (succeeds)
     const claimA = await atomicClaimSignupBonus({
       userId: userA_id,
-      telegramId: 11111101,
+      telegramId: tgA,
       deviceId: devX,
       fingerprintHash: fpX,
     });
@@ -468,7 +473,7 @@ async function runTests() {
     const userB_id = `user_device_abuser_b_${Date.now()}`;
     await saveUser({
       id: userB_id,
-      telegramId: 11111102,
+      telegramId: tgB,
       username: 'abuser_user_b',
       balance: 0,
       lifetimeEarnings: 0,
@@ -494,7 +499,7 @@ async function runTests() {
     // 4. Secondary User B attempts signup bonus (MUST BE REJECTED)
     const claimB = await atomicClaimSignupBonus({
       userId: userB_id,
-      telegramId: 11111102,
+      telegramId: tgB,
       deviceId: devX,
       fingerprintHash: fpX,
     });
@@ -573,7 +578,7 @@ async function runTests() {
     const userC_id = `user_legit_c_${Date.now()}`;
     await saveUser({
       id: userC_id,
-      telegramId: 11111103,
+      telegramId: tgC,
       username: 'legit_user_c',
       balance: 0,
       lifetimeEarnings: 0,

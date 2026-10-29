@@ -314,13 +314,18 @@ export function getDailyCheckinCycleRewards(settings: Partial<AppSettings>): num
   return [1, 2, 3, 4, 5, 6, 7].map((day) => Math.round((base + (day - 1) * diff) * 100) / 100);
 }
 
+let lastSettingsMtime = 0;
 export function loadAuthoritativeSettings(): void {
   try {
     if (fs.existsSync(SETTINGS_AUTHORITATIVE_PATH)) {
-      const raw = fs.readFileSync(SETTINGS_AUTHORITATIVE_PATH, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
-        memStore.settings = { ...memStore.settings, ...parsed };
+      const stat = fs.statSync(SETTINGS_AUTHORITATIVE_PATH);
+      if (stat.mtimeMs > lastSettingsMtime) {
+        lastSettingsMtime = stat.mtimeMs;
+        const raw = fs.readFileSync(SETTINGS_AUTHORITATIVE_PATH, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          memStore.settings = { ...memStore.settings, ...parsed };
+        }
       }
     }
   } catch (err) {
@@ -335,12 +340,16 @@ export function persistAuthoritativeSettings(): void {
     const dir = path.dirname(SETTINGS_AUTHORITATIVE_PATH);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(SETTINGS_AUTHORITATIVE_PATH, JSON.stringify(memStore.settings, null, 2), 'utf-8');
+    if (fs.existsSync(SETTINGS_AUTHORITATIVE_PATH)) {
+      lastSettingsMtime = fs.statSync(SETTINGS_AUTHORITATIVE_PATH).mtimeMs;
+    }
   } catch (err) {
     console.warn('[DB] Could not persist authoritative_settings.json:', err);
   }
 }
 
 export async function getAppSettings(): Promise<AppSettings> {
+  loadAuthoritativeSettings();
   if (!isFirestoreAvailable()) {
     return memStore.settings;
   }

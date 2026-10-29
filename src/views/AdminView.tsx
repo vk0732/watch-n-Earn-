@@ -33,6 +33,7 @@ import {
   Gift,
   Disc,
   Ticket,
+  Calendar,
 } from 'lucide-react';
 import { api } from '../services/api.ts';
 import { ErrorBoundary } from '../components/ErrorBoundary.tsx';
@@ -127,6 +128,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
   // Bulk Balance Reset State
   const [resetPreview, setResetPreview] = useState<BulkBalanceResetPreview | null>(null);
+
+  // Daily Check-In Quick Generator State
+  const [quickBase, setQuickBase] = useState('0.25');
+  const [quickDiff, setQuickDiff] = useState('0.25');
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetPhrase, setResetPhrase] = useState('');
   const [resetting, setResetting] = useState(false);
@@ -3452,29 +3457,167 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">Daily Check-In Base (₹)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={settings.dailyCheckinBaseReward ?? 5}
-                      onChange={(e) => setSettings({ ...settings, dailyCheckinBaseReward: Number(e.target.value) })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
-                    />
-                    <p className="text-[10px] text-slate-500 mt-0.5">Day 1 baseline reward (default: ₹5)</p>
+                {/* Daily Check-In System Card */}
+                <div className="p-4 bg-slate-50/80 border border-slate-200 rounded-2xl space-y-4">
+                  {/* Card Header & Master ON/OFF Switch */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-sky-100/70 border border-sky-200 flex items-center justify-center text-[#0088cc]">
+                        <Calendar className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs font-bold text-slate-900">Daily Check-In System</h4>
+                          {settings.dailyCheckinEnabled !== false ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                              <Check className="w-3 h-3 text-emerald-600" /> Active (ON)
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200 flex items-center gap-1">
+                              <XCircle className="w-3 h-3 text-rose-600" /> Disabled (OFF)
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Configure reward amounts per cycle day and toggle the feature availability.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Master ON/OFF Toggle Switch */}
+                    <label className="inline-flex items-center gap-2 cursor-pointer bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs hover:bg-slate-50 transition shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={settings.dailyCheckinEnabled !== false}
+                        onChange={(e) =>
+                          setSettings({ ...settings, dailyCheckinEnabled: e.target.checked })
+                        }
+                        className="rounded bg-slate-800 border-slate-300 text-[#0088cc] focus:ring-sky-500/20"
+                      />
+                      <span className="text-xs font-bold text-slate-800">
+                        {settings.dailyCheckinEnabled !== false ? 'Check-In Enabled' : 'Check-In Disabled'}
+                      </span>
+                    </label>
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">Daily Check-In Reward Difference (₹)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={settings.dailyCheckinRewardDifference ?? 2}
-                      onChange={(e) => setSettings({ ...settings, dailyCheckinRewardDifference: Number(e.target.value) })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
-                    />
-                    <p className="text-[10px] text-slate-500 mt-0.5">Increment per day across the 7-day streak cycle (default: ₹2)</p>
+
+                  {/* Flexible Per-Day Amounts (Day 1 through Day 7) */}
+                  <div className="space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-800">
+                          7-Day Check-In Reward Amounts (₹)
+                        </label>
+                        <p className="text-[10px] text-slate-500">
+                          Set custom amounts for each day. Supports decimals (e.g. ₹0.25, ₹0.50, ₹1.50). Min: ₹0.01.
+                        </p>
+                      </div>
+
+                      {/* Quick Progression Helper */}
+                      <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                        <span className="text-[11px] font-medium text-slate-500">Quick Fill:</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          placeholder="Base"
+                          value={quickBase}
+                          onChange={(e) => setQuickBase(e.target.value)}
+                          className="w-16 px-2 py-1 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-semibold"
+                          title="Base reward for Day 1"
+                        />
+                        <span className="text-slate-400">+</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          placeholder="Diff"
+                          value={quickDiff}
+                          onChange={(e) => setQuickDiff(e.target.value)}
+                          className="w-16 px-2 py-1 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-semibold"
+                          title="Daily increment difference"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const b = Math.max(0.01, Number(quickBase) || 0.25);
+                            const d = Math.max(0.01, Number(quickDiff) || 0.25);
+                            const generated = [1, 2, 3, 4, 5, 6, 7].map((day) =>
+                              Math.round((b + (day - 1) * d) * 100) / 100
+                            );
+                            setSettings({
+                              ...settings,
+                              dailyCheckinRewards: generated,
+                              dailyCheckinBaseReward: generated[0],
+                              dailyCheckinRewardDifference: d,
+                            });
+                          }}
+                          className="px-2.5 py-1 bg-sky-600 hover:bg-sky-700 text-white font-bold text-[11px] rounded-lg shadow-2xs transition"
+                        >
+                          Apply
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 7 Inputs Grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+                      {[1, 2, 3, 4, 5, 6, 7].map((day) => {
+                        const currentArr = Array.isArray(settings.dailyCheckinRewards) && settings.dailyCheckinRewards.length === 7
+                          ? settings.dailyCheckinRewards
+                          : [1, 2, 3, 4, 5, 6, 7].map((d) =>
+                              Math.round(((settings.dailyCheckinBaseReward ?? 5) + (d - 1) * (settings.dailyCheckinRewardDifference ?? 2)) * 100) / 100
+                            );
+                        const currentVal = currentArr[day - 1];
+
+                        return (
+                          <div key={day} className="bg-white p-2.5 rounded-xl border border-slate-200/90 shadow-2xs flex flex-col justify-between">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-[#0088cc]">
+                                Day {day}
+                              </span>
+                              <span className="text-[9px] text-slate-400 font-mono">₹</span>
+                            </div>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              value={currentVal}
+                              onChange={(e) => {
+                                const newAmount = Math.max(0.01, Math.round(Number(e.target.value) * 100) / 100);
+                                const nextArr = [...currentArr];
+                                nextArr[day - 1] = isNaN(newAmount) ? 0.01 : newAmount;
+                                setSettings({
+                                  ...settings,
+                                  dailyCheckinRewards: nextArr,
+                                  dailyCheckinBaseReward: nextArr[0],
+                                });
+                              }}
+                              className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-bold text-center"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Cycle Metric Summary */}
+                    {(() => {
+                      const arr = Array.isArray(settings.dailyCheckinRewards) && settings.dailyCheckinRewards.length === 7
+                        ? settings.dailyCheckinRewards
+                        : [1, 2, 3, 4, 5, 6, 7].map((d) =>
+                            Math.round(((settings.dailyCheckinBaseReward ?? 5) + (d - 1) * (settings.dailyCheckinRewardDifference ?? 2)) * 100) / 100
+                          );
+                      const totalCycle = Math.round(arr.reduce((a, b) => a + b, 0) * 100) / 100;
+                      const avgDaily = Math.round((totalCycle / 7) * 100) / 100;
+                      return (
+                        <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-sky-50/70 border border-sky-100 rounded-xl text-xs text-sky-900">
+                          <span className="font-medium">
+                            Weekly Cycle Payout (Days 1–7): <strong className="font-bold text-[#0088cc]">₹{totalCycle.toFixed(2)}</strong>
+                          </span>
+                          <span className="text-slate-500 text-[11px]">
+                            Daily Average: <strong className="font-semibold text-slate-700">₹{avgDaily.toFixed(2)} / day</strong>
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 

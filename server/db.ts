@@ -129,6 +129,8 @@ export const memStore = {
     signupBonus: 20, // PRD: ₹10-₹25 configurable
     maxScratchSignupBonus: 10, // Admin-configurable Maximum Scratch Signup Bonus (default: ₹10)
     referralReward: 10, // PRD: ₹10 per referral
+    dailyCheckinEnabled: true, // Master ON/OFF toggle (default: true)
+    dailyCheckinRewards: [5, 7, 9, 11, 13, 15, 17], // Configurable per-day rewards for 7-day cycle [Day 1..7]
     dailyCheckinBaseReward: 5,
     dailyCheckinRewardDifference: 2,
     minWithdrawalAmount: 10, // PRD: ₹10 minimum withdrawal
@@ -284,8 +286,60 @@ export function cleanDocData<T>(obj: T): any {
 }
 
 /* ========================================================
-   SETTINGS REPOSITORY
+   SETTINGS REPOSITORY & DAILY CHECK-IN CYCLE REWARDS
    ======================================================== */
+
+const SETTINGS_AUTHORITATIVE_PATH = path.join(process.cwd(), 'data', 'authoritative_settings.json');
+
+/**
+ * Returns the 7-day reward cycle amounts with decimal safety.
+ * Supports custom admin-configured amounts for each day (Day 1..7).
+ */
+export function getDailyCheckinCycleRewards(settings: Partial<AppSettings>): number[] {
+  if (
+    Array.isArray(settings.dailyCheckinRewards) &&
+    settings.dailyCheckinRewards.length === 7 &&
+    settings.dailyCheckinRewards.every((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0.01)
+  ) {
+    return settings.dailyCheckinRewards.map((v) => Math.round(v * 100) / 100);
+  }
+  const base =
+    typeof settings.dailyCheckinBaseReward === 'number' && settings.dailyCheckinBaseReward >= 0.01
+      ? settings.dailyCheckinBaseReward
+      : 5;
+  const diff =
+    typeof settings.dailyCheckinRewardDifference === 'number' && settings.dailyCheckinRewardDifference >= 0.01
+      ? settings.dailyCheckinRewardDifference
+      : 2;
+  return [1, 2, 3, 4, 5, 6, 7].map((day) => Math.round((base + (day - 1) * diff) * 100) / 100);
+}
+
+export function loadAuthoritativeSettings(): void {
+  try {
+    if (fs.existsSync(SETTINGS_AUTHORITATIVE_PATH)) {
+      const raw = fs.readFileSync(SETTINGS_AUTHORITATIVE_PATH, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        memStore.settings = { ...memStore.settings, ...parsed };
+      }
+    }
+  } catch (err) {
+    console.warn('[DB] Could not load authoritative_settings.json:', err);
+  }
+}
+loadAuthoritativeSettings();
+
+export function persistAuthoritativeSettings(): void {
+  if (process.env.NODE_ENV === 'test') return;
+  try {
+    const dir = path.dirname(SETTINGS_AUTHORITATIVE_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(SETTINGS_AUTHORITATIVE_PATH, JSON.stringify(memStore.settings, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('[DB] Could not persist authoritative_settings.json:', err);
+  }
+}
+
 export async function getAppSettings(): Promise<AppSettings> {
   if (!isFirestoreAvailable()) {
     return memStore.settings;
@@ -309,8 +363,14 @@ export async function getAppSettings(): Promise<AppSettings> {
       if (merged.payoutChannelId === '@TeleEarnPayouts') {
         merged.payoutChannelId = process.env.PAYOUT_CHANNEL_ID || '';
       }
+      merged.dailyCheckinEnabled = merged.dailyCheckinEnabled !== false;
+      merged.dailyCheckinRewards = getDailyCheckinCycleRewards(merged);
+      merged.dailyCheckinBaseReward =
+        typeof merged.dailyCheckinBaseReward === 'number' && merged.dailyCheckinBaseReward >= 0.01
+          ? merged.dailyCheckinBaseReward
+          : merged.dailyCheckinRewards[0] || 5;
       merged.dailyCheckinRewardDifference =
-        typeof merged.dailyCheckinRewardDifference === 'number' && merged.dailyCheckinRewardDifference > 0
+        typeof merged.dailyCheckinRewardDifference === 'number' && merged.dailyCheckinRewardDifference >= 0.01
           ? merged.dailyCheckinRewardDifference
           : 2;
       merged.maxScratchSignupBonus =
@@ -324,12 +384,16 @@ export async function getAppSettings(): Promise<AppSettings> {
       ) {
         merged.maxWithdrawalAmount = 5000;
       }
+      memStore.settings = merged;
+      persistAuthoritativeSettings();
       return merged;
     }
   } catch (err) {
     reportFirestoreError(err);
     console.warn('[DB] Using local app_settings fallback:', err);
   }
+  memStore.settings.dailyCheckinEnabled = memStore.settings.dailyCheckinEnabled !== false;
+  memStore.settings.dailyCheckinRewards = getDailyCheckinCycleRewards(memStore.settings);
   return memStore.settings;
 }
 
@@ -337,7 +401,12 @@ export async function updateAppSettings(newSettings: Partial<AppSettings>): Prom
   if (newSettings.botUsername) {
     newSettings.botUsername = formatBotUsername(newSettings.botUsername);
   }
+  if (newSettings.dailyCheckinRewards && Array.isArray(newSettings.dailyCheckinRewards)) {
+    newSettings.dailyCheckinRewards = newSettings.dailyCheckinRewards.map((v) => Math.round(v * 100) / 100);
+    newSettings.dailyCheckinBaseReward = newSettings.dailyCheckinRewards[0];
+  }
   memStore.settings = { ...memStore.settings, ...newSettings };
+  persistAuthoritativeSettings();
   if (!isFirestoreAvailable()) {
     return memStore.settings;
   }

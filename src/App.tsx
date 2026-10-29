@@ -69,7 +69,9 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>({
     signupBonus: 50,
     referralReward: 25,
-    dailyCheckinBaseReward: 10,
+    dailyCheckinEnabled: true,
+    dailyCheckinRewards: [5, 7, 9, 11, 13, 15, 17],
+    dailyCheckinBaseReward: 5,
     dailyCheckinRewardDifference: 2,
     minWithdrawalAmount: 100,
     supportTelegramUsername: 'TeleEarnSupport',
@@ -147,6 +149,8 @@ export default function App() {
         settings: {
           signupBonus: 20,
           referralReward: 10,
+          dailyCheckinEnabled: true,
+          dailyCheckinRewards: [5, 7, 9, 11, 13, 15, 17],
           dailyCheckinBaseReward: 5,
           dailyCheckinRewardDifference: 2,
           minWithdrawalAmount: 10,

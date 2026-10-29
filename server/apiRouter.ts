@@ -6,6 +6,7 @@ import {
   saveUser,
   getAppSettings,
   updateAppSettings,
+  getDailyCheckinCycleRewards,
   getAllTasks,
   getTaskById,
   saveTask,
@@ -682,6 +683,14 @@ apiRouter.post('/rewards/daily-checkin', extractTelegramUser, async (req, res) =
     const user = (await getUser(reqUser.id)) || reqUser;
     const settings = await getAppSettings();
 
+    // 0. Dedicated Daily Check-In Master ON/OFF Check
+    if (settings.dailyCheckinEnabled === false) {
+      return res.status(403).json({
+        error: 'Daily check-in is currently disabled by administrator.',
+        disabled: true,
+      });
+    }
+
     const todayUTC = new Date().toISOString().split('T')[0];
 
     // 1. Check daily claim eligibility first
@@ -735,20 +744,18 @@ apiRouter.post('/rewards/daily-checkin', extractTelegramUser, async (req, res) =
       }
     }
 
-    // 4. Configurable reward difference calculation
-    const diff =
-      typeof settings.dailyCheckinRewardDifference === 'number' && settings.dailyCheckinRewardDifference > 0
-        ? settings.dailyCheckinRewardDifference
-        : 2;
-    const bonus = (streak - 1) * diff;
-    const reward = settings.dailyCheckinBaseReward + bonus;
+    // 4. Configurable per-day cycle reward calculation (Day 1..7)
+    const cycleRewards = getDailyCheckinCycleRewards(settings);
+    const dayIndex = Math.min(Math.max(streak, 1), 7) - 1;
+    const finalReward = Math.round((cycleRewards[dayIndex] ?? 5) * 100) / 100;
+    const formattedReward = Number.isInteger(finalReward) ? finalReward.toString() : finalReward.toFixed(2);
 
     // 5. Credit balance atomically first
     const result = await atomicCreditBalance(
       user.id,
-      reward,
+      finalReward,
       'daily_checkin',
-      `Daily Check-In Reward (Day ${streak} Streak bonus: +₹${bonus})`
+      `Daily Check-In Reward (Day ${streak} Streak: +₹${formattedReward})`
     );
 
     // 6. Only after balance credit succeeds, save user checkin state
@@ -758,10 +765,10 @@ apiRouter.post('/rewards/daily-checkin', extractTelegramUser, async (req, res) =
 
     res.json({
       success: true,
-      rewardAmount: reward,
+      rewardAmount: finalReward,
       streak,
       newBalance: result.user.balance,
-      message: `Claimed ₹${reward} coins for Day ${streak}!`,
+      message: `Claimed ₹${formattedReward} coins for Day ${streak}!`,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -1533,25 +1540,51 @@ apiRouter.post('/admin/settings', extractTelegramUser, requireAdmin, async (req,
       }
     }
 
+    // Validate Dedicated Daily Check-In Master ON/OFF Switch
+    if (incoming.dailyCheckinEnabled !== undefined) {
+      incoming.dailyCheckinEnabled = Boolean(incoming.dailyCheckinEnabled);
+    }
+
+    // Validate Daily Check-In custom rewards array [Day 1..7]
+    if (incoming.dailyCheckinRewards !== undefined && incoming.dailyCheckinRewards !== null) {
+      if (!Array.isArray(incoming.dailyCheckinRewards) || incoming.dailyCheckinRewards.length !== 7) {
+        return res.status(400).json({
+          error: 'Daily check-in rewards must be an array of exactly 7 amounts for Day 1 through Day 7.',
+        });
+      }
+      const validatedRewards: number[] = [];
+      for (let i = 0; i < 7; i++) {
+        const val = Number(incoming.dailyCheckinRewards[i]);
+        if (isNaN(val) || !Number.isFinite(val) || val < 0.01 || val > 50000) {
+          return res.status(400).json({
+            error: `Daily check-in reward for Day ${i + 1} must be a valid positive amount of at least ₹0.01 (received: ${incoming.dailyCheckinRewards[i]}).`,
+          });
+        }
+        validatedRewards.push(Math.round(val * 100) / 100);
+      }
+      incoming.dailyCheckinRewards = validatedRewards;
+      incoming.dailyCheckinBaseReward = validatedRewards[0];
+    }
+
     // Validate Daily Check-In reward settings
     if (incoming.dailyCheckinRewardDifference !== undefined && incoming.dailyCheckinRewardDifference !== null && incoming.dailyCheckinRewardDifference !== '') {
       const diffVal = Number(incoming.dailyCheckinRewardDifference);
-      if (isNaN(diffVal) || diffVal <= 0 || !Number.isFinite(diffVal) || diffVal > 500) {
+      if (isNaN(diffVal) || diffVal < 0.01 || !Number.isFinite(diffVal) || diffVal > 500) {
         return res.status(400).json({
-          error: 'Daily check-in reward difference must be a valid positive number greater than 0 (e.g. ₹1, ₹2, ₹3, ₹5).',
+          error: 'Daily check-in reward difference must be a valid positive number of at least ₹0.01.',
         });
       }
-      incoming.dailyCheckinRewardDifference = diffVal;
+      incoming.dailyCheckinRewardDifference = Math.round(diffVal * 100) / 100;
     }
 
     if (incoming.dailyCheckinBaseReward !== undefined && incoming.dailyCheckinBaseReward !== null && incoming.dailyCheckinBaseReward !== '') {
       const baseVal = Number(incoming.dailyCheckinBaseReward);
-      if (isNaN(baseVal) || baseVal <= 0 || !Number.isFinite(baseVal) || baseVal > 5000) {
+      if (isNaN(baseVal) || baseVal < 0.01 || !Number.isFinite(baseVal) || baseVal > 5000) {
         return res.status(400).json({
-          error: 'Daily check-in base reward must be a valid positive number greater than 0.',
+          error: 'Daily check-in base reward must be a valid positive number of at least ₹0.01.',
         });
       }
-      incoming.dailyCheckinBaseReward = baseVal;
+      incoming.dailyCheckinBaseReward = Math.round(baseVal * 100) / 100;
     }
 
     // Validate Maximum Scratch Signup Bonus

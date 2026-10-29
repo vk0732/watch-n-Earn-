@@ -112,6 +112,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
       {/* Daily Check-In Component */}
       <DailyCheckinCard
         user={user}
+        dailyCheckinEnabled={settings.dailyCheckinEnabled !== false}
+        dailyCheckinRewards={settings.dailyCheckinRewards}
         baseReward={settings.dailyCheckinBaseReward}
         rewardDifference={settings.dailyCheckinRewardDifference ?? 2}
         onClaimed={onClaimedCheckin}

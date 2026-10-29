@@ -1,20 +1,24 @@
 import React, { useState } from 'react';
-import { Calendar, Sparkles, Check, Clock, ShieldAlert, ExternalLink, RefreshCw } from 'lucide-react';
+import { Calendar, Sparkles, Check, Clock, ShieldAlert, ExternalLink, RefreshCw, PauseCircle } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { api } from '../services/api.ts';
 import type { UserProfile, ForceJoinChannel } from '../types/index.ts';
 
 interface DailyCheckinCardProps {
   user: UserProfile;
-  baseReward: number;
+  dailyCheckinEnabled?: boolean;
+  dailyCheckinRewards?: number[];
+  baseReward?: number;
   rewardDifference?: number;
   onClaimed: (newBalance: number, streak: number) => void;
 }
 
 export const DailyCheckinCard: React.FC<DailyCheckinCardProps> = ({
   user,
-  baseReward,
-  rewardDifference,
+  dailyCheckinEnabled = true,
+  dailyCheckinRewards,
+  baseReward = 5,
+  rewardDifference = 2,
   onClaimed,
 }) => {
   const [loading, setLoading] = useState(false);
@@ -25,7 +29,20 @@ export const DailyCheckinCard: React.FC<DailyCheckinCardProps> = ({
   const todayUTC = new Date().toISOString().split('T')[0];
   const isClaimedToday = user.lastDailyCheckIn === todayUTC;
   const currentStreak = user.dailyStreak || 0;
-  const diff = typeof rewardDifference === 'number' && rewardDifference > 0 ? rewardDifference : 2;
+  const diff = typeof rewardDifference === 'number' && rewardDifference >= 0.01 ? rewardDifference : 2;
+
+  const days = [1, 2, 3, 4, 5, 6, 7];
+  const cycleRewards: number[] =
+    Array.isArray(dailyCheckinRewards) &&
+    dailyCheckinRewards.length === 7 &&
+    dailyCheckinRewards.every((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0.01)
+      ? dailyCheckinRewards.map((v) => Math.round(v * 100) / 100)
+      : days.map((day) => Math.round(((baseReward || 5) + (day - 1) * diff) * 100) / 100);
+
+  const formatAmount = (amt: number | undefined) => {
+    if (typeof amt !== 'number' || isNaN(amt)) return '0';
+    return Number.isInteger(amt) ? amt.toString() : amt.toFixed(2);
+  };
 
   // Determine which day of the 7-day cycle we are currently on:
   let cycleDay = 1;
@@ -51,8 +68,6 @@ export const DailyCheckinCard: React.FC<DailyCheckinCardProps> = ({
     cycleDay = 1;
   }
 
-  const days = [1, 2, 3, 4, 5, 6, 7];
-
   const handleOpenChannel = (url: string) => {
     const tg = (window as any).Telegram?.WebApp;
     if (tg?.openTelegramLink && (url.includes('t.me/') || url.includes('telegram.me/'))) {
@@ -63,7 +78,7 @@ export const DailyCheckinCard: React.FC<DailyCheckinCardProps> = ({
   };
 
   const handleClaim = async () => {
-    if (isClaimedToday || loading) return;
+    if (!dailyCheckinEnabled || isClaimedToday || loading) return;
     setLoading(true);
     setError(null);
     setIsApiError(false);
@@ -102,7 +117,11 @@ export const DailyCheckinCard: React.FC<DailyCheckinCardProps> = ({
           </div>
         </div>
 
-        {isClaimedToday ? (
+        {!dailyCheckinEnabled ? (
+          <span className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold rounded-full">
+            <PauseCircle className="w-3.5 h-3.5 text-amber-600" /> Paused by Admin
+          </span>
+        ) : isClaimedToday ? (
           <span className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold rounded-full">
             <Check className="w-3.5 h-3.5" /> Claimed Today
           </span>
@@ -182,7 +201,7 @@ export const DailyCheckinCard: React.FC<DailyCheckinCardProps> = ({
       {/* 7-Day Streak Tracker */}
       <div className="grid grid-cols-7 gap-1.5 mb-4">
         {days.map((day) => {
-          const rewardAmount = baseReward + (day - 1) * diff;
+          const rewardAmount = cycleRewards[day - 1] ?? 0;
           let isDone = false;
           let isCurrent = false;
 
@@ -212,7 +231,7 @@ export const DailyCheckinCard: React.FC<DailyCheckinCardProps> = ({
             >
               <span className="text-[10px] font-bold uppercase tracking-wider mb-0.5">D{day}</span>
               <span className={`text-xs font-black ${isDone ? 'text-emerald-700' : isCurrent ? 'text-[#0088cc]' : 'text-slate-700'}`}>
-                ₹{rewardAmount}
+                ₹{formatAmount(rewardAmount)}
               </span>
               <div className="mt-1">
                 {isDone ? (
@@ -228,22 +247,26 @@ export const DailyCheckinCard: React.FC<DailyCheckinCardProps> = ({
 
       <button
         onClick={handleClaim}
-        disabled={isClaimedToday || loading}
+        disabled={!dailyCheckinEnabled || isClaimedToday || loading}
         className={`w-full py-2.5 px-4 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 ${
-          isClaimedToday
+          !dailyCheckinEnabled || isClaimedToday
             ? 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'
             : 'tg-btn-primary shadow-sm hover:shadow-md'
         }`}
       >
         {loading ? (
           'Verifying...'
+        ) : !dailyCheckinEnabled ? (
+          <>
+            <PauseCircle className="w-4 h-4" /> Daily Check-In Currently Paused
+          </>
         ) : isClaimedToday ? (
           <>
             <Clock className="w-4 h-4" /> Next Check-In tomorrow (00:00 UTC)
           </>
         ) : (
           <>
-            <Sparkles className="w-4 h-4" /> Claim Day {cycleDay} Bonus (+₹{baseReward + (cycleDay - 1) * diff})
+            <Sparkles className="w-4 h-4" /> Claim Day {cycleDay} Bonus (+₹{formatAmount(cycleRewards[cycleDay - 1])})
           </>
         )}
       </button>

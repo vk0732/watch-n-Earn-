@@ -212,6 +212,8 @@ export interface AppSettings {
   signupBonus: number;
   maxScratchSignupBonus?: number; // Maximum Scratch Signup Bonus (default: 10)
   referralReward: number;
+  dailyCheckinEnabled?: boolean; // Dedicated Daily Check-In Master ON/OFF Switch (default: true)
+  dailyCheckinRewards?: number[]; // Configurable per-day rewards for 7-day cycle [Day 1..7] (supports decimals, e.g. 0.25, 0.50)
   dailyCheckinBaseReward: number;
   dailyCheckinRewardDifference?: number; // Configurable Daily Check-in Reward Difference (default: 2)
   minWithdrawalAmount: number;

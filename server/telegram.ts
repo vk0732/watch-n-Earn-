@@ -438,6 +438,17 @@ export async function checkBotChannelAccess(channelId: string): Promise<BotChann
       const desc = lastErrorDesc || chatData?.description || '';
       console.warn(`[getChat Warning] Chat: ${formattedChannel} (candidates: ${candidates.join(', ')}), Desc: ${desc}`);
 
+      if (desc.includes('bot is not a member') || desc.includes('Forbidden') || desc.includes('not a member of the channel chat')) {
+        return {
+          ok: false,
+          status: 'bot_not_member',
+          error: `Bot @${botUsername} is not a member of ${successfulCandidate}. Please add @${botUsername} to the channel as an Administrator with 'View members' permissions.`,
+          botUsername,
+          isPrivate: parsed.isPrivate,
+          resolvedChannelId: successfulCandidate,
+        };
+      }
+
       if (desc.includes('chat not found')) {
         const candidateNote = candidates.length > 1 ? ` (candidate ${candidates[1]} also not found)` : '';
         const errorMsg = parsed.isPrivate
@@ -445,7 +456,7 @@ export async function checkBotChannelAccess(channelId: string): Promise<BotChann
           : `Channel ${formattedChannel} was not found. Please verify the username or ensure @${botUsername} is added as an Administrator.`;
         return {
           ok: false,
-          status: 'bot_not_in_channel',
+          status: 'bot_not_member',
           error: errorMsg,
           botUsername,
           isPrivate: parsed.isPrivate,
@@ -484,6 +495,18 @@ export async function checkBotChannelAccess(channelId: string): Promise<BotChann
     const memberData = (await memberRes.json()) as any;
 
     if (!memberData.ok) {
+      const memberDesc = memberData.description || '';
+      if (memberDesc.includes('bot is not a member') || memberDesc.includes('Forbidden') || memberDesc.includes('not a member of the channel chat')) {
+        return {
+          ok: false,
+          status: 'bot_not_member',
+          error: `Bot @${botUsername} is not a member of ${channelTitle}. Please add @${botUsername} to the channel as an Administrator.`,
+          channelTitle,
+          botUsername,
+          isPrivate: parsed.isPrivate,
+          resolvedChannelId: successfulCandidate,
+        };
+      }
       return {
         ok: false,
         status: 'bot_not_admin',
@@ -496,6 +519,17 @@ export async function checkBotChannelAccess(channelId: string): Promise<BotChann
     }
 
     const botMemberStatus = memberData.result?.status;
+    if (botMemberStatus === 'left' || botMemberStatus === 'kicked') {
+      return {
+        ok: false,
+        status: 'bot_not_member',
+        error: `Bot @${botUsername} is not a member of ${channelTitle} (status: ${botMemberStatus}). Please add @${botUsername} to the channel as an Administrator.`,
+        channelTitle,
+        botUsername,
+        isPrivate: parsed.isPrivate,
+        resolvedChannelId: successfulCandidate,
+      };
+    }
     if (botMemberStatus !== 'administrator' && botMemberStatus !== 'creator') {
       return {
         ok: false,
@@ -683,8 +717,19 @@ export async function checkTelegramChannelMembership(
       const desc = data?.description || lastErrorDesc || 'Unknown Telegram API error';
       console.warn(`[Telegram Verify Warning] Channel: ${formattedChannel} (resolved: ${successfulCandidate}), User: ${userId}, Desc: ${desc}`);
 
+      if (desc.includes('bot is not a member') || desc.includes('Forbidden') || desc.includes('not a member of the channel chat')) {
+        const botName = process.env.TELEGRAM_BOT_USERNAME || 'WatchVEarnBot';
+        return {
+          isMember: false,
+          status: 'bot_not_member',
+          error: `Bot @${botName} is not a member of channel ${successfulCandidate}. Please add @${botName} to the channel as an Administrator.`,
+          diagnostic: 'bot_not_member',
+          resolvedChannelId: successfulCandidate,
+        };
+      }
+
       if (desc.includes('member list is inaccessible') || desc.includes('need administrator rights')) {
-        const botName = process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot';
+        const botName = process.env.TELEGRAM_BOT_USERNAME || 'WatchVEarnBot';
         return {
           isMember: false,
           status: 'bot_not_admin',
@@ -704,9 +749,9 @@ export async function checkTelegramChannelMembership(
 
         return {
           isMember: false,
-          status: 'chat_not_found',
+          status: isNumeric ? 'bot_not_member' : 'chat_not_found',
           error: errorMsg,
-          diagnostic: 'chat_not_found',
+          diagnostic: isNumeric ? 'bot_not_member' : 'chat_not_found',
         };
       }
 

@@ -7,6 +7,7 @@ import {
   atomicCreditBalance,
   getUserByReferralCode,
   getForceJoinChannels,
+  updateChannelHealth,
   recordReferral,
   hasUserClaimedSignupBonus,
   getOrAssignSignupScratchBonus,
@@ -269,7 +270,19 @@ async function ensureLiveChannelAccess(telegramId: number, chatId: number): Prom
 
   const unjoinedChannels: typeof channels = [];
   for (const ch of channels) {
+    if (ch.healthStatus === 'bot_not_member' || ch.healthStatus === 'chat_not_found') {
+      continue;
+    }
     const check = await checkTelegramChannelMembership(ch.channelId, telegramId);
+    if (
+      check.status === 'bot_not_member' ||
+      check.diagnostic === 'bot_not_member' ||
+      (check.error && check.error.toLowerCase().includes('bot is not a member'))
+    ) {
+      updateChannelHealth(ch.id, 'bot_not_member', check.error);
+      console.warn(`[BotEnsureAccess] Inaccessible channel ${ch.channelId} (bot is not a member). Skipping check.`);
+      continue;
+    }
     if (!check.isMember) {
       unjoinedChannels.push(ch);
     }
@@ -674,8 +687,20 @@ async function handleCallbackQuery(
       const stillUnjoined: Array<{ channel: typeof channels[0]; error?: string; status?: string }> = [];
 
       for (const ch of channels) {
+        if (ch.healthStatus === 'bot_not_member' || ch.healthStatus === 'chat_not_found') {
+          continue;
+        }
         const rawId = (ch.channelId || ch.username || '').trim();
         const check = await checkTelegramChannelMembership(rawId, userId);
+        if (
+          check.status === 'bot_not_member' ||
+          check.diagnostic === 'bot_not_member' ||
+          (check.error && check.error.toLowerCase().includes('bot is not a member'))
+        ) {
+          updateChannelHealth(ch.id, 'bot_not_member', check.error);
+          console.warn(`[BotScratchClaim] Inaccessible channel ${rawId} (bot is not a member). Skipping check.`);
+          continue;
+        }
         if (!check.isMember) {
           allJoined = false;
           stillUnjoined.push({ channel: ch, error: check.error, status: check.status });
@@ -806,8 +831,20 @@ async function handleCallbackQuery(
       const stillUnjoined: Array<{ channel: typeof channels[0]; error?: string; status?: string }> = [];
 
       for (const ch of channels) {
+        if (ch.healthStatus === 'bot_not_member' || ch.healthStatus === 'chat_not_found') {
+          continue;
+        }
         const rawId = (ch.channelId || ch.username || '').trim();
         const check = await checkTelegramChannelMembership(rawId, userId);
+        if (
+          check.status === 'bot_not_member' ||
+          check.diagnostic === 'bot_not_member' ||
+          (check.error && check.error.toLowerCase().includes('bot is not a member'))
+        ) {
+          updateChannelHealth(ch.id, 'bot_not_member', check.error);
+          console.warn(`[BotScratchClaim] Inaccessible channel ${rawId} (bot is not a member). Skipping check.`);
+          continue;
+        }
         if (!check.isMember) {
           allJoined = false;
           stillUnjoined.push({ channel: ch, error: check.error, status: check.status });

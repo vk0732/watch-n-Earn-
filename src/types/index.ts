@@ -195,6 +195,9 @@ export interface ForceJoinChannel {
   isEnabled: boolean;
   order: number;
   joined?: boolean;
+  healthStatus?: 'healthy' | 'bot_not_member' | 'bot_not_admin' | 'chat_not_found' | 'api_error' | 'unknown';
+  healthError?: string;
+  lastCheckedAt?: string;
 }
 
 export interface BotMessageTemplates {

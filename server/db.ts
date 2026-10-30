@@ -3118,32 +3118,111 @@ export async function redeemGiftCardWithdrawal(
 /* ========================================================
    FORCE JOIN CHANNELS REPOSITORY
    ======================================================== */
-export async function getForceJoinChannels(onlyEnabled = true): Promise<ForceJoinChannel[]> {
+
+const CHANNELS_AUTHORITATIVE_PATH = path.join(process.cwd(), 'data', 'authoritative_channels.json');
+
+let lastChannelsMtime = 0;
+export function loadAuthoritativeChannels(): void {
   try {
-    const snap = await getDocs(collection(db, getColName('force_join_channels')));
-    memStore.channels.clear();
-    if (!snap.empty) {
-      snap.forEach((d) => {
-        const item = d.data() as ForceJoinChannel;
-        const cid = (item.channelId || '').toLowerCase();
-        const uname = (item.username || '').toLowerCase();
-        const id = (item.id || d.id || '').toLowerCase();
-        // Discard any legacy TeleEarn seed channels
-        if (
-          cid === '@teleearnofficial' ||
-          cid === '@teleearnpayouts' ||
-          uname === 'teleearnofficial' ||
-          uname === 'teleearnpayouts' ||
-          id === 'chan_main_updates' ||
-          id === 'chan_payment_proofs'
-        ) {
-          return;
+    if (fs.existsSync(CHANNELS_AUTHORITATIVE_PATH)) {
+      const stat = fs.statSync(CHANNELS_AUTHORITATIVE_PATH);
+      if (stat.mtimeMs > lastChannelsMtime) {
+        lastChannelsMtime = stat.mtimeMs;
+        const raw = fs.readFileSync(CHANNELS_AUTHORITATIVE_PATH, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (item && item.id) {
+              const cid = (item.channelId || '').toLowerCase();
+              const uname = (item.username || '').toLowerCase();
+              if (
+                cid === '@teleearnofficial' ||
+                cid === '@teleearnpayouts' ||
+                uname === 'teleearnofficial' ||
+                uname === 'teleearnpayouts'
+              ) {
+                continue;
+              }
+              memStore.channels.set(item.id, item);
+            }
+          }
         }
-        memStore.channels.set(item.id || d.id, { ...item, id: item.id || d.id });
-      });
+      }
     }
   } catch (err) {
-    // Keep memStore in case of temporary network glitch
+    console.warn('[DB] Could not load authoritative_channels.json:', err);
+  }
+}
+loadAuthoritativeChannels();
+
+export function persistAuthoritativeChannels(): void {
+  if (process.env.NODE_ENV === 'test') return;
+  try {
+    const dir = path.dirname(CHANNELS_AUTHORITATIVE_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const list = Array.from(memStore.channels.values());
+    fs.writeFileSync(CHANNELS_AUTHORITATIVE_PATH, JSON.stringify(list, null, 2), 'utf-8');
+    if (fs.existsSync(CHANNELS_AUTHORITATIVE_PATH)) {
+      lastChannelsMtime = fs.statSync(CHANNELS_AUTHORITATIVE_PATH).mtimeMs;
+    }
+  } catch (err) {
+    console.warn('[DB] Could not persist authoritative_channels.json:', err);
+  }
+}
+
+export function updateChannelHealth(
+  channelIdOrKey: string,
+  status: 'healthy' | 'bot_not_member' | 'bot_not_admin' | 'chat_not_found' | 'api_error',
+  error?: string
+): void {
+  for (const ch of memStore.channels.values()) {
+    if (ch.channelId === channelIdOrKey || ch.id === channelIdOrKey) {
+      ch.healthStatus = status;
+      ch.healthError = error || '';
+      ch.lastCheckedAt = new Date().toISOString();
+      persistAuthoritativeChannels();
+      break;
+    }
+  }
+}
+
+export async function getForceJoinChannels(onlyEnabled = true): Promise<ForceJoinChannel[]> {
+  loadAuthoritativeChannels();
+  if (isFirestoreAvailable()) {
+    try {
+      const snap = await getDocs(collection(db, getColName('force_join_channels')));
+      if (!snap.empty) {
+        snap.forEach((d) => {
+          const item = d.data() as ForceJoinChannel;
+          const cid = (item.channelId || '').toLowerCase();
+          const uname = (item.username || '').toLowerCase();
+          const id = (item.id || d.id || '').toLowerCase();
+          // Discard any legacy TeleEarn seed channels
+          if (
+            cid === '@teleearnofficial' ||
+            cid === '@teleearnpayouts' ||
+            uname === 'teleearnofficial' ||
+            uname === 'teleearnpayouts' ||
+            id === 'chan_main_updates' ||
+            id === 'chan_payment_proofs'
+          ) {
+            return;
+          }
+          const existing = memStore.channels.get(item.id || d.id);
+          memStore.channels.set(item.id || d.id, {
+            ...item,
+            id: item.id || d.id,
+            healthStatus: existing?.healthStatus || item.healthStatus,
+            healthError: existing?.healthError || item.healthError,
+            lastCheckedAt: existing?.lastCheckedAt || item.lastCheckedAt,
+          });
+        });
+        persistAuthoritativeChannels();
+      }
+    } catch (err) {
+      reportFirestoreError(err);
+      // Keep memStore in case of temporary network glitch
+    }
   }
 
   let list = Array.from(memStore.channels.values()).filter((c) => {
@@ -3171,9 +3250,14 @@ export async function getForceJoinChannels(onlyEnabled = true): Promise<ForceJoi
 
 export async function saveForceJoinChannel(channel: ForceJoinChannel): Promise<ForceJoinChannel> {
   memStore.channels.set(channel.id, channel);
+  persistAuthoritativeChannels();
+  if (!isFirestoreAvailable()) {
+    return channel;
+  }
   try {
     await setDoc(doc(db, getColName('force_join_channels'), channel.id), cleanDocData(channel), { merge: true });
   } catch (err) {
+    reportFirestoreError(err);
     console.warn('[DB] saveForceJoinChannel fallback:', err);
   }
   return channel;
@@ -3181,9 +3265,14 @@ export async function saveForceJoinChannel(channel: ForceJoinChannel): Promise<F
 
 export async function deleteForceJoinChannel(id: string): Promise<boolean> {
   memStore.channels.delete(id);
+  persistAuthoritativeChannels();
+  if (!isFirestoreAvailable()) {
+    return true;
+  }
   try {
     await deleteDoc(doc(db, getColName('force_join_channels'), id));
   } catch (err) {
+    reportFirestoreError(err);
     console.warn('[DB] deleteForceJoinChannel fallback:', err);
   }
   return true;
@@ -3422,7 +3511,23 @@ export async function verifyMandatoryWithdrawalMembership(
   const unjoined: ForceJoinChannel[] = [];
 
   for (const ch of channels) {
+    if (ch.healthStatus === 'bot_not_member' || ch.healthStatus === 'chat_not_found') {
+      console.warn(`[WithdrawalVerify] Skipping inaccessible channel ${ch.channelId} (${ch.healthStatus}) so user is not blocked.`);
+      continue;
+    }
+
     const check = await checkTelegramChannelMembership(ch.channelId, telegramId);
+
+    // If bot is not a member, mark channel and DO NOT block user
+    if (
+      check.status === 'bot_not_member' ||
+      check.diagnostic === 'bot_not_member' ||
+      (check.error && check.error.toLowerCase().includes('bot is not a member'))
+    ) {
+      updateChannelHealth(ch.id, 'bot_not_member', check.error);
+      console.warn(`[WithdrawalVerify] Bot is not a member of ${ch.channelId}. Skipping verification for user ${telegramId} so user is not blocked.`);
+      continue;
+    }
 
     // Fail closed: Telegram API error, Bot not admin, Bot token missing, or Chat not found
     if (!check.isMember) {
@@ -3504,7 +3609,23 @@ export async function verifyMandatoryCheckinMembership(
   const unjoined: ForceJoinChannel[] = [];
 
   for (const ch of channels) {
+    if (ch.healthStatus === 'bot_not_member' || ch.healthStatus === 'chat_not_found') {
+      console.warn(`[CheckinVerify] Skipping inaccessible channel ${ch.channelId} (${ch.healthStatus}) so user is not blocked.`);
+      continue;
+    }
+
     const check = await checkTelegramChannelMembership(ch.channelId, telegramId);
+
+    // If bot is not a member, mark channel and DO NOT block user
+    if (
+      check.status === 'bot_not_member' ||
+      check.diagnostic === 'bot_not_member' ||
+      (check.error && check.error.toLowerCase().includes('bot is not a member'))
+    ) {
+      updateChannelHealth(ch.id, 'bot_not_member', check.error);
+      console.warn(`[CheckinVerify] Bot is not a member of ${ch.channelId}. Skipping verification for user ${telegramId} so user is not blocked.`);
+      continue;
+    }
 
     // Fail closed: Telegram API error, Bot not admin, Bot token missing, or Chat not found
     if (!check.isMember) {

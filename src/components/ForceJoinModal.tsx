@@ -19,7 +19,17 @@ export const ForceJoinModal: React.FC<ForceJoinModalProps> = ({
   const [channelStatuses, setChannelStatuses] = useState<Record<string, boolean>>({});
   const [channelErrors, setChannelErrors] = useState<Record<string, string>>({});
 
-  if (!isOpen) return null;
+  const validChannels = (channels || []).filter(
+    (ch) => ch.healthStatus !== 'bot_not_member' && ch.healthStatus !== 'chat_not_found'
+  );
+
+  React.useEffect(() => {
+    if (isOpen && validChannels.length === 0) {
+      onVerified();
+    }
+  }, [isOpen, validChannels.length, onVerified]);
+
+  if (!isOpen || validChannels.length === 0) return null;
 
   const handleOpenChannel = (url: string) => {
     const tg = (window as any).Telegram?.WebApp;
@@ -84,9 +94,15 @@ export const ForceJoinModal: React.FC<ForceJoinModalProps> = ({
         )}
 
         <div className="space-y-2.5 mb-5">
-          {channels.map((ch, idx) => {
+          {validChannels.map((ch, idx) => {
             const isVerified = channelStatuses[ch.id];
             const chError = channelErrors[ch.id];
+            const cleanChError =
+              chError &&
+              !chError.toLowerCase().includes('bot is not a member') &&
+              !chError.toLowerCase().includes('forbidden')
+                ? chError
+                : null;
             return (
               <div
                 key={ch.id}
@@ -120,9 +136,9 @@ export const ForceJoinModal: React.FC<ForceJoinModalProps> = ({
                   </div>
                 </div>
 
-                {!isVerified && chError && (
+                {!isVerified && cleanChError && (
                   <p className="text-[11px] text-amber-800 mt-2 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
-                    ⚠️ {chError}
+                    ⚠️ {cleanChError}
                   </p>
                 )}
               </div>

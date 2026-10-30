@@ -509,6 +509,35 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     }
   };
 
+  const [checkingAllChannels, setCheckingAllChannels] = useState(false);
+
+  const handleToggleChannel = async (id: string) => {
+    try {
+      const res = await api.toggleAdminChannel(id);
+      if (res.success && res.channel) {
+        setChannels(channels.map((c) => (c.id === id ? res.channel : c)));
+        showNotify(`Channel ${res.channel.isEnabled ? 'enabled' : 'disabled'}`);
+      }
+    } catch (err: any) {
+      showNotify(err.message || 'Failed to toggle channel', 'error');
+    }
+  };
+
+  const handleCheckAllChannels = async () => {
+    setCheckingAllChannels(true);
+    try {
+      const res = await api.checkChannelsHealth();
+      if (res.channels) {
+        setChannels(res.channels);
+        showNotify('Channel health status updated!');
+      }
+    } catch (err: any) {
+      showNotify(err.message || 'Failed to check channel health', 'error');
+    } finally {
+      setCheckingAllChannels(false);
+    }
+  };
+
   const handleTestChannelDiagnostic = async (id: string) => {
     try {
       const res = await api.testChannelDiagnostic(id);
@@ -516,6 +545,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       alert(
         `Telegram Bot Channel Diagnostic:\n\nChannel: ${res.channel.title} (${res.channel.channelId})\nBot Access: ${res.botAccess?.ok ? 'VERIFIED ADMIN' : res.botAccess?.status || 'Check below'}\n${res.botAccess?.error ? `Error: ${res.botAccess.error}\n\n` : ''}${res.diagnostic?.error ? `Membership Check: ${res.diagnostic.error}` : 'Bot permissions verified!'}`
       );
+      if (res.channel) {
+        setChannels(channels.map((c) => (c.id === id ? res.channel : c)));
+      }
     } catch (err: any) {
       showNotify(err.message, 'error');
     }
@@ -2033,24 +2065,75 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       {/* TAB 2: FORCE JOIN CHANNELS */}
       {activeTab === 'channels' && (
         <div className="space-y-4">
+          {/* Channel Health Warning Banner */}
+          {channels.some(
+            (c) =>
+              c.healthStatus === 'bot_not_member' ||
+              c.healthStatus === 'bot_not_admin' ||
+              c.healthStatus === 'chat_not_found'
+          ) && (
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="text-xs text-amber-900 leading-relaxed">
+                <p className="font-bold mb-1">⚠️ Bot Administrator Action Required</p>
+                <p className="mb-2">
+                  The bot is not an administrator in 1 or more channels below. To ensure uninterrupted access for users, these channels are temporarily bypassed from mandatory verification.
+                </p>
+                <ul className="list-disc list-inside space-y-1 font-mono text-[11px] text-amber-800">
+                  {channels
+                    .filter(
+                      (c) =>
+                        c.healthStatus === 'bot_not_member' ||
+                        c.healthStatus === 'bot_not_admin' ||
+                        c.healthStatus === 'chat_not_found'
+                    )
+                    .map((c) => (
+                      <li key={c.id}>
+                        <span className="font-bold">{c.title}</span> ({c.channelId}):{' '}
+                        {c.healthStatus === 'bot_not_member'
+                          ? 'Bot is not a member of the channel chat'
+                          : c.healthStatus === 'bot_not_admin'
+                          ? 'Bot lacks administrator permissions'
+                          : 'Channel chat not found'}
+                      </li>
+                    ))}
+                </ul>
+                <p className="mt-2 text-[11px]">
+                  👉 <b>Resolution:</b> Add @WatchVEarnBot to the channel as an Administrator with &quot;View members&quot; permission. Once added, click <b>Test Diagnostic</b> or <b>Check All Channels</b> to verify.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-between items-center">
             <h3 className="text-sm font-bold text-slate-900">Configured Force Join Channels</h3>
-            <button
-              onClick={() =>
-                setEditingChannel({
-                  id: '',
-                  title: '',
-                  channelId: '@',
-                  inviteLink: 'https://t.me/',
-                  isPrivate: false,
-                  isEnabled: true,
-                  order: channels.length + 1,
-                })
-              }
-              className="py-1.5 px-3 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition"
-            >
-              <Plus className="w-3.5 h-3.5" /> Add Channel
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleCheckAllChannels}
+                disabled={checkingAllChannels}
+                className="py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center gap-1.5 transition disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${checkingAllChannels ? 'animate-spin' : ''}`} />
+                {checkingAllChannels ? 'Checking...' : 'Check All Channels'}
+              </button>
+              <button
+                onClick={() =>
+                  setEditingChannel({
+                    id: '',
+                    title: '',
+                    channelId: '@',
+                    inviteLink: 'https://t.me/',
+                    isPrivate: false,
+                    isEnabled: true,
+                    order: channels.length + 1,
+                  })
+                }
+                className="py-1.5 px-3 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add Channel
+              </button>
+            </div>
           </div>
 
           <div className="space-y-2.5">
@@ -2060,7 +2143,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs flex items-center justify-between gap-3"
               >
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
                     <span className="text-sm font-bold text-slate-900 truncate">{ch.title}</span>
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded ${
@@ -2069,6 +2152,23 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     >
                       {ch.isEnabled ? 'ENABLED' : 'DISABLED'}
                     </span>
+                    {ch.healthStatus === 'bot_not_member' ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-50 text-red-600 border border-red-200">
+                        BOT NOT ADDED (BYPASSED)
+                      </span>
+                    ) : ch.healthStatus === 'bot_not_admin' ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-50 text-amber-600 border border-amber-200">
+                        PERMISSION MISSING
+                      </span>
+                    ) : ch.healthStatus === 'chat_not_found' ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-orange-50 text-orange-600 border border-orange-200">
+                        UNAVAILABLE
+                      </span>
+                    ) : ch.healthStatus === 'healthy' ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-600 border border-emerald-200">
+                        ACTIVE
+                      </span>
+                    ) : null}
                     {ch.isPrivate && (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-500/15 text-blue-400">
                         PRIVATE
@@ -2078,9 +2178,25 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   <p className="text-xs text-slate-500 truncate">
                     ID: <span className="font-mono text-slate-700">{ch.channelId}</span> • Link: {ch.inviteLink}
                   </p>
+                  {ch.healthStatus === 'bot_not_member' && (
+                    <p className="text-[11px] text-red-600 mt-1 font-medium">
+                      ⚠️ Bot is not a member of this channel. Users bypass this channel until @WatchVEarnBot is added as an Administrator.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={() => handleToggleChannel(ch.id)}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                      ch.isEnabled
+                        ? 'bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200'
+                        : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'
+                    }`}
+                    title={ch.isEnabled ? 'Click to Disable' : 'Click to Enable'}
+                  >
+                    {ch.isEnabled ? 'Disable' : 'Enable'}
+                  </button>
                   <button
                     onClick={() => handleTestChannelDiagnostic(ch.id)}
                     className="p-2 bg-slate-100 hover:bg-slate-200 text-blue-400 rounded-lg text-xs font-semibold"

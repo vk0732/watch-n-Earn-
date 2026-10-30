@@ -341,6 +341,16 @@ export const api = {
   deleteAdminChannel: (channelId: string) =>
     request<{ success: boolean }>(`/admin/channels/${channelId}`, { method: 'DELETE' }),
 
+  toggleAdminChannel: (channelId: string) =>
+    request<{ success: boolean; channel: ForceJoinChannel }>(`/admin/channels/${channelId}/toggle`, {
+      method: 'POST',
+    }),
+
+  checkChannelsHealth: () =>
+    request<{ success: boolean; channels: ForceJoinChannel[]; results: any[] }>('/admin/channels/check-health', {
+      method: 'POST',
+    }),
+
   testChannelDiagnostic: (channelId: string) =>
     request<any>(`/admin/channels/${channelId}/test-diagnostic`, { method: 'POST' }),
 

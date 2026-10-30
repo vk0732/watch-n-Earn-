@@ -37,6 +37,7 @@ import {
   getForceJoinChannels,
   saveForceJoinChannel,
   deleteForceJoinChannel,
+  updateChannelHealth,
   getDashboardStats,
   getTotalRegisteredUsersCount,
   recordAdminAudit,
@@ -255,7 +256,19 @@ async function requireLiveChannelMembership(req: Request, res: Response, next: N
 
   const unjoined: ForceJoinChannel[] = [];
   for (const ch of channels) {
+    if (ch.healthStatus === 'bot_not_member' || ch.healthStatus === 'chat_not_found') {
+      continue;
+    }
     const check = await checkTelegramChannelMembership(ch.channelId, user.telegramId);
+    if (
+      check.status === 'bot_not_member' ||
+      check.diagnostic === 'bot_not_member' ||
+      (check.error && check.error.toLowerCase().includes('bot is not a member'))
+    ) {
+      updateChannelHealth(ch.id, 'bot_not_member', check.error);
+      console.warn(`[LiveChannelAccess] Inaccessible channel ${ch.channelId} (bot is not a member). Skipping check.`);
+      continue;
+    }
     if (!check.isMember) {
       unjoined.push(ch);
     }
@@ -478,7 +491,19 @@ apiRouter.post('/auth/verify-telegram', async (req, res) => {
     const channels = await getForceJoinChannels(true);
     const unjoined: ForceJoinChannel[] = [];
     for (const ch of channels) {
+      if (ch.healthStatus === 'bot_not_member' || ch.healthStatus === 'chat_not_found') {
+        continue;
+      }
       const check = await checkTelegramChannelMembership(ch.channelId, tgUser.id);
+      if (
+        check.status === 'bot_not_member' ||
+        check.diagnostic === 'bot_not_member' ||
+        (check.error && check.error.toLowerCase().includes('bot is not a member'))
+      ) {
+        updateChannelHealth(ch.id, 'bot_not_member', check.error);
+        console.warn(`[AuthVerify] Inaccessible channel ${ch.channelId} (bot is not a member). Skipping check.`);
+        continue;
+      }
       if (!check.isMember) {
         unjoined.push(ch);
       }
@@ -562,11 +587,23 @@ apiRouter.post('/auth/signup-scratch/claim', extractTelegramUser, async (req, re
       });
     }
 
-    // 2. Mandatory Force-Join Membership Verification (FAIL CLOSED)
+    // 2. Mandatory Force-Join Membership Verification (FAIL CLOSED for valid channels)
     const channels = await getForceJoinChannels(true);
     const unjoined: ForceJoinChannel[] = [];
     for (const ch of channels) {
+      if (ch.healthStatus === 'bot_not_member' || ch.healthStatus === 'chat_not_found') {
+        continue;
+      }
       const check = await checkTelegramChannelMembership(ch.channelId, user.telegramId);
+      if (
+        check.status === 'bot_not_member' ||
+        check.diagnostic === 'bot_not_member' ||
+        (check.error && check.error.toLowerCase().includes('bot is not a member'))
+      ) {
+        updateChannelHealth(ch.id, 'bot_not_member', check.error);
+        console.warn(`[SignupClaim] Inaccessible channel ${ch.channelId} (bot is not a member). Skipping check.`);
+        continue;
+      }
       if (!check.isMember) {
         if (
           check.status === 'api_error' ||
@@ -645,7 +682,19 @@ apiRouter.get('/auth/me', extractTelegramUser, async (req, res) => {
   const channels = await getForceJoinChannels(true);
   const unjoined: ForceJoinChannel[] = [];
   for (const ch of channels) {
+    if (ch.healthStatus === 'bot_not_member' || ch.healthStatus === 'chat_not_found') {
+      continue;
+    }
     const check = await checkTelegramChannelMembership(ch.channelId, user.telegramId);
+    if (
+      check.status === 'bot_not_member' ||
+      check.diagnostic === 'bot_not_member' ||
+      (check.error && check.error.toLowerCase().includes('bot is not a member'))
+    ) {
+      updateChannelHealth(ch.id, 'bot_not_member', check.error);
+      console.warn(`[AuthMe] Inaccessible channel ${ch.channelId} (bot is not a member). Skipping check.`);
+      continue;
+    }
     if (!check.isMember) unjoined.push(ch);
   }
 
@@ -1192,7 +1241,23 @@ apiRouter.post('/force-join/verify', extractTelegramUser, async (req, res) => {
     let failureReason = '';
 
     for (const ch of channels) {
+      if (ch.healthStatus === 'bot_not_member' || ch.healthStatus === 'chat_not_found') {
+        console.warn(`[ForceJoinVerify] Skipping known inaccessible channel ${ch.channelId} (${ch.healthStatus})`);
+        continue;
+      }
+
       const check = await checkTelegramChannelMembership(ch.channelId, user.telegramId);
+
+      if (
+        check.status === 'bot_not_member' ||
+        check.diagnostic === 'bot_not_member' ||
+        (check.error && check.error.toLowerCase().includes('bot is not a member'))
+      ) {
+        updateChannelHealth(ch.id, 'bot_not_member', check.error);
+        console.warn(`[ForceJoinVerify] Inaccessible channel ${ch.channelId} (bot is not a member). Skipping so users are not blocked.`);
+        continue;
+      }
+
       results.push({
         ...ch,
         isMember: check.isMember,
@@ -1202,8 +1267,8 @@ apiRouter.post('/force-join/verify', extractTelegramUser, async (req, res) => {
       });
       if (!check.isMember) {
         allJoined = false;
-        if (!failureReason && check.error) {
-          failureReason = check.error;
+        if (!failureReason) {
+          failureReason = 'Please join all required channels to unlock the app.';
         }
       }
     }
@@ -1445,6 +1510,12 @@ apiRouter.post('/admin/channels/:id/test-diagnostic', extractTelegramUser, requi
     const botAccess = await checkBotChannelAccess(target.channelId);
     const membershipCheck = await checkTelegramChannelMembership(target.channelId, admin.telegramId);
 
+    const newStatus = botAccess.ok ? 'healthy' : (botAccess.status as any || 'api_error');
+    updateChannelHealth(target.id, newStatus, botAccess.error);
+    target.healthStatus = newStatus;
+    target.healthError = botAccess.error || '';
+    target.lastCheckedAt = new Date().toISOString();
+
     res.json({
       channel: target,
       diagnostic: membershipCheck,
@@ -1453,6 +1524,48 @@ apiRouter.post('/admin/channels/:id/test-diagnostic', extractTelegramUser, requi
         process.env.TELEGRAM_BOT_TOKEN && !process.env.TELEGRAM_BOT_TOKEN.includes('ABCdefGHIjklMNOpqrSTUvwxYZ')
       ),
     });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+apiRouter.post('/admin/channels/:id/toggle', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const admin = (req as any).user as UserProfile;
+    const channels = await getForceJoinChannels(false);
+    const target = channels.find((c) => c.id === req.params.id);
+    if (!target) return res.status(404).json({ error: 'Channel not found' });
+    target.isEnabled = !target.isEnabled;
+    await saveForceJoinChannel(target);
+    await recordAdminAudit(
+      admin.id,
+      'TOGGLE_CHANNEL',
+      `Toggled channel ${target.title} (${target.channelId}) to ${target.isEnabled ? 'ENABLED' : 'DISABLED'}`
+    );
+    res.json({ success: true, channel: target });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+apiRouter.post('/admin/channels/check-health', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const channels = await getForceJoinChannels(false);
+    const results = [];
+    for (const ch of channels) {
+      const access = await checkBotChannelAccess(ch.channelId);
+      const newStatus = access.ok ? 'healthy' : (access.status as any || 'api_error');
+      updateChannelHealth(ch.id, newStatus, access.error);
+      results.push({
+        id: ch.id,
+        channelId: ch.channelId,
+        title: ch.title,
+        healthStatus: newStatus,
+        healthError: access.error || '',
+      });
+    }
+    const updatedChannels = await getForceJoinChannels(false);
+    res.json({ success: true, channels: updatedChannels, results });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

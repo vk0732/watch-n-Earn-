@@ -1,8 +1,44 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Copy, Check, Share2, Award, ShieldAlert, Sparkles, RefreshCw, ChevronRight, AlertCircle } from 'lucide-react';
+import {
+  Users,
+  Copy,
+  Check,
+  Share2,
+  Award,
+  ShieldAlert,
+  Sparkles,
+  RefreshCw,
+  ChevronRight,
+  AlertCircle,
+  Lock,
+  CheckCircle2,
+  History,
+} from 'lucide-react';
 import { api } from '../services/api.ts';
-import type { UserProfile, AppSettings, UserGamificationState } from '../types/index.ts';
+import type {
+  UserProfile,
+  AppSettings,
+  UserGamificationState,
+  WithdrawalReferralEligibility,
+} from '../types/index.ts';
 import { ReferralViewSkeleton } from '../components/Skeleton.tsx';
+
+function getOrdinalWithdrawalLabel(num: number): string {
+  switch (num) {
+    case 1:
+      return 'First withdrawal';
+    case 2:
+      return 'Second withdrawal';
+    case 3:
+      return 'Third withdrawal';
+    case 4:
+      return 'Fourth withdrawal';
+    case 5:
+      return 'Fifth withdrawal';
+    default:
+      return `Withdrawal #${num}`;
+  }
+}
 
 interface ReferralsViewProps {
   user: UserProfile;
@@ -21,6 +57,7 @@ export const ReferralsView: React.FC<ReferralsViewProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<'all' | 'current' | 'historical'>('all');
 
   useEffect(() => {
     loadReferralStats();
@@ -192,70 +229,253 @@ export const ReferralsView: React.FC<ReferralsViewProps> = ({
         </div>
       )}
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 gap-2.5">
-        <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
-          <div className="flex items-center gap-2 text-slate-500 text-xs mb-1">
-            <Users className="w-4 h-4 text-[#0088cc]" />
-            <span className="font-medium">Total Referrals</span>
-          </div>
-          <p className="text-2xl font-black text-slate-900">
-            {stats?.totalReferrals ?? user.dailyStreak ?? 0}
-          </p>
-          <p className="text-[10px] text-slate-400 mt-0.5">Qualified joined users</p>
-        </div>
+      {/* Stats Cards: Current Campaign vs Lifetime History vs Total Earned */}
+      {(() => {
+        const activeCampaignId = stats?.referralCampaignId ?? settings.referralCampaignId ?? 1;
+        const currentCampaignValid =
+          stats?.currentCampaignValidReferrals ?? stats?.totalReferrals ?? 0;
+        const lifetimeValid = stats?.lifetimeValidReferrals ?? stats?.totalReferrals ?? 0;
+        const totalRecorded = stats?.totalReferrals ?? 0;
+        const eligibility: WithdrawalReferralEligibility | undefined = stats?.withdrawalEligibility;
+        const historyList: any[] = Array.isArray(stats?.history) ? stats.history : [];
+        const hasHistoricalCampaigns =
+          activeCampaignId > 1 ||
+          historyList.some((r) => (r.referralCampaignId ?? 1) !== activeCampaignId);
 
-        <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
-          <div className="flex items-center gap-2 text-slate-500 text-xs mb-1">
-            <Award className="w-4 h-4 text-emerald-600" />
-            <span className="font-medium">Total Earned</span>
-          </div>
-          <p className="text-2xl font-black text-emerald-700">
-            ₹{(stats?.totalEarned ?? user.referralEarnings).toFixed(2)}
-          </p>
-          <p className="text-[10px] text-slate-400 mt-0.5">Credited to your balance</p>
-        </div>
-      </div>
+        const filteredHistory = historyList.filter((r) => {
+          const recCamp = r.referralCampaignId ?? 1;
+          if (historyFilter === 'current') return recCamp === activeCampaignId;
+          if (historyFilter === 'historical') return recCamp !== activeCampaignId;
+          return true;
+        });
 
-      {/* Referral History Ledger */}
-      <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-[#0088cc]" /> Referral Ledger
-          </h3>
-          <button
-            onClick={loadReferralStats}
-            className="p-1 text-slate-400 hover:text-slate-600 transition"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-[#0088cc]' : ''}`} />
-          </button>
-        </div>
+        const nextNum = eligibility ? eligibility.nextWithdrawalNumber ?? eligibility.completedWithdrawals + 1 : 1;
+        const ordLabel = getOrdinalWithdrawalLabel(nextNum);
+        const progressPct =
+          eligibility && eligibility.requiredReferrals > 0
+            ? Math.min(100, Math.round((eligibility.currentReferrals / eligibility.requiredReferrals) * 100))
+            : 100;
 
-        {!stats?.history || stats.history.length === 0 ? (
-          <div className="text-center py-6 text-slate-400 text-xs">
-            <p>No referrals yet. Share your link above to start earning!</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {stats.history.map((r: any) => (
+        return (
+          <>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="p-3.5 bg-white border border-sky-200/80 rounded-2xl shadow-xs">
+                <div className="flex items-center justify-between gap-1 text-slate-500 text-[11px] mb-1">
+                  <span className="font-semibold text-slate-700 truncate">Current</span>
+                  <span className="px-1.5 py-0.5 rounded bg-sky-50 text-[#0088cc] font-bold text-[9px]">
+                    #{activeCampaignId}
+                  </span>
+                </div>
+                <p className="text-2xl font-black text-[#0088cc]">{currentCampaignValid}</p>
+                <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">Active campaign valid</p>
+              </div>
+
+              <div className="p-3.5 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
+                <div className="flex items-center gap-1.5 text-slate-500 text-[11px] mb-1">
+                  <History className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                  <span className="font-semibold text-slate-700 truncate">Lifetime</span>
+                </div>
+                <p className="text-2xl font-black text-slate-900">{lifetimeValid}</p>
+                <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">
+                  {totalRecorded !== lifetimeValid ? `${totalRecorded} total records` : 'All-time valid'}
+                </p>
+              </div>
+
+              <div className="p-3.5 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
+                <div className="flex items-center gap-1.5 text-slate-500 text-[11px] mb-1">
+                  <Award className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span className="font-semibold text-slate-700 truncate">Earned</span>
+                </div>
+                <p className="text-xl font-black text-emerald-700 truncate">
+                  ₹{(stats?.totalEarned ?? user.referralEarnings).toFixed(2)}
+                </p>
+                <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">Referral rewards</p>
+              </div>
+            </div>
+
+            {/* Cumulative Withdrawal Referral Milestone Card */}
+            {eligibility && eligibility.applies && (
               <div
-                key={r.id}
-                className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs"
+                className={`p-4 rounded-2xl border shadow-xs space-y-2.5 ${
+                  eligibility.eligible
+                    ? 'bg-emerald-50/70 border-emerald-200'
+                    : 'bg-white border-amber-200'
+                }`}
               >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div
+                      className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                        eligibility.eligible
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}
+                    >
+                      {eligibility.eligible ? (
+                        <CheckCircle2 className="w-4 h-4" />
+                      ) : (
+                        <Lock className="w-4 h-4" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-xs font-bold text-slate-900 truncate">
+                        {ordLabel}: {eligibility.currentReferrals}/{eligibility.requiredReferrals} valid referrals
+                      </h4>
+                      <p className="text-[10px] text-slate-500">
+                        Rule: {eligibility.perWithdrawalRequirement ?? settings.withdrawalMinReferralsRequired ?? 1} valid referral(s) per withdrawal • Completed: {eligibility.completedWithdrawals}
+                      </p>
+                    </div>
+                  </div>
+                  <span
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wide shrink-0 ${
+                      eligibility.eligible
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-amber-100 text-amber-800 border border-amber-200'
+                    }`}
+                  >
+                    {eligibility.eligible ? 'Available' : 'Locked'}
+                  </span>
+                </div>
+
+                <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200/60">
+                  <div
+                    className={`h-full transition-all duration-500 rounded-full ${
+                      eligibility.eligible ? 'bg-emerald-500' : 'bg-[#0088cc]'
+                    }`}
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
+
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  {eligibility.eligible
+                    ? `${ordLabel} referral milestone reached (${eligibility.currentReferrals}/${eligibility.requiredReferrals}). Next withdrawal after this will require ${
+                        (nextNum + 1) * (eligibility.perWithdrawalRequirement ?? 1)
+                      } valid referrals.`
+                    : `Invite ${Math.max(
+                        0,
+                        eligibility.requiredReferrals - eligibility.currentReferrals
+                      )} more valid friend(s) in Campaign #${activeCampaignId} to unlock your ${ordLabel.toLowerCase()}.`}
+                </p>
+              </div>
+            )}
+
+            {/* Referral History Ledger (Permanent History Preserved Across Resets) */}
+            <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-bold text-slate-900">@{r.refereeUsername}</p>
-                  <p className="text-[10px] text-slate-400">
-                    {new Date(r.createdAt).toLocaleDateString()}
+                  <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-[#0088cc]" /> Referral History
+                  </h3>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    Current campaign progress & permanent historical referral records
                   </p>
                 </div>
-                <span className="font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-lg">
-                  +₹{r.rewardAmount.toFixed(2)}
-                </span>
+                <button
+                  onClick={loadReferralStats}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-[#0088cc]' : ''}`} />
+                </button>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+
+              {hasHistoricalCampaigns && (
+                <div className="flex bg-slate-100 p-1 rounded-xl gap-1">
+                  {(
+                    [
+                      { key: 'all', label: `All (${historyList.length})` },
+                      {
+                        key: 'current',
+                        label: `Campaign #${activeCampaignId} (${
+                          historyList.filter((r) => (r.referralCampaignId ?? 1) === activeCampaignId).length
+                        })`,
+                      },
+                      {
+                        key: 'historical',
+                        label: `Past History (${
+                          historyList.filter((r) => (r.referralCampaignId ?? 1) !== activeCampaignId).length
+                        })`,
+                      },
+                    ] as const
+                  ).map((tabItem) => (
+                    <button
+                      key={tabItem.key}
+                      type="button"
+                      onClick={() => setHistoryFilter(tabItem.key)}
+                      className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold transition ${
+                        historyFilter === tabItem.key
+                          ? 'bg-white text-slate-900 shadow-2xs'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      {tabItem.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {filteredHistory.length === 0 ? (
+                <div className="text-center py-6 text-slate-400 text-xs">
+                  <p>
+                    {historyFilter === 'current' && historyList.length > 0
+                      ? `No referrals in Campaign #${activeCampaignId} yet. Switch to "All" or "Past History" to view your ${historyList.length} preserved historical referral(s)!`
+                      : 'No referrals yet. Share your link above to start earning!'}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {filteredHistory.map((r: any) => {
+                    const recCamp = r.referralCampaignId ?? 1;
+                    const isCurrent = recCamp === activeCampaignId;
+                    const isCredited = r.status === 'credited';
+                    return (
+                      <div
+                        key={r.id}
+                        className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs gap-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="font-bold text-slate-900 truncate">@{r.refereeUsername || 'user'}</p>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                isCurrent
+                                  ? 'bg-sky-50 text-[#0088cc] border border-sky-200/70'
+                                  : 'bg-slate-200/70 text-slate-600'
+                              }`}
+                            >
+                              {isCurrent ? `Campaign #${recCamp}` : `History • #${recCamp}`}
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                isCredited
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
+                                  : 'bg-rose-50 text-rose-700 border border-rose-200/60'
+                              }`}
+                            >
+                              {isCredited ? 'Valid' : 'Invalid'}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            {new Date(r.createdAt).toLocaleDateString()} • ID: {r.id.slice(0, 14)}
+                          </p>
+                        </div>
+                        <span
+                          className={`font-extrabold px-2 py-0.5 rounded-lg shrink-0 ${
+                            isCredited
+                              ? 'text-emerald-700 bg-emerald-50 border border-emerald-200/60'
+                              : 'text-slate-400 bg-slate-100 border border-slate-200'
+                          }`}
+                        >
+                          {isCredited ? `+₹${Number(r.rewardAmount || 0).toFixed(2)}` : '₹0.00'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </>
+        );
+      })()}
 
       {/* Fair Play Notice */}
       <div className="p-3.5 bg-amber-50/70 border border-amber-200/80 rounded-xl flex items-start gap-2.5 text-xs text-amber-900 shadow-2xs">

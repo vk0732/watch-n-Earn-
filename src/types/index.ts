@@ -111,6 +111,7 @@ export interface ReferralRecord {
   rewardAmount: number;
   status: 'credited' | 'pending' | 'rejected_duplicate' | 'rejected' | 'flagged_abuse';
   rejectionReason?: string;
+  referralCampaignId?: number;
   createdAt: string;
 }
 
@@ -156,6 +157,7 @@ export interface Withdrawal {
   giftCardId?: string;
   giftCardRedeemedAt?: string;
   idempotencyKey?: string;
+  referralCampaignId?: number;
   createdAt: string;
   processedAt?: string | null;
 }
@@ -241,6 +243,9 @@ export interface AppSettings {
   gamification?: GamificationSettings;
   // Reset Generation for controlled reward campaign versioning
   resetGeneration?: number;
+  // Referral Campaign ID for independent referral progress & withdrawal milestone resets (preserves permanent history)
+  referralCampaignId?: number;
+  lastReferralResetAt?: string;
   // Withdrawal Referral Requirement settings
   withdrawalReferralRequirementEnabled?: boolean;
   withdrawalReferralApplyFromCount?: number;
@@ -253,6 +258,11 @@ export interface WithdrawalReferralEligibility {
   completedWithdrawals: number;
   currentReferrals: number;
   requiredReferrals: number;
+  perWithdrawalRequirement: number;
+  nextWithdrawalNumber: number;
+  referralCampaignId: number;
+  lifetimeValidReferrals?: number;
+  lifetimeCompletedWithdrawals?: number;
   applyFromCount: number;
   message?: string;
 }
@@ -416,16 +426,37 @@ export interface GatewayTestResult {
 
 export interface BulkBalanceResetPreview {
   totalUsers: number;
+  totalRegisteredUsers?: number;
   totalBalance: number;
   currentGeneration: number;
   nextGeneration: number;
+  currentReferralCampaignId: number;
+  nextReferralCampaignId: number;
+  usersWithActiveCampaignReferrals: number;
+  activeCampaignValidReferrals: number;
+  lifetimeReferralsCount: number;
+  activeCampaignCompletedWithdrawals: number;
+  lifetimeCompletedWithdrawals: number;
+}
+
+export interface BulkBalanceResetOptions {
+  resetBalances?: boolean;
+  resetReferrals?: boolean;
 }
 
 export interface BulkBalanceResetResult {
   success: boolean;
+  resetBalances: boolean;
+  resetReferrals: boolean;
   affectedUsers: number;
   totalBalanceReset: number;
   newResetGeneration: number;
+  previousReferralCampaignId: number;
+  newReferralCampaignId: number;
+  archivedCampaignReferrals: number;
+  archivedCampaignWithdrawals: number;
+  usersWithReferralProgressReset: number;
+  lifetimeReferralsPreserved: number;
   resetAt: string;
   error?: string;
 }

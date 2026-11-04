@@ -9,6 +9,7 @@ import {
   redeemGiftCardWithdrawal,
   getUserWithdrawals,
   getAllWithdrawals,
+  updateAppSettings,
   memStore,
   isFirestoreAvailable,
 } from '../server/db.ts';
@@ -35,6 +36,7 @@ async function runPersistenceTests() {
   };
 
   setMockChannelMembership('*', { isMember: true, status: 'member' });
+  await updateAppSettings({ withdrawalReferralRequirementEnabled: false });
 
   await saveUser(mockUser);
   console.log('  ✓ Saved initial user profile');

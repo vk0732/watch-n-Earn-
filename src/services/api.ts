@@ -206,8 +206,13 @@ export const api = {
       referralCode: string;
       referralLink: string;
       referralReward: number;
+      referralCampaignId?: number;
+      currentCampaignValidReferrals?: number;
+      lifetimeValidReferrals?: number;
+      currentCampaignTotalReferrals?: number;
       totalReferrals: number;
       totalEarned: number;
+      withdrawalEligibility?: WithdrawalReferralEligibility;
       history: any[];
     }>('/referrals/stats'),
 
@@ -373,11 +378,14 @@ export const api = {
 
   getAdminSettings: () => request<{ settings: AppSettings }>('/admin/settings'),
 
-  updateAdminSettings: (settings: Partial<AppSettings>) =>
-    request<{ success: boolean; settings: AppSettings }>('/admin/settings', {
+  updateAdminSettings: async (settings: Partial<AppSettings>) => {
+    const res = await request<{ success: boolean; settings: AppSettings }>('/admin/settings', {
       method: 'POST',
       body: JSON.stringify(settings),
-    }),
+    });
+    configCache = null;
+    return res;
+  },
 
   getAdminWithdrawals: (status = 'all') =>
     request<{ withdrawals: Withdrawal[] }>(`/admin/withdrawals?status=${status}`),
@@ -467,15 +475,41 @@ export const api = {
       }
     ),
 
-  // Feature 1: Admin Bulk Balance Reset
+  // Feature 1: Admin Bulk Balance & Campaign Referral Reset
   getBulkBalanceResetPreview: () =>
     request<BulkBalanceResetPreview>('/admin/bulk-balance-reset/preview'),
 
-  executeBulkBalanceReset: (confirmPhrase: string) =>
-    request<BulkBalanceResetResult>('/admin/bulk-balance-reset', {
+  executeBulkBalanceReset: async (
+    confirmPhrase: string,
+    options?: { resetBalances?: boolean; resetReferrals?: boolean }
+  ) => {
+    const res = await request<BulkBalanceResetResult>('/admin/bulk-balance-reset', {
       method: 'POST',
-      body: JSON.stringify({ confirmPhrase }),
-    }),
+      body: JSON.stringify({ confirmPhrase, ...(options || {}) }),
+    });
+    configCache = null;
+    return res;
+  },
+
+  getAdminReferrals: (params?: { userId?: string; campaignId?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.userId) q.append('userId', params.userId);
+    if (params?.campaignId) q.append('campaignId', String(params.campaignId));
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    return request<{
+      activeCampaignId: number;
+      totalRecords: number;
+      userCounts?: {
+        referralCampaignId: number;
+        currentCampaignValidReferrals: number;
+        lifetimeValidReferrals: number;
+        currentCampaignTotalReferrals: number;
+        lifetimeTotalReferrals: number;
+      };
+      eligibility?: WithdrawalReferralEligibility;
+      referrals: any[];
+    }>(`/admin/referrals${qs}`);
+  },
 
   // Feature 2: Admin Telegram Broadcast
   getBroadcastPreview: () =>

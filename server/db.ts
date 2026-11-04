@@ -37,6 +37,7 @@ import type {
   GiftCardCode,
   GiftCardInventoryStats,
   BulkBalanceResetPreview,
+  BulkBalanceResetOptions,
   BulkBalanceResetResult,
   MandatoryWithdrawalVerificationResult,
   WithdrawalReferralEligibility,
@@ -135,8 +136,9 @@ export const memStore = {
     dailyCheckinRewardDifference: 2,
     minWithdrawalAmount: 10, // PRD: ₹10 minimum withdrawal
     resetGeneration: 1, // Campaign generation for versioned reward re-eligibility
+    referralCampaignId: 1, // Active referral & withdrawal milestone campaign identifier
     withdrawalReferralRequirementEnabled: true,
-    withdrawalReferralApplyFromCount: 2,
+    withdrawalReferralApplyFromCount: 1,
     withdrawalMinReferralsRequired: 1,
     maxWithdrawalAmount: 5000, // Configurable upper bound
     dailyWithdrawalLimitEnabled: false,
@@ -316,6 +318,7 @@ export function getDailyCheckinCycleRewards(settings: Partial<AppSettings>): num
 
 let lastSettingsMtime = 0;
 export function loadAuthoritativeSettings(): void {
+  if (process.env.NODE_ENV === 'test') return;
   try {
     if (fs.existsSync(SETTINGS_AUTHORITATIVE_PATH)) {
       const stat = fs.statSync(SETTINGS_AUTHORITATIVE_PATH);
@@ -333,6 +336,17 @@ export function loadAuthoritativeSettings(): void {
   }
 }
 loadAuthoritativeSettings();
+
+export function getCurrentReferralCampaignId(settings?: Partial<AppSettings>): number {
+  const src = settings ?? memStore.settings;
+  const cid = Number(src?.referralCampaignId);
+  return Number.isInteger(cid) && cid >= 1 ? cid : 1;
+}
+
+export function getRecordCampaignId(record?: { referralCampaignId?: number | null } | null): number {
+  const cid = Number(record?.referralCampaignId);
+  return Number.isInteger(cid) && cid >= 1 ? cid : 1;
+}
 
 export function persistAuthoritativeSettings(): void {
   if (process.env.NODE_ENV === 'test') return;
@@ -358,7 +372,21 @@ export async function getAppSettings(): Promise<AppSettings> {
     const snap = await getDoc(docRef);
     if (snap.exists()) {
       const data = snap.data() as AppSettings;
-      const merged = { ...memStore.settings, ...data };
+      const maxResetGen = Math.max(
+        Number(memStore.settings.resetGeneration) || 1,
+        Number(data.resetGeneration) || 1
+      );
+      const maxRefCampaignId = Math.max(
+        Number(memStore.settings.referralCampaignId) || 1,
+        Number(data.referralCampaignId) || 1
+      );
+      const merged: AppSettings = {
+        ...memStore.settings,
+        ...data,
+        resetGeneration: maxResetGen,
+        referralCampaignId: maxRefCampaignId,
+        lastReferralResetAt: data.lastReferralResetAt || memStore.settings.lastReferralResetAt,
+      };
       if (
         !merged.templates?.welcomeMessage ||
         merged.templates.welcomeMessage.includes('👋 <b>Welcome {first_name}')
@@ -1600,7 +1628,7 @@ export async function atomicClaimReferralReward({
       };
     }
 
-    // 2. Check if this referee has already credited a reward
+    // 2. Check if this referee has already credited a reward across ANY campaign (permanent anti-double-count)
     if (memStore.referralClaims.has(refereeId)) {
       return {
         success: false,
@@ -1618,13 +1646,47 @@ export async function atomicClaimReferralReward({
       };
     }
 
-    // 3. Referrer validity check
+    if (isFirestoreAvailable()) {
+      try {
+        const qExisting = query(collection(db, getColName('referrals')), where('refereeId', '==', refereeId));
+        const snapExisting = await getDocs(qExisting);
+        if (!snapExisting.empty) {
+          let foundHistoricalCredit = false;
+          snapExisting.forEach((d) => {
+            const item = d.data() as ReferralRecord;
+            const rec = { ...item, id: item.id || d.id };
+            if (!memStore.referrals.has(rec.id)) {
+              memStore.referrals.set(rec.id, rec);
+            }
+            if (rec.status === 'credited') {
+              foundHistoricalCredit = true;
+            }
+          });
+          if (foundHistoricalCredit) {
+            return {
+              success: false,
+              reason: 'Referral reward has already been credited for this referee.',
+            };
+          }
+        }
+      } catch (err) {
+        reportFirestoreError(err);
+      }
+    }
+
+    const activeCampaignId = getCurrentReferralCampaignId(settings);
+
+    // 3. Referrer & referee validity check
     const referrerUser = await getUser(referrerId);
     if (!referrerUser) {
       return { success: false, reason: 'Referrer not found.' };
     }
     if (referrerUser.isBanned) {
       return { success: false, reason: 'Referrer account is suspended.' };
+    }
+    const refereeUser = memStore.users.get(refereeId);
+    if (refereeUser?.isBanned) {
+      return { success: false, reason: 'Referee account is suspended.' };
     }
 
     // 4. Circular referral check (e.g. A referred B, B cannot refer A)
@@ -1637,6 +1699,7 @@ export async function atomicClaimReferralReward({
         rewardAmount: 0,
         status: 'rejected',
         rejectionReason: 'Circular referral detected: Referrer was already referred by referee',
+        referralCampaignId: activeCampaignId,
         createdAt: new Date().toISOString(),
       };
       await recordReferral(refRecord);
@@ -1651,6 +1714,14 @@ export async function atomicClaimReferralReward({
       return {
         success: false,
         reason: 'Circular referral detected: Referrer was already referred by referee.',
+        isAbuseDetected: true,
+      };
+    }
+
+    if (refereeUser?.isDuplicateAccount) {
+      return {
+        success: false,
+        reason: 'Duplicate or restricted referee account is ineligible for referral credit.',
         isAbuseDetected: true,
       };
     }
@@ -1705,6 +1776,7 @@ export async function atomicClaimReferralReward({
           rewardAmount: 0,
           status: 'rejected',
           rejectionReason,
+          referralCampaignId: activeCampaignId,
           createdAt: new Date().toISOString(),
         };
         await recordReferral(refRecord);
@@ -1747,7 +1819,7 @@ export async function atomicClaimReferralReward({
       console.warn('[DB] Referral claim sync fallback:', err);
     }
 
-    // 6. Record referral in ledger
+    // 6. Record referral in ledger (stamped with current active referralCampaignId)
     const referralRecord: ReferralRecord = {
       id: `${referrerId}_${refereeId}`,
       referrerId,
@@ -1755,6 +1827,7 @@ export async function atomicClaimReferralReward({
       refereeUsername,
       rewardAmount,
       status: 'credited',
+      referralCampaignId: activeCampaignId,
       createdAt: new Date().toISOString(),
     };
     await recordReferral(referralRecord);
@@ -1835,48 +1908,261 @@ export async function recordTaskCompletion(completion: TaskCompletion): Promise<
 /* ========================================================
    REFERRALS REPOSITORY
    ======================================================== */
-export async function getReferralsByReferrer(referrerId: string): Promise<ReferralRecord[]> {
-  const memList = Array.from(memStore.referrals.values())
-    .filter((r) => r.referrerId === referrerId)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+const REFERRALS_AUTHORITATIVE_PATH = path.join(process.cwd(), 'data', 'authoritative_referrals.json');
+const WITHDRAWALS_AUTHORITATIVE_PATH = path.join(process.cwd(), 'data', 'authoritative_withdrawals.json');
+const hydratedReferrerIds = new Set<string>();
+const hydratedWithdrawalUserIds = new Set<string>();
+let allReferralsHydratedFromFirestore = false;
+let referralsPersistDebounceTimer: NodeJS.Timeout | null = null;
+let withdrawalsPersistDebounceTimer: NodeJS.Timeout | null = null;
 
-  if (!isFirestoreAvailable() || memList.length > 0) {
-    return memList;
+function isTestArtifactId(id?: string | null): boolean {
+  if (!id) return false;
+  return (
+    id.startsWith('mock_') ||
+    id.startsWith('reset_user_') ||
+    id.startsWith('persist_user_') ||
+    id.startsWith('test_') ||
+    id.startsWith('usr_ref_test_')
+  );
+}
+
+export function persistReferralsRegistry(immediate = false): void {
+  if (process.env.NODE_ENV === 'test') return;
+  const doSave = () => {
+    try {
+      const dataDir = path.join(process.cwd(), 'data');
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
+      const list = Array.from(memStore.referrals.values()).filter(
+        (r) => !isTestArtifactId(r.referrerId) && !isTestArtifactId(r.refereeId) && !isTestArtifactId(r.id)
+      );
+      fs.writeFileSync(REFERRALS_AUTHORITATIVE_PATH, JSON.stringify(list, null, 2), { mode: 0o600 });
+    } catch (err) {
+      console.warn('[DB] persistReferralsRegistry error:', err);
+    }
+  };
+
+  if (immediate) {
+    if (referralsPersistDebounceTimer) clearTimeout(referralsPersistDebounceTimer);
+    referralsPersistDebounceTimer = null;
+    doSave();
+  } else if (!referralsPersistDebounceTimer) {
+    referralsPersistDebounceTimer = setTimeout(() => {
+      referralsPersistDebounceTimer = null;
+      doSave();
+    }, 400);
   }
+}
 
+export function reconcileReferralsRegistry(): number {
   try {
-    const q = query(collection(db, getColName('referrals')), where('referrerId', '==', referrerId));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      const items: ReferralRecord[] = [];
-      snap.forEach((d) => {
-        const item = d.data() as ReferralRecord;
-        const r = { ...item, id: item.id || d.id };
-        memStore.referrals.set(r.id, r);
-        items.push(r);
-      });
-      return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    if (fs.existsSync(REFERRALS_AUTHORITATIVE_PATH)) {
+      const raw = fs.readFileSync(REFERRALS_AUTHORITATIVE_PATH, 'utf-8');
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        for (const r of list) {
+          if (r && r.id) {
+            if (!memStore.referrals.has(r.id)) {
+              memStore.referrals.set(r.id, r);
+            }
+            if (r.status === 'credited' && r.refereeId && !memStore.referralClaims.has(r.refereeId)) {
+              memStore.referralClaims.set(r.refereeId, {
+                id: `claim_referral_${r.refereeId}`,
+                claimType: 'referral_reward',
+                userId: r.referrerId,
+                amount: r.rewardAmount || 0,
+                status: 'claimed',
+                createdAt: r.createdAt || new Date().toISOString(),
+              });
+            }
+          }
+        }
+      }
     }
   } catch (err) {
-    reportFirestoreError(err);
-    console.warn('[DB] Firestore getReferralsByReferrer fallback:', err);
+    console.warn('[DB] reconcileReferralsRegistry warning:', err);
+  }
+  return memStore.referrals.size;
+}
+
+export function persistWithdrawalsRegistry(immediate = false): void {
+  if (process.env.NODE_ENV === 'test') return;
+  const doSave = () => {
+    try {
+      const dataDir = path.join(process.cwd(), 'data');
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
+      const list = Array.from(memStore.withdrawals.values()).filter(
+        (w) => !isTestArtifactId(w.userId) && !isTestArtifactId(w.id)
+      );
+      fs.writeFileSync(WITHDRAWALS_AUTHORITATIVE_PATH, JSON.stringify(list, null, 2), { mode: 0o600 });
+    } catch (err) {
+      console.warn('[DB] persistWithdrawalsRegistry error:', err);
+    }
+  };
+
+  if (immediate) {
+    if (withdrawalsPersistDebounceTimer) clearTimeout(withdrawalsPersistDebounceTimer);
+    withdrawalsPersistDebounceTimer = null;
+    doSave();
+  } else if (!withdrawalsPersistDebounceTimer) {
+    withdrawalsPersistDebounceTimer = setTimeout(() => {
+      withdrawalsPersistDebounceTimer = null;
+      doSave();
+    }, 400);
+  }
+}
+
+export function reconcileWithdrawalsRegistry(): number {
+  try {
+    if (fs.existsSync(WITHDRAWALS_AUTHORITATIVE_PATH)) {
+      const raw = fs.readFileSync(WITHDRAWALS_AUTHORITATIVE_PATH, 'utf-8');
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        for (const w of list) {
+          if (w && w.id && !memStore.withdrawals.has(w.id)) {
+            memStore.withdrawals.set(w.id, w);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[DB] reconcileWithdrawalsRegistry warning:', err);
+  }
+  return memStore.withdrawals.size;
+}
+
+export async function getAllReferrals(): Promise<ReferralRecord[]> {
+  if (memStore.referrals.size === 0 && process.env.NODE_ENV !== 'test') {
+    reconcileReferralsRegistry();
+  }
+  if (isFirestoreAvailable() && !allReferralsHydratedFromFirestore) {
+    try {
+      const snap = await getDocs(collection(db, getColName('referrals')));
+      allReferralsHydratedFromFirestore = true;
+      if (!snap.empty) {
+        snap.forEach((d) => {
+          const item = d.data() as ReferralRecord;
+          const r: ReferralRecord = { ...item, id: item.id || d.id };
+          const existing = memStore.referrals.get(r.id);
+          memStore.referrals.set(r.id, {
+            ...r,
+            referralCampaignId: existing?.referralCampaignId ?? r.referralCampaignId,
+          });
+          if (r.status === 'credited' && r.refereeId && !memStore.referralClaims.has(r.refereeId)) {
+            memStore.referralClaims.set(r.refereeId, {
+              id: `claim_referral_${r.refereeId}`,
+              claimType: 'referral_reward',
+              userId: r.referrerId,
+              amount: r.rewardAmount || 0,
+              status: 'claimed',
+              createdAt: r.createdAt || new Date().toISOString(),
+            });
+          }
+        });
+        persistReferralsRegistry(false);
+      }
+    } catch (err) {
+      reportFirestoreError(err);
+      console.warn('[DB] Firestore getAllReferrals fallback:', err);
+    }
+  }
+  return Array.from(memStore.referrals.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+}
+
+export async function getReferralsByReferrer(referrerId: string): Promise<ReferralRecord[]> {
+  if (memStore.referrals.size === 0) {
+    hydratedReferrerIds.clear();
+    if (process.env.NODE_ENV !== 'test') {
+      reconcileReferralsRegistry();
+    }
   }
 
-  return memList;
+  if (isFirestoreAvailable() && !hydratedReferrerIds.has(referrerId)) {
+    try {
+      const q = query(collection(db, getColName('referrals')), where('referrerId', '==', referrerId));
+      const snap = await getDocs(q);
+      hydratedReferrerIds.add(referrerId);
+      if (!snap.empty) {
+        snap.forEach((d) => {
+          const item = d.data() as ReferralRecord;
+          const r = { ...item, id: item.id || d.id };
+          const existing = memStore.referrals.get(r.id);
+          memStore.referrals.set(r.id, {
+            ...r,
+            referralCampaignId: existing?.referralCampaignId ?? r.referralCampaignId,
+          });
+        });
+        persistReferralsRegistry(false);
+      }
+    } catch (err) {
+      reportFirestoreError(err);
+      console.warn('[DB] Firestore getReferralsByReferrer fallback:', err);
+    }
+  }
+
+  return Array.from(memStore.referrals.values())
+    .filter((r) => r.referrerId === referrerId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
 export async function recordReferral(referral: ReferralRecord): Promise<ReferralRecord> {
-  memStore.referrals.set(referral.id, referral);
+  const activeCampaignId = getCurrentReferralCampaignId(memStore.settings);
+  const existingSameId = memStore.referrals.get(referral.id);
+
+  // Prevent an already-credited referee from migrating to a new campaign or being counted twice
+  if (referral.status === 'credited' && referral.refereeId && referral.refereeId !== referral.referrerId) {
+    const priorCredited = Array.from(memStore.referrals.values()).find(
+      (r) => r.refereeId === referral.refereeId && r.status === 'credited' && r.refereeId !== r.referrerId
+    );
+    if (priorCredited && priorCredited.id !== referral.id) {
+      return priorCredited;
+    }
+    if (priorCredited && priorCredited.id === referral.id && referral.referralCampaignId === undefined) {
+      referral = { ...referral, referralCampaignId: getRecordCampaignId(priorCredited) };
+    }
+  }
+
+  const stamped: ReferralRecord = {
+    ...referral,
+    referralCampaignId:
+      referral.referralCampaignId !== undefined && referral.referralCampaignId !== null
+        ? getRecordCampaignId(referral)
+        : existingSameId?.referralCampaignId !== undefined
+        ? getRecordCampaignId(existingSameId)
+        : activeCampaignId,
+  };
+
+  memStore.referrals.set(stamped.id, stamped);
+  if (stamped.status === 'credited' && stamped.refereeId && stamped.refereeId !== stamped.referrerId) {
+    if (!memStore.referralClaims.has(stamped.refereeId)) {
+      memStore.referralClaims.set(stamped.refereeId, {
+        id: `claim_referral_${stamped.refereeId}`,
+        claimType: 'referral_reward',
+        userId: stamped.referrerId,
+        amount: stamped.rewardAmount || 0,
+        status: 'claimed',
+        createdAt: stamped.createdAt || new Date().toISOString(),
+      });
+    }
+  }
+  persistReferralsRegistry(false);
+
   if (!isFirestoreAvailable()) {
-    return referral;
+    return stamped;
   }
   try {
-    await setDoc(doc(db, getColName('referrals'), referral.id), cleanDocData(referral));
+    await setDoc(doc(db, getColName('referrals'), stamped.id), cleanDocData(stamped));
   } catch (err) {
     reportFirestoreError(err);
     console.warn('[DB] recordReferral fallback:', err);
   }
-  return referral;
+  return stamped;
 }
 
 /* ========================================================
@@ -1892,36 +2178,46 @@ export async function createWithdrawalRequest(
 }
 
 export async function getUserWithdrawals(userId: string): Promise<Withdrawal[]> {
-  const memWithdrawals = Array.from(memStore.withdrawals.values())
+  if (memStore.withdrawals.size === 0) {
+    hydratedWithdrawalUserIds.clear();
+    if (process.env.NODE_ENV !== 'test') {
+      reconcileWithdrawalsRegistry();
+    }
+  }
+
+  if (isFirestoreAvailable() && !hydratedWithdrawalUserIds.has(userId)) {
+    try {
+      const q = query(collection(db, getColName('withdrawals')), where('userId', '==', userId));
+      const snap = await getDocs(q);
+      hydratedWithdrawalUserIds.add(userId);
+      if (!snap.empty) {
+        snap.forEach((d) => {
+          const item = d.data() as Withdrawal;
+          const w = { ...item, id: item.id || d.id };
+          const existing = memStore.withdrawals.get(w.id);
+          if (!existing) {
+            memStore.withdrawals.set(w.id, w);
+          } else if (existing.referralCampaignId === undefined && w.referralCampaignId !== undefined) {
+            memStore.withdrawals.set(w.id, { ...existing, referralCampaignId: w.referralCampaignId });
+          }
+        });
+        persistWithdrawalsRegistry(false);
+      }
+    } catch (err) {
+      reportFirestoreError(err);
+      console.warn('[DB] Firestore getUserWithdrawals fallback:', err);
+    }
+  }
+
+  return Array.from(memStore.withdrawals.values())
     .filter((w) => w.userId === userId)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-  if (!isFirestoreAvailable() || memWithdrawals.length > 0) {
-    return memWithdrawals;
-  }
-
-  try {
-    const q = query(collection(db, getColName('withdrawals')), where('userId', '==', userId));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      const items: Withdrawal[] = [];
-      snap.forEach((d) => {
-        const item = d.data() as Withdrawal;
-        const w = { ...item, id: item.id || d.id };
-        memStore.withdrawals.set(w.id, w);
-        items.push(w);
-      });
-      return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    }
-  } catch (err) {
-    reportFirestoreError(err);
-    console.warn('[DB] Firestore getUserWithdrawals fallback:', err);
-  }
-
-  return memWithdrawals;
 }
 
 export async function getAllWithdrawals(status?: string): Promise<Withdrawal[]> {
+  if (memStore.withdrawals.size === 0 && process.env.NODE_ENV !== 'test') {
+    reconcileWithdrawalsRegistry();
+  }
   if (isFirestoreAvailable()) {
     try {
       const snap = await getDocs(collection(db, getColName('withdrawals')));
@@ -1929,8 +2225,14 @@ export async function getAllWithdrawals(status?: string): Promise<Withdrawal[]> 
         snap.forEach((d) => {
           const item = d.data() as Withdrawal;
           const w = { ...item, id: item.id || d.id };
-          memStore.withdrawals.set(w.id, w);
+          const existing = memStore.withdrawals.get(w.id);
+          if (!existing) {
+            memStore.withdrawals.set(w.id, w);
+          } else if (existing.referralCampaignId === undefined && w.referralCampaignId !== undefined) {
+            memStore.withdrawals.set(w.id, { ...existing, referralCampaignId: w.referralCampaignId });
+          }
         });
+        persistWithdrawalsRegistry(false);
       }
     } catch (err) {
       reportFirestoreError(err);
@@ -1949,89 +2251,174 @@ export async function getAllWithdrawals(status?: string): Promise<Withdrawal[]> 
    WITHDRAWAL REFERRAL REQUIREMENT HELPERS
    ======================================================== */
 
-/**
- * Returns count of distinct, valid, successfully credited referrals for a given user.
- * Excludes:
- * - self-referrals (refereeId === referrerId)
- * - rejected or duplicate fraud records (status !== 'credited')
- * - empty or invalid referee IDs
- */
-export async function getValidReferralCount(referrerId: string): Promise<number> {
+export function isReferralRecordValid(ref: ReferralRecord, expectedReferrerId?: string): boolean {
+  if (!ref || ref.status !== 'credited') return false;
+  if (!ref.referrerId || !ref.refereeId) return false;
+  if (ref.refereeId === ref.referrerId) return false;
+  if (expectedReferrerId && ref.referrerId !== expectedReferrerId) return false;
+
+  const refereeUser = memStore.users.get(ref.refereeId);
+  if (refereeUser && (refereeUser.isBanned || refereeUser.isDuplicateAccount)) {
+    return false;
+  }
+  return true;
+}
+
+export interface CampaignReferralCounts {
+  referralCampaignId: number;
+  currentCampaignValidReferrals: number;
+  lifetimeValidReferrals: number;
+  currentCampaignTotalReferrals: number;
+  lifetimeTotalReferrals: number;
+}
+
+export async function getCampaignReferralCounts(
+  referrerId: string,
+  targetCampaignId?: number
+): Promise<CampaignReferralCounts> {
+  const settings = await getAppSettings();
+  const activeCampaignId =
+    targetCampaignId !== undefined && targetCampaignId >= 1
+      ? Math.floor(targetCampaignId)
+      : getCurrentReferralCampaignId(settings);
+
   const referrals = await getReferralsByReferrer(referrerId);
-  const validReferees = new Set<string>();
-  for (const ref of referrals) {
-    if (
-      ref.status === 'credited' &&
-      ref.referrerId === referrerId &&
-      ref.refereeId &&
-      ref.refereeId !== referrerId
-    ) {
-      validReferees.add(ref.refereeId);
+
+  // Track the earliest campaign in which each referee was validly credited across the entire store
+  const earliestCampaignByReferee = new Map<string, number>();
+  for (const r of memStore.referrals.values()) {
+    if (r.status === 'credited' && r.refereeId && r.referrerId && r.refereeId !== r.referrerId) {
+      const cId = getRecordCampaignId(r);
+      const prev = earliestCampaignByReferee.get(r.refereeId);
+      if (prev === undefined || cId < prev) {
+        earliestCampaignByReferee.set(r.refereeId, cId);
+      }
     }
   }
-  return validReferees.size;
+
+  const lifetimeValidSet = new Set<string>();
+  const currentCampaignValidSet = new Set<string>();
+  let currentCampaignTotal = 0;
+
+  for (const ref of referrals) {
+    const recCampaignId = getRecordCampaignId(ref);
+    if (recCampaignId === activeCampaignId) {
+      currentCampaignTotal++;
+    }
+    if (isReferralRecordValid(ref, referrerId)) {
+      lifetimeValidSet.add(ref.refereeId);
+      const firstCreditedCampaign = earliestCampaignByReferee.get(ref.refereeId) ?? recCampaignId;
+      if (recCampaignId === activeCampaignId && firstCreditedCampaign === activeCampaignId) {
+        currentCampaignValidSet.add(ref.refereeId);
+      }
+    }
+  }
+
+  return {
+    referralCampaignId: activeCampaignId,
+    currentCampaignValidReferrals: currentCampaignValidSet.size,
+    lifetimeValidReferrals: lifetimeValidSet.size,
+    currentCampaignTotalReferrals: currentCampaignTotal,
+    lifetimeTotalReferrals: referrals.length,
+  };
 }
 
 /**
- * Returns all successfully completed withdrawals for a given user.
- * Per authoritative definition, only withdrawals with status === 'success' count as completed.
- * Pending, processing, failed, rejected, or reversed withdrawals do not count.
+ * Returns count of distinct, valid, successfully credited referrals for a given user
+ * in the active referral campaign (or a specific campaignId if passed).
+ * Excludes:
+ * - self-referrals (refereeId === referrerId)
+ * - rejected, pending, or duplicate fraud records (status !== 'credited')
+ * - banned or duplicate-flagged referee accounts
+ * - historical referrals belonging to earlier referral campaigns
  */
-export async function getCompletedWithdrawals(userId: string): Promise<Withdrawal[]> {
-  const userWithdrawals = await getUserWithdrawals(userId);
-  return userWithdrawals.filter((w) => w.status === 'success');
+export async function getValidReferralCount(referrerId: string, campaignId?: number): Promise<number> {
+  const counts = await getCampaignReferralCounts(referrerId, campaignId);
+  return counts.currentCampaignValidReferrals;
 }
 
 /**
- * Checks whether the user meets the withdrawal referral requirement.
- * 
- * Rules:
- * 1. Default: First withdrawal is unrestricted (applyFromCount = 2).
- * 2. Second withdrawal onward requires at least withdrawalMinReferralsRequired valid referrals.
- * 3. If withdrawalReferralRequirementEnabled is false, requirement is bypassed.
- * 4. Completed withdrawals count strictly authoritative records where status === 'success'.
+ * Returns successfully completed withdrawals for a given user (optionally filtered to a referral campaign).
+ * Per authoritative definition, strictly withdrawals with status === 'success' count as completed.
+ * Pending, processing, failed, rejected, or reversed withdrawals never advance milestones.
+ */
+export async function getCompletedWithdrawals(userId: string, campaignId?: number): Promise<Withdrawal[]> {
+  const userWithdrawals = await getUserWithdrawals(userId);
+  return userWithdrawals.filter(
+    (w) => w.status === 'success' && (campaignId === undefined || getRecordCampaignId(w) === campaignId)
+  );
+}
+
+export function formatWithdrawalOrdinal(withdrawalNumber: number): string {
+  switch (withdrawalNumber) {
+    case 1:
+      return 'First withdrawal';
+    case 2:
+      return 'Second withdrawal';
+    case 3:
+      return 'Third withdrawal';
+    case 4:
+      return 'Fourth withdrawal';
+    case 5:
+      return 'Fifth withdrawal';
+    default:
+      return `Withdrawal #${withdrawalNumber}`;
+  }
+}
+
+/**
+ * Checks whether the user meets the cumulative withdrawal referral requirement in the active campaign.
+ *
+ * Formula:
+ * - R = admin-configured required valid referrals per withdrawal (withdrawalMinReferralsRequired)
+ * - W = successfully completed withdrawals (status === 'success') in the current referral campaign
+ * - V = unique valid referrals earned in the current referral campaign
+ * - Required cumulative referrals = (W + 1) * R
+ * - Withdrawal is allowed only when V >= (W + 1) * R (when withdrawalReferralRequirementEnabled !== false)
  */
 export async function checkWithdrawalReferralEligibility(userId: string): Promise<WithdrawalReferralEligibility> {
   const settings = await getAppSettings();
+  const currentCampaignId = getCurrentReferralCampaignId(settings);
   const isEnabled = settings.withdrawalReferralRequirementEnabled !== false;
-  const applyFromCount =
-    typeof settings.withdrawalReferralApplyFromCount === 'number' && settings.withdrawalReferralApplyFromCount >= 1
-      ? settings.withdrawalReferralApplyFromCount
-      : 2;
-  const requiredReferrals =
+  const perWithdrawalRequirement =
     typeof settings.withdrawalMinReferralsRequired === 'number' && settings.withdrawalMinReferralsRequired >= 1
-      ? settings.withdrawalMinReferralsRequired
+      ? Math.floor(settings.withdrawalMinReferralsRequired)
       : 1;
 
-  const completed = await getCompletedWithdrawals(userId);
-  const completedWithdrawals = completed.length;
-  const currentReferrals = await getValidReferralCount(userId);
+  const allCompleted = await getCompletedWithdrawals(userId);
+  const campaignCompleted = allCompleted.filter((w) => getRecordCampaignId(w) === currentCampaignId);
+  const completedWithdrawals = campaignCompleted.length;
 
-  // The next withdrawal attempt is number (completedWithdrawals + 1)
-  const currentWithdrawalNumber = completedWithdrawals + 1;
-  const applies = isEnabled && currentWithdrawalNumber >= applyFromCount;
+  const refCounts = await getCampaignReferralCounts(userId, currentCampaignId);
+  const currentReferrals = refCounts.currentCampaignValidReferrals;
 
-  if (!applies) {
+  const nextWithdrawalNumber = completedWithdrawals + 1;
+  const requiredReferrals = nextWithdrawalNumber * perWithdrawalRequirement;
+  const ordLabel = formatWithdrawalOrdinal(nextWithdrawalNumber);
+
+  if (!isEnabled) {
     return {
       eligible: true,
       applies: false,
       completedWithdrawals,
       currentReferrals,
       requiredReferrals,
-      applyFromCount,
+      perWithdrawalRequirement,
+      nextWithdrawalNumber,
+      referralCampaignId: currentCampaignId,
+      lifetimeValidReferrals: refCounts.lifetimeValidReferrals,
+      lifetimeCompletedWithdrawals: allCompleted.length,
+      applyFromCount: 1,
     };
   }
 
   const eligible = currentReferrals >= requiredReferrals;
-  let message: string | undefined;
-  if (!eligible) {
-    if (completedWithdrawals === 1 && applyFromCount === 2) {
-      message = `Your first withdrawal is available without referrals. To make this withdrawal, invite at least ${requiredReferrals} valid referral${requiredReferrals > 1 ? 's' : ''}.`;
-    } else {
-      const diff = requiredReferrals - currentReferrals;
-      message = `Withdrawal #${currentWithdrawalNumber} requires at least ${requiredReferrals} valid referral${requiredReferrals > 1 ? 's' : ''}. You currently have ${currentReferrals} (invite ${diff} more to unlock).`;
-    }
-  }
+  const diff = Math.max(0, requiredReferrals - currentReferrals);
+  const message = eligible
+    ? `${ordLabel}: ${currentReferrals}/${requiredReferrals} valid referrals — Available!`
+    : `${ordLabel}: ${currentReferrals}/${requiredReferrals} valid referrals — Locked (invite ${diff} more valid referral${
+        diff === 1 ? '' : 's'
+      } to unlock Withdrawal #${nextWithdrawalNumber}).`;
 
   return {
     eligible,
@@ -2039,7 +2426,12 @@ export async function checkWithdrawalReferralEligibility(userId: string): Promis
     completedWithdrawals,
     currentReferrals,
     requiredReferrals,
-    applyFromCount,
+    perWithdrawalRequirement,
+    nextWithdrawalNumber,
+    referralCampaignId: currentCampaignId,
+    lifetimeValidReferrals: refCounts.lifetimeValidReferrals,
+    lifetimeCompletedWithdrawals: allCompleted.length,
+    applyFromCount: 1,
     message,
   };
 }
@@ -2056,6 +2448,7 @@ export async function updateWithdrawalStatus(
       if (snap.exists()) {
         withdrawal = snap.data() as Withdrawal;
         memStore.withdrawals.set(orderId, withdrawal);
+        persistWithdrawalsRegistry(false);
       }
     } catch (err) {
       console.warn('[DB] updateWithdrawalStatus fetch fallback:', err);
@@ -2079,6 +2472,7 @@ export async function updateWithdrawalStatus(
   if (notes?.failureReason) withdrawal.failureReason = notes.failureReason;
 
   memStore.withdrawals.set(orderId, withdrawal);
+  persistWithdrawalsRegistry(false);
 
   // If rejected, failed, or reversed, safely refund funds back to the user atomically
   // only if previous state had not already been refunded
@@ -2217,7 +2611,7 @@ export function reconcileUsersRegistry(): number {
     const count = memStore.users.size;
     memStore.lastVerifiedUserCount = Math.max(memStore.lastVerifiedUserCount, count);
 
-    if (count > 0) {
+    if (count > 0 && process.env.NODE_ENV !== 'test') {
       fs.writeFileSync(
         USER_COUNT_JOURNAL_PATH,
         JSON.stringify(
@@ -2259,6 +2653,9 @@ export function isCodeAssignedInAnyWithdrawal(normCode: string): boolean {
  * Persists the authoritative assigned GV codes registry to durable disk storage.
  */
 export function persistGVRegistry(): void {
+  if (process.env.NODE_ENV === 'test') {
+    return;
+  }
   try {
     const dataDir = path.join(process.cwd(), 'data');
     if (!fs.existsSync(dataDir)) {
@@ -2794,6 +3191,7 @@ export async function redeemGiftCardWithdrawal(
     }
 
     const settings = await getAppSettings();
+    const activeCampaignId = getCurrentReferralCampaignId(settings);
 
     // Determine amount dynamically based on settings
     let amount = Number(requestedAmount);
@@ -2860,10 +3258,16 @@ export async function redeemGiftCardWithdrawal(
       const spRes = await supabaseRedeemGiftCard(userId, amount, idempotencyKey);
       if (spRes.success && spRes.withdrawal && spRes.transaction) {
         const freshUser = await getUser(userId);
-        memStore.withdrawals.set(spRes.withdrawal.id, spRes.withdrawal);
+        const stampedSpWithdrawal: Withdrawal = {
+          ...spRes.withdrawal,
+          referralCampaignId: spRes.withdrawal.referralCampaignId ?? activeCampaignId,
+        };
+        memStore.withdrawals.set(stampedSpWithdrawal.id, stampedSpWithdrawal);
         memStore.transactions.set(spRes.transaction.id, spRes.transaction);
+        persistWithdrawalsRegistry(false);
+        persistUsersRegistry(false);
         return {
-          withdrawal: spRes.withdrawal,
+          withdrawal: stampedSpWithdrawal,
           transaction: spRes.transaction,
           user: freshUser || user,
           giftCardCode: spRes.giftCardCode || '',
@@ -2985,6 +3389,7 @@ export async function redeemGiftCardWithdrawal(
           giftCardId: freshCode.id,
           giftCardRedeemedAt: redeemedAt,
           idempotencyKey: idempotencyKey ? idempotencyKey.trim() : undefined,
+          referralCampaignId: activeCampaignId,
           createdAt: redeemedAt,
           processedAt: redeemedAt,
         };
@@ -3032,6 +3437,8 @@ export async function redeemGiftCardWithdrawal(
         assignedAt: redeemedAt,
       });
       persistGVRegistry();
+      persistWithdrawalsRegistry(false);
+      persistUsersRegistry(false);
 
       return txnResult;
     } catch (txnErr: any) {
@@ -3073,10 +3480,13 @@ export async function redeemGiftCardWithdrawal(
         giftCardId: selectedCode.id,
         giftCardRedeemedAt: redeemedAt,
         idempotencyKey: idempotencyKey ? idempotencyKey.trim() : undefined,
+        referralCampaignId: activeCampaignId,
         createdAt: redeemedAt,
         processedAt: redeemedAt,
       };
       memStore.withdrawals.set(orderId, withdrawal);
+      persistWithdrawalsRegistry(false);
+      persistUsersRegistry(false);
 
       const transaction: Transaction = {
         id: txId,
@@ -3376,8 +3786,15 @@ export async function getBulkBalanceResetPreview(): Promise<BulkBalanceResetPrev
   const settings = await getAppSettings();
   const currentGeneration = settings.resetGeneration || 1;
   const nextGeneration = currentGeneration + 1;
+  const currentReferralCampaignId = getCurrentReferralCampaignId(settings);
+  const nextReferralCampaignId = currentReferralCampaignId + 1;
 
-  const allUsers = await getAllUsers();
+  const [allUsers, allReferrals, allWithdrawals] = await Promise.all([
+    getAllUsers(),
+    getAllReferrals(),
+    getAllWithdrawals(),
+  ]);
+
   let totalBalance = 0;
   let affectedCount = 0;
 
@@ -3388,74 +3805,197 @@ export async function getBulkBalanceResetPreview(): Promise<BulkBalanceResetPrev
     }
   }
 
+  // Count unique valid referrals in the active campaign using exact campaign rules
+  const earliestCampaignByReferee = new Map<string, number>();
+  for (const r of allReferrals) {
+    if (r.status === 'credited' && r.refereeId && r.referrerId && r.refereeId !== r.referrerId) {
+      const cId = getRecordCampaignId(r);
+      const prev = earliestCampaignByReferee.get(r.refereeId);
+      if (prev === undefined || cId < prev) {
+        earliestCampaignByReferee.set(r.refereeId, cId);
+      }
+    }
+  }
+
+  const activeValidRefereeSet = new Set<string>();
+  const activeReferrersWithValid = new Set<string>();
+  for (const r of allReferrals) {
+    const cId = getRecordCampaignId(r);
+    if (cId === currentReferralCampaignId && isReferralRecordValid(r)) {
+      const firstCamp = earliestCampaignByReferee.get(r.refereeId) ?? cId;
+      if (firstCamp === currentReferralCampaignId && !activeValidRefereeSet.has(r.refereeId)) {
+        activeValidRefereeSet.add(r.refereeId);
+        activeReferrersWithValid.add(r.referrerId);
+      }
+    }
+  }
+
+  const completedWithdrawalsAll = allWithdrawals.filter((w) => w.status === 'success');
+  const activeCampaignCompletedWithdrawals = completedWithdrawalsAll.filter(
+    (w) => getRecordCampaignId(w) === currentReferralCampaignId
+  ).length;
+
   return {
     totalUsers: affectedCount,
+    totalRegisteredUsers: allUsers.length,
     totalBalance: Math.round(totalBalance * 100) / 100,
     currentGeneration,
     nextGeneration,
+    currentReferralCampaignId,
+    nextReferralCampaignId,
+    usersWithActiveCampaignReferrals: activeReferrersWithValid.size,
+    activeCampaignValidReferrals: activeValidRefereeSet.size,
+    lifetimeReferralsCount: allReferrals.length,
+    activeCampaignCompletedWithdrawals,
+    lifetimeCompletedWithdrawals: completedWithdrawalsAll.length,
   };
 }
 
-export async function atomicResetAllUserBalances(adminId: string): Promise<BulkBalanceResetResult> {
-  const releaseLock = await acquireLock('global_bulk_balance_reset', 15000);
+export async function atomicResetAllUserBalances(
+  adminId: string,
+  options?: BulkBalanceResetOptions
+): Promise<BulkBalanceResetResult> {
+  const doBalances = options ? Boolean(options.resetBalances) : true;
+  const doReferrals = options ? Boolean(options.resetReferrals) : false;
+
+  if (!doBalances && !doReferrals) {
+    throw new Error('Please select at least one reset target (user balances or current referral progress).');
+  }
+
+  const releaseLock = await acquireLock('global_bulk_balance_reset', 20000);
   try {
     const settings = await getAppSettings();
     const currentGeneration = settings.resetGeneration || 1;
-    const nextGeneration = currentGeneration + 1;
+    const newResetGeneration = doBalances ? currentGeneration + 1 : currentGeneration;
+
+    const previousReferralCampaignId = getCurrentReferralCampaignId(settings);
+    const newReferralCampaignId = doReferrals ? previousReferralCampaignId + 1 : previousReferralCampaignId;
     const now = new Date().toISOString();
 
-    const allUsers = await getAllUsers();
     let affectedCount = 0;
     let totalBalanceReset = 0;
+    let archivedCampaignReferrals = 0;
+    let archivedCampaignWithdrawals = 0;
+    let usersWithReferralProgressReset = 0;
+    let lifetimeReferralsPreserved = memStore.referrals.size;
 
-    for (const u of allUsers) {
-      if (u.balance > 0) {
-        affectedCount++;
-        totalBalanceReset += u.balance;
+    if (doBalances) {
+      const allUsers = await getAllUsers();
+      for (const u of allUsers) {
+        if (u.balance > 0) {
+          affectedCount++;
+          totalBalanceReset += u.balance;
 
-        const txObj: Transaction = {
-          id: `tx_reset_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-          userId: u.id,
-          type: 'admin_adjustment',
-          amount: -u.balance,
-          balanceAfter: 0,
-          description: `Bulk balance reset by admin (Campaign generation ${nextGeneration})`,
-          referenceId: `reset_gen_${nextGeneration}`,
-          createdAt: now,
-        };
-        memStore.transactions.set(txObj.id, txObj);
+          const txObj: Transaction = {
+            id: `tx_reset_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            userId: u.id,
+            type: 'admin_adjustment',
+            amount: -u.balance,
+            balanceAfter: 0,
+            description: `Bulk balance reset by admin (Campaign generation ${newResetGeneration})`,
+            referenceId: `reset_gen_${newResetGeneration}`,
+            createdAt: now,
+          };
+          memStore.transactions.set(txObj.id, txObj);
 
-        u.balance = 0;
-        u.lastBalanceResetAt = now;
-        memStore.users.set(u.id, u);
-        await saveUser(u);
+          u.balance = 0;
+          u.lastBalanceResetAt = now;
+          memStore.users.set(u.id, u);
+          await saveUser(u);
+        }
       }
+      totalBalanceReset = Math.round(totalBalanceReset * 100) / 100;
     }
 
-    totalBalanceReset = Math.round(totalBalanceReset * 100) / 100;
+    if (doReferrals) {
+      const [allReferrals, allWithdrawals] = await Promise.all([getAllReferrals(), getAllWithdrawals()]);
+      lifetimeReferralsPreserved = allReferrals.length;
+      const activeReferrerSet = new Set<string>();
 
-    // Update settings with the new generation
-    await updateAppSettings({ resetGeneration: nextGeneration });
+      // Stamp any legacy records missing referralCampaignId explicitly in memory & durable registry
+      // without deleting or altering any IDs, timestamps, statuses, or reward transactions.
+      for (const r of allReferrals) {
+        const cId = getRecordCampaignId(r);
+        if (cId === previousReferralCampaignId) {
+          archivedCampaignReferrals++;
+          if (isReferralRecordValid(r)) {
+            activeReferrerSet.add(r.referrerId);
+          }
+        }
+        if (r.referralCampaignId === undefined) {
+          memStore.referrals.set(r.id, { ...r, referralCampaignId: cId });
+        }
+      }
+      usersWithReferralProgressReset = activeReferrerSet.size;
 
-    // Call Supabase procedure if configured
-    if (isSupabaseEnabled()) {
-      await supabaseBulkResetBalances(adminId, nextGeneration).catch((err) =>
+      for (const w of allWithdrawals) {
+        const cId = getRecordCampaignId(w);
+        if (w.status === 'success' && cId === previousReferralCampaignId) {
+          archivedCampaignWithdrawals++;
+        }
+        if (w.referralCampaignId === undefined) {
+          memStore.withdrawals.set(w.id, { ...w, referralCampaignId: cId });
+        }
+      }
+
+      persistReferralsRegistry(true);
+      persistWithdrawalsRegistry(true);
+    }
+
+    const settingsUpdates: Partial<AppSettings> = {};
+    if (doBalances) {
+      settingsUpdates.resetGeneration = newResetGeneration;
+    }
+    if (doReferrals) {
+      settingsUpdates.referralCampaignId = newReferralCampaignId;
+      settingsUpdates.lastReferralResetAt = now;
+    }
+
+    await updateAppSettings(settingsUpdates);
+
+    // Call Supabase procedure only when balances were reset
+    if (doBalances && isSupabaseEnabled()) {
+      await supabaseBulkResetBalances(adminId, newResetGeneration).catch((err) =>
         console.warn('[Supabase Bulk Reset Sync Warning]:', err)
       );
     }
 
-    // Record audit log
-    await recordAdminAudit(
-      adminId,
-      'BULK_BALANCE_RESET',
-      `Bulk balance reset executed by admin ${adminId}. Affected users: ${affectedCount}. Total balance reset: ₹${totalBalanceReset.toFixed(2)}. New campaign generation: ${nextGeneration}.`
-    );
+    const auditType =
+      doBalances && doReferrals
+        ? 'BULK_BALANCE_AND_REFERRAL_RESET'
+        : doBalances
+        ? 'BULK_BALANCE_RESET'
+        : 'BULK_REFERRAL_CAMPAIGN_RESET';
+
+    const auditSummaryParts: string[] = [];
+    if (doBalances) {
+      auditSummaryParts.push(
+        `Balances reset for ${affectedCount} user(s) totaling ₹${totalBalanceReset.toFixed(2)} (Generation ${currentGeneration} -> ${newResetGeneration})`
+      );
+    } else {
+      auditSummaryParts.push('User balances preserved untouched');
+    }
+    if (doReferrals) {
+      auditSummaryParts.push(
+        `Referral campaign advanced (${previousReferralCampaignId} -> ${newReferralCampaignId}); preserved ${archivedCampaignReferrals} campaign referral record(s) and ${archivedCampaignWithdrawals} completed withdrawal milestone(s) in permanent history`
+      );
+    }
+
+    await recordAdminAudit(adminId, auditType, `Executed by admin ${adminId}: ${auditSummaryParts.join(' | ')}.`);
 
     return {
       success: true,
+      resetBalances: doBalances,
+      resetReferrals: doReferrals,
       affectedUsers: affectedCount,
       totalBalanceReset,
-      newResetGeneration: nextGeneration,
+      newResetGeneration,
+      previousReferralCampaignId,
+      newReferralCampaignId,
+      archivedCampaignReferrals,
+      archivedCampaignWithdrawals,
+      usersWithReferralProgressReset,
+      lifetimeReferralsPreserved,
       resetAt: now,
     };
   } finally {
@@ -3664,6 +4204,10 @@ export async function verifyMandatoryCheckinMembership(
 try {
   reconcileGVRegistry();
   reconcileUsersRegistry();
+  if (process.env.NODE_ENV !== 'test') {
+    reconcileReferralsRegistry();
+    reconcileWithdrawalsRegistry();
+  }
 } catch (err) {
   console.warn('[DB] Initial reconciliation error:', err);
 }

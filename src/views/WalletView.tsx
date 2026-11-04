@@ -13,9 +13,17 @@ import {
   Copy,
   Check,
   Sparkles,
+  Users,
+  Lock,
 } from 'lucide-react';
 import { api } from '../services/api.ts';
-import type { UserProfile, Withdrawal, Transaction, AppSettings } from '../types/index.ts';
+import type {
+  UserProfile,
+  Withdrawal,
+  Transaction,
+  AppSettings,
+  WithdrawalReferralEligibility,
+} from '../types/index.ts';
 import { RedemptionListSkeleton, TransactionListSkeleton } from '../components/Skeleton.tsx';
 
 interface WalletViewProps {
@@ -32,6 +40,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
   const [tab, setTab] = useState<'withdrawals' | 'transactions'>('withdrawals');
   const [withdrawals, setWithdrawals] = useState<Withdrawal[] | null>(null);
   const [transactions, setTransactions] = useState<Transaction[] | null>(null);
+  const [eligibility, setEligibility] = useState<WithdrawalReferralEligibility | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedWithdrawal, setSelectedWithdrawal] = useState<Withdrawal | null>(null);
@@ -39,18 +48,22 @@ export const WalletView: React.FC<WalletViewProps> = ({
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [user.balance]);
 
   const loadData = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [wRes, tRes] = await Promise.all([
+      const [wRes, tRes, eRes] = await Promise.all([
         api.getMyWithdrawals(),
         api.getMyTransactions(),
+        api.getWithdrawalEligibility().catch(() => null),
       ]);
       setWithdrawals(wRes.withdrawals || []);
       setTransactions(tRes.transactions || []);
+      if (eRes?.eligibility) {
+        setEligibility(eRes.eligibility);
+      }
     } catch (err: any) {
       console.error('Wallet load error:', err);
       setError(err.message || 'Unable to load wallet records. Please check connection.');
@@ -156,6 +169,70 @@ export const WalletView: React.FC<WalletViewProps> = ({
           <Gift className="w-4 h-4" /> Redeem Gift Card
         </button>
       </div>
+
+      {/* Cumulative Withdrawal Referral Milestone Card */}
+      {eligibility && eligibility.applies && (() => {
+        const nextNum = eligibility.nextWithdrawalNumber ?? eligibility.completedWithdrawals + 1;
+        const ordLabel =
+          nextNum === 1
+            ? 'First withdrawal'
+            : nextNum === 2
+            ? 'Second withdrawal'
+            : nextNum === 3
+            ? 'Third withdrawal'
+            : `Withdrawal #${nextNum}`;
+        const pct =
+          eligibility.requiredReferrals > 0
+            ? Math.min(100, Math.round((eligibility.currentReferrals / eligibility.requiredReferrals) * 100))
+            : 100;
+        return (
+          <div
+            className={`p-4 rounded-2xl border shadow-xs space-y-2 ${
+              eligibility.eligible
+                ? 'bg-emerald-50/70 border-emerald-200'
+                : 'bg-white border-amber-200'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                    eligibility.eligible ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                  }`}
+                >
+                  {eligibility.eligible ? <Users className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-slate-900 truncate">
+                    {ordLabel}: {eligibility.currentReferrals}/{eligibility.requiredReferrals} valid referrals
+                  </p>
+                  <p className="text-[10px] text-slate-500">
+                    Next withdrawal requires {eligibility.requiredReferrals} valid referral(s) in Campaign #{eligibility.referralCampaignId ?? 1}
+                  </p>
+                </div>
+              </div>
+              <span
+                className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase shrink-0 ${
+                  eligibility.eligible
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-amber-100 text-amber-800 border border-amber-200'
+                }`}
+              >
+                {eligibility.eligible ? 'Available' : 'Locked'}
+              </span>
+            </div>
+
+            <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  eligibility.eligible ? 'bg-emerald-500' : 'bg-[#0088cc]'
+                }`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Tabs Switcher */}
       <div className="flex bg-slate-100 border border-slate-200/80 rounded-xl p-1 gap-1">

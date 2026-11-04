@@ -57,6 +57,10 @@ import {
   hasUserClaimedSignupBonus,
   checkWithdrawalReferralEligibility,
   getValidReferralCount,
+  getCampaignReferralCounts,
+  getRecordCampaignId,
+  getCurrentReferralCampaignId,
+  getAllReferrals,
   getOrRegisterDeviceOwner,
   isDeviceRestrictedForUser,
   DB_PREFIX,
@@ -1110,6 +1114,10 @@ apiRouter.get('/referrals/stats', extractTelegramUser, async (req, res) => {
     let user = (req as any).user as UserProfile;
     const settings = await getAppSettings();
     const referrals = await getReferralsByReferrer(user.id);
+    const [counts, withdrawalEligibility] = await Promise.all([
+      getCampaignReferralCounts(user.id),
+      checkWithdrawalReferralEligibility(user.id),
+    ]);
 
     // Ensure user has a valid referral code
     if (!user.referralCode) {
@@ -1120,13 +1128,27 @@ apiRouter.get('/referrals/stats', extractTelegramUser, async (req, res) => {
     const botUsername = formatBotUsername(process.env.TELEGRAM_BOT_USERNAME || settings.botUsername || 'WatchVEarnBot');
     const referralLink = `https://t.me/${botUsername}?start=${user.referralCode}`;
 
+    const enrichedHistory = referrals.map((r) => {
+      const cId = getRecordCampaignId(r);
+      return {
+        ...r,
+        referralCampaignId: cId,
+        isCurrentCampaign: cId === counts.referralCampaignId,
+      };
+    });
+
     res.json({
       referralCode: user.referralCode,
       referralLink,
       referralReward: settings.referralReward,
+      referralCampaignId: counts.referralCampaignId,
+      currentCampaignValidReferrals: counts.currentCampaignValidReferrals,
+      lifetimeValidReferrals: counts.lifetimeValidReferrals,
+      currentCampaignTotalReferrals: counts.currentCampaignTotalReferrals,
       totalReferrals: referrals.length,
       totalEarned: user.referralEarnings,
-      history: referrals,
+      withdrawalEligibility,
+      history: enrichedHistory,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -1711,23 +1733,14 @@ apiRouter.post('/admin/settings', extractTelegramUser, requireAdmin, async (req,
       incoming.maxScratchSignupBonus = maxScratch;
     }
 
-    // Validate Withdrawal Referral Requirement settings
+    // Protect authoritative campaign & reset generation counters from accidental form overwrites
+    delete incoming.resetGeneration;
+    delete incoming.referralCampaignId;
+    delete incoming.lastReferralResetAt;
+
+    // Validate Withdrawal Referral Requirement settings (single cumulative threshold R)
     if (incoming.withdrawalReferralRequirementEnabled !== undefined) {
       incoming.withdrawalReferralRequirementEnabled = Boolean(incoming.withdrawalReferralRequirementEnabled);
-    }
-
-    if (
-      incoming.withdrawalReferralApplyFromCount !== undefined &&
-      incoming.withdrawalReferralApplyFromCount !== null &&
-      incoming.withdrawalReferralApplyFromCount !== ''
-    ) {
-      const applyFrom = Number(incoming.withdrawalReferralApplyFromCount);
-      if (isNaN(applyFrom) || !Number.isInteger(applyFrom) || applyFrom < 1) {
-        return res.status(400).json({
-          error: 'Withdrawal Referral "Apply from withdrawal number" must be a positive integer of at least 1 (default is 2).',
-        });
-      }
-      incoming.withdrawalReferralApplyFromCount = applyFrom;
     }
 
     if (
@@ -1738,10 +1751,13 @@ apiRouter.post('/admin/settings', extractTelegramUser, requireAdmin, async (req,
       const minRefs = Number(incoming.withdrawalMinReferralsRequired);
       if (isNaN(minRefs) || !Number.isInteger(minRefs) || minRefs < 1) {
         return res.status(400).json({
-          error: 'Withdrawal Referral "Minimum valid referrals required" must be a positive integer of at least 1.',
+          error: 'Valid referrals required per withdrawal must be a positive integer of at least 1.',
         });
       }
       incoming.withdrawalMinReferralsRequired = minRefs;
+      incoming.withdrawalReferralApplyFromCount = 1;
+    } else if (incoming.withdrawalReferralApplyFromCount !== undefined) {
+      incoming.withdrawalReferralApplyFromCount = 1;
     }
 
     const updated = await updateAppSettings(incoming);
@@ -2325,7 +2341,7 @@ apiRouter.post('/admin/users/:id/adjust-balance', extractTelegramUser, requireAd
   }
 });
 
-// Feature 1: Admin Bulk Balance Reset
+// Feature 1: Admin Bulk Balance & Campaign Referral Reset
 apiRouter.get('/admin/bulk-balance-reset/preview', extractTelegramUser, requireAdmin, async (req, res) => {
   try {
     const preview = await getBulkBalanceResetPreview();
@@ -2338,16 +2354,73 @@ apiRouter.get('/admin/bulk-balance-reset/preview', extractTelegramUser, requireA
 apiRouter.post('/admin/bulk-balance-reset', extractTelegramUser, requireAdmin, async (req, res) => {
   try {
     const admin = (req as any).user as UserProfile;
-    const { confirmPhrase } = req.body;
+    const { confirmPhrase, resetBalances, resetReferrals } = req.body || {};
 
-    if (!confirmPhrase || confirmPhrase.trim() !== 'RESET ALL BALANCES') {
+    const bothOmitted = resetBalances === undefined && resetReferrals === undefined;
+    const doBalances = bothOmitted ? true : Boolean(resetBalances);
+    const doReferrals = bothOmitted ? false : Boolean(resetReferrals);
+
+    if (!doBalances && !doReferrals) {
       return res.status(400).json({
-        error: 'Confirmation phrase mismatch. Please type "RESET ALL BALANCES" exactly to confirm.',
+        error: 'Please select at least one reset option (User Balances or Current Referral Progress).',
       });
     }
 
-    const result = await atomicResetAllUserBalances(admin.id);
+    const expectedPhrase =
+      doBalances && doReferrals
+        ? 'RESET BALANCES AND REFERRALS'
+        : doBalances
+        ? 'RESET ALL BALANCES'
+        : 'RESET REFERRALS';
+
+    if (!confirmPhrase || confirmPhrase.trim() !== expectedPhrase) {
+      return res.status(400).json({
+        error: `Confirmation phrase mismatch. Please type "${expectedPhrase}" exactly to confirm.`,
+      });
+    }
+
+    const result = await atomicResetAllUserBalances(admin.id, {
+      resetBalances: doBalances,
+      resetReferrals: doReferrals,
+    });
     res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin Referral History & Campaign Audit Endpoint (Read-Only)
+apiRouter.get('/admin/referrals', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const userId = (req.query.userId as string | undefined)?.trim();
+    const campaignParam = req.query.campaignId ? Number(req.query.campaignId) : undefined;
+    const settings = await getAppSettings();
+    const activeCampaignId = getCurrentReferralCampaignId(settings);
+
+    let list = userId ? await getReferralsByReferrer(userId) : await getAllReferrals();
+    if (campaignParam && !isNaN(campaignParam)) {
+      list = list.filter((r) => getRecordCampaignId(r) === campaignParam);
+    }
+
+    const records = list.map((r) => {
+      const cId = getRecordCampaignId(r);
+      return {
+        ...r,
+        referralCampaignId: cId,
+        isCurrentCampaign: cId === activeCampaignId,
+      };
+    });
+
+    const userCounts = userId ? await getCampaignReferralCounts(userId, activeCampaignId) : undefined;
+    const eligibility = userId ? await checkWithdrawalReferralEligibility(userId) : undefined;
+
+    res.json({
+      activeCampaignId,
+      totalRecords: records.length,
+      userCounts,
+      eligibility,
+      referrals: records,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

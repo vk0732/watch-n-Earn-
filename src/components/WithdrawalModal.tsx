@@ -110,6 +110,14 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
         message: res.message || 'Amazon Gift Card Code redeemed successfully!',
       });
       setUnjoinedChannels(null);
+      api
+        .getWithdrawalEligibility()
+        .then((res) => {
+          if (res?.eligibility) {
+            setReferralEligibility(res.eligibility);
+          }
+        })
+        .catch(() => {});
       onSuccess(res.orderId, res.remainingBalance);
     } catch (err: any) {
       if (err.eligibility) {
@@ -229,38 +237,80 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               </div>
             )}
 
-            {/* Withdrawal Referral Requirement Banner (only shown when rule applies to this user) */}
-            {referralEligibility && referralEligibility.applies && (
-              <div
-                className={`p-3.5 rounded-2xl border ${
-                  referralEligibility.eligible
-                    ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
-                    : 'bg-amber-50 border-amber-200 text-amber-900'
-                } space-y-1.5`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold flex items-center gap-1.5">
-                    <Users className={`w-4 h-4 ${referralEligibility.eligible ? 'text-emerald-600' : 'text-amber-600'}`} />
-                    Withdrawal Referral Requirement
-                  </span>
-                  <span
-                    className={`text-[11px] font-black px-2 py-0.5 rounded-full ${
-                      referralEligibility.eligible
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : 'bg-amber-100 text-amber-800'
-                    }`}
-                  >
-                    {referralEligibility.currentReferrals} / {referralEligibility.requiredReferrals} Referrals
-                  </span>
+            {/* Cumulative Withdrawal Referral Milestone Banner */}
+            {referralEligibility && referralEligibility.applies && (() => {
+              const nextNum =
+                referralEligibility.nextWithdrawalNumber ?? referralEligibility.completedWithdrawals + 1;
+              const ordLabel =
+                nextNum === 1
+                  ? 'First withdrawal'
+                  : nextNum === 2
+                  ? 'Second withdrawal'
+                  : nextNum === 3
+                  ? 'Third withdrawal'
+                  : `Withdrawal #${nextNum}`;
+              const pct =
+                referralEligibility.requiredReferrals > 0
+                  ? Math.min(
+                      100,
+                      Math.round(
+                        (referralEligibility.currentReferrals / referralEligibility.requiredReferrals) * 100
+                      )
+                    )
+                  : 100;
+              return (
+                <div
+                  className={`p-3.5 rounded-2xl border ${
+                    referralEligibility.eligible
+                      ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
+                      : 'bg-amber-50 border-amber-200 text-amber-900'
+                  } space-y-2`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold flex items-center gap-1.5">
+                      <Users
+                        className={`w-4 h-4 shrink-0 ${
+                          referralEligibility.eligible ? 'text-emerald-600' : 'text-amber-600'
+                        }`}
+                      />
+                      <span>
+                        {ordLabel}: {referralEligibility.currentReferrals}/{referralEligibility.requiredReferrals} valid referrals
+                      </span>
+                    </span>
+                    <span
+                      className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full shrink-0 ${
+                        referralEligibility.eligible
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-amber-200/80 text-amber-900'
+                      }`}
+                    >
+                      {referralEligibility.eligible ? 'Available' : 'Locked'}
+                    </span>
+                  </div>
+
+                  <div className="w-full h-1.5 bg-white/80 rounded-full overflow-hidden border border-black/5">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        referralEligibility.eligible ? 'bg-emerald-500' : 'bg-amber-500'
+                      }`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+
+                  <p className="text-[11px] leading-relaxed text-slate-600">
+                    {referralEligibility.eligible
+                      ? `${ordLabel} unlocked! (${referralEligibility.perWithdrawalRequirement ?? 1} valid referral(s) per withdrawal • Next milestone after this: ${
+                          (nextNum + 1) * (referralEligibility.perWithdrawalRequirement ?? 1)
+                        } valid referrals)`
+                      : referralEligibility.message ||
+                        `Invite ${Math.max(
+                          0,
+                          referralEligibility.requiredReferrals - referralEligibility.currentReferrals
+                        )} more valid referral(s) to unlock ${ordLabel.toLowerCase()}.`}
+                  </p>
                 </div>
-                <p className="text-[11px] leading-relaxed text-slate-600">
-                  {referralEligibility.message ||
-                    (referralEligibility.eligible
-                      ? 'Referral requirement satisfied for this withdrawal.'
-                      : `Invite at least ${referralEligibility.requiredReferrals} valid referral(s) to unlock this withdrawal.`)}
-                </p>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Denomination Card / Input */}
             <div>

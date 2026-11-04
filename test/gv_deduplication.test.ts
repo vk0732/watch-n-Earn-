@@ -11,7 +11,9 @@ import {
   getGiftCardAuditReport,
   reconcileGVRegistry,
   isCodeAssignedInAnyWithdrawal,
+  updateAppSettings,
 } from '../server/db.ts';
+import { setMockChannelMembership } from '../server/telegram.ts';
 import type { UserProfile, GiftCardCode, Withdrawal } from '../src/types/index.ts';
 
 function assertExact(actual: any, expected: any, msg: string) {
@@ -34,7 +36,8 @@ async function runGVDeduplicationTests() {
   const runId = Date.now().toString(36).toUpperCase();
 
   // Disable channel requirement & referral requirement for isolated unit tests
-  memStore.settings.withdrawalReferralRequirementEnabled = false;
+  setMockChannelMembership('*', { isMember: true, status: 'member' });
+  await updateAppSettings({ withdrawalReferralRequirementEnabled: false });
 
   console.log('Test Suite D1: Single-Assignment & Out-of-Stock Protection');
   {

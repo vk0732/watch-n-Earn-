@@ -127,8 +127,20 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   const [rejectingOrder, setRejectingOrder] = useState<Withdrawal | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
-  // Bulk Balance Reset State
+  // Bulk Balance & Campaign Referral Reset State
   const [resetPreview, setResetPreview] = useState<BulkBalanceResetPreview | null>(null);
+  const [resetBalancesOption, setResetBalancesOption] = useState(true);
+  const [resetReferralsOption, setResetReferralsOption] = useState(false);
+
+  // Admin Referral History Audit Modal State
+  const [auditingUserReferrals, setAuditingUserReferrals] = useState<{
+    user: UserProfile;
+    loading: boolean;
+    activeCampaignId: number;
+    userCounts?: any;
+    eligibility?: any;
+    referrals: any[];
+  } | null>(null);
 
   // Daily Check-In Quick Generator State
   const [quickBase, setQuickBase] = useState('0.25');
@@ -719,17 +731,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
     if (settings.withdrawalReferralRequirementEnabled !== false) {
       if (
-        settings.withdrawalReferralApplyFromCount !== undefined &&
-        (isNaN(settings.withdrawalReferralApplyFromCount) || settings.withdrawalReferralApplyFromCount < 1)
-      ) {
-        showNotify('Apply from withdrawal number must be at least 1 (default is 2)', 'error');
-        return;
-      }
-      if (
         settings.withdrawalMinReferralsRequired !== undefined &&
-        (isNaN(settings.withdrawalMinReferralsRequired) || settings.withdrawalMinReferralsRequired < 1)
+        (isNaN(settings.withdrawalMinReferralsRequired) ||
+          !Number.isInteger(Number(settings.withdrawalMinReferralsRequired)) ||
+          settings.withdrawalMinReferralsRequired < 1)
       ) {
-        showNotify('Minimum valid referrals required must be at least 1', 'error');
+        showNotify('Valid referrals required per withdrawal must be a whole number of at least 1', 'error');
         return;
       }
     }
@@ -793,12 +800,25 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     }
   };
 
-  /* Bulk Balance Reset Actions */
-  const handleOpenResetModal = async () => {
+  /* Bulk Balance & Campaign Referral Reset Actions */
+  const expectedResetPhrase =
+    resetBalancesOption && resetReferralsOption
+      ? 'RESET BALANCES AND REFERRALS'
+      : resetBalancesOption
+      ? 'RESET ALL BALANCES'
+      : resetReferralsOption
+      ? 'RESET REFERRALS'
+      : '';
+
+  const handleOpenResetModal = async (preset?: { balances: boolean; referrals: boolean }) => {
     setLoading(true);
     try {
       const prev = await api.getBulkBalanceResetPreview();
       setResetPreview(prev);
+      if (preset) {
+        setResetBalancesOption(preset.balances);
+        setResetReferralsOption(preset.referrals);
+      }
       setResetPhrase('');
       setShowResetModal(true);
     } catch (err: any) {
@@ -809,14 +829,32 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   };
 
   const handleConfirmReset = async () => {
-    if (resetPhrase.trim() !== 'RESET ALL BALANCES') {
-      showNotify('Please type "RESET ALL BALANCES" exactly to confirm.', 'error');
+    if (!resetBalancesOption && !resetReferralsOption) {
+      showNotify('Please select at least one reset option (Balances or Referrals).', 'error');
+      return;
+    }
+    if (!expectedResetPhrase || resetPhrase.trim() !== expectedResetPhrase) {
+      showNotify(`Please type "${expectedResetPhrase}" exactly to confirm.`, 'error');
       return;
     }
     setResetting(true);
     try {
-      const res = await api.executeBulkBalanceReset(resetPhrase.trim());
-      showNotify(`Reset successful! ${res.affectedUsers} users reset (₹${res.totalBalanceReset.toFixed(2)} cleared). Generation is now ${res.newResetGeneration}.`);
+      const res = await api.executeBulkBalanceReset(resetPhrase.trim(), {
+        resetBalances: resetBalancesOption,
+        resetReferrals: resetReferralsOption,
+      });
+      const summaryParts: string[] = [];
+      if (res.resetBalances) {
+        summaryParts.push(
+          `${res.affectedUsers} user balances reset (₹${res.totalBalanceReset.toFixed(2)} cleared, Gen ${res.newResetGeneration})`
+        );
+      }
+      if (res.resetReferrals) {
+        summaryParts.push(
+          `Referral Campaign #${res.newReferralCampaignId} started (${res.lifetimeReferralsPreserved ?? res.archivedCampaignReferrals ?? 0} referrals preserved in history)`
+        );
+      }
+      showNotify(`Reset successful! ${summaryParts.join(' • ')}`);
       setShowResetModal(false);
       setResetPhrase('');
       loadTabContent();
@@ -824,6 +862,29 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       showNotify(err.message || 'Reset failed', 'error');
     } finally {
       setResetting(false);
+    }
+  };
+
+  const handleOpenUserReferralAudit = async (targetUser: UserProfile) => {
+    setAuditingUserReferrals({
+      user: targetUser,
+      loading: true,
+      activeCampaignId: 1,
+      referrals: [],
+    });
+    try {
+      const res = await api.getAdminReferrals({ userId: targetUser.id });
+      setAuditingUserReferrals({
+        user: targetUser,
+        loading: false,
+        activeCampaignId: res.activeCampaignId,
+        userCounts: res.userCounts,
+        eligibility: res.eligibility,
+        referrals: res.referrals || [],
+      });
+    } catch (err: any) {
+      setAuditingUserReferrals(null);
+      showNotify(err.message || 'Failed to load user referral history', 'error');
     }
   };
 
@@ -2898,24 +2959,33 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   <ShieldAlert className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-bold text-slate-900">Bulk Reset User Balances</h3>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-sm font-bold text-slate-900">Campaign Reset Controls (Balances & Referrals)</h3>
                     <span className="px-2 py-0.5 bg-red-600 text-white text-[10px] font-bold rounded-full uppercase tracking-wider">
                       DANGER ZONE
                     </span>
                   </div>
                   <p className="text-xs text-slate-600 mt-0.5">
-                    Reset all users&apos; current balances to ₹0.00 while fully preserving user accounts, Telegram IDs, referral ties, task histories, and past transactions. Increments campaign generation, allowing users to re-claim signup rewards once.
+                    Reset user balances, current campaign referral progress, or both together. All historical referrals, referred-user records, timestamps, withdrawal history, task completions, and transaction ledgers remain permanently preserved.
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={handleOpenResetModal}
-                className="shrink-0 px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-xs transition active:scale-95"
-              >
-                Reset All User Balances
-              </button>
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => handleOpenResetModal({ balances: false, referrals: true })}
+                  className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-xs transition active:scale-95"
+                >
+                  Reset Referrals
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenResetModal({ balances: true, referrals: false })}
+                  className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-xs transition active:scale-95"
+                >
+                  Reset Options...
+                </button>
+              </div>
             </div>
           </div>
 
@@ -2974,6 +3044,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenUserReferralAudit(u)}
+                    className="p-2 bg-sky-50 hover:bg-sky-100 text-[#0088cc] border border-sky-200 rounded-lg text-xs font-bold"
+                  >
+                    Referrals
+                  </button>
                   <button
                     onClick={() => setAdjustingUser(u)}
                     className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold"
@@ -3052,63 +3129,240 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             </div>
           )}
 
-          {/* Double-Confirmation Modal for Bulk Balance Reset */}
+          {/* Admin User Referral History & Campaign Audit Modal */}
+          {auditingUserReferrals && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+              <div className="w-full max-w-lg bg-white border border-slate-200 rounded-3xl p-6 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900">
+                      Referral History Audit — {auditingUserReferrals.user.firstName} (@{auditingUserReferrals.user.username || 'none'})
+                    </h4>
+                    <p className="text-[11px] text-slate-500 font-mono">
+                      User ID: {auditingUserReferrals.user.id} • Active Campaign #{auditingUserReferrals.activeCampaignId}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAuditingUserReferrals(null)}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold"
+                  >
+                    Close
+                  </button>
+                </div>
+
+                {auditingUserReferrals.loading ? (
+                  <div className="py-8 text-center text-xs text-slate-500">Loading campaign & historical referrals...</div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="p-2.5 bg-sky-50 border border-sky-200 rounded-xl">
+                        <span className="text-[10px] font-bold text-sky-800 uppercase">Current Campaign</span>
+                        <p className="text-lg font-black text-[#0088cc]">
+                          {auditingUserReferrals.userCounts?.currentCampaignValidReferrals ?? 0}
+                        </p>
+                      </div>
+                      <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+                        <span className="text-[10px] font-bold text-slate-600 uppercase">Lifetime Valid</span>
+                        <p className="text-lg font-black text-slate-900">
+                          {auditingUserReferrals.userCounts?.lifetimeValidReferrals ?? 0}
+                        </p>
+                      </div>
+                      <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+                        <span className="text-[10px] font-bold text-amber-800 uppercase">Next Withdrawal</span>
+                        <p className="text-sm font-black text-amber-900 mt-0.5">
+                          {auditingUserReferrals.eligibility
+                            ? `${auditingUserReferrals.eligibility.currentReferrals}/${auditingUserReferrals.eligibility.requiredReferrals}`
+                            : 'N/A'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="overflow-y-auto space-y-2 pr-1 flex-1">
+                      {auditingUserReferrals.referrals.length === 0 ? (
+                        <div className="py-6 text-center text-xs text-slate-400">
+                          No referral records found for this user.
+                        </div>
+                      ) : (
+                        auditingUserReferrals.referrals.map((r: any) => (
+                          <div
+                            key={r.id}
+                            className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl flex items-center justify-between text-xs gap-2"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-slate-900">@{r.refereeUsername || r.refereeId}</span>
+                                <span
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                    r.isCurrentCampaign
+                                      ? 'bg-sky-100 text-sky-800'
+                                      : 'bg-slate-200 text-slate-700'
+                                  }`}
+                                >
+                                  {r.isCurrentCampaign
+                                    ? `Current • Campaign #${r.referralCampaignId}`
+                                    : `History • Campaign #${r.referralCampaignId}`}
+                                </span>
+                                <span
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                    r.status === 'credited'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : 'bg-rose-100 text-rose-800'
+                                  }`}
+                                >
+                                  {r.status}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+                                Referee ID: {r.refereeId} • {new Date(r.createdAt).toLocaleString()}
+                              </p>
+                            </div>
+                            <span className="font-bold text-emerald-700 shrink-0">
+                              ₹{Number(r.rewardAmount || 0).toFixed(2)}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Double-Confirmation Modal for Bulk Balance & Campaign Referral Reset */}
           {showResetModal && resetPreview && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-              <div className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-6 space-y-4 shadow-2xl">
+              <div className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-2xl bg-red-50 border border-red-200 flex items-center justify-center text-red-600 shrink-0">
                     <AlertTriangle className="w-6 h-6" />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-slate-900">Confirm Bulk Balance Reset</h3>
-                    <p className="text-xs text-red-600 font-semibold">This action cannot be undone!</p>
+                    <h3 className="text-base font-bold text-slate-900">Campaign Reset Controls</h3>
+                    <p className="text-xs text-red-600 font-semibold">Select what to reset and review impact before confirming</p>
                   </div>
                 </div>
 
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Total Users:</span>
-                    <strong className="text-slate-900 font-mono">{resetPreview.totalUsers} users</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Total Balance to Clear:</span>
-                    <strong className="text-red-600 font-bold font-mono">₹{resetPreview.totalBalance.toFixed(2)}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Current Campaign Generation:</span>
-                    <span className="text-slate-700 font-mono">Gen {resetPreview.currentGeneration}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Next Campaign Generation:</span>
-                    <span className="text-emerald-600 font-bold font-mono">Gen {resetPreview.nextGeneration}</span>
-                  </div>
-                </div>
-
-                <div className="text-xs text-slate-600 space-y-1">
-                  <p>
-                    All registered users will have their available balance set to <strong>₹0.00</strong>.
-                  </p>
-                  <p>
-                    User profiles, Telegram chat IDs, task histories, referral ties, and past transaction records will be <strong>preserved</strong>.
-                  </p>
-                  <p className="text-emerald-700 font-medium">
-                    Users will be eligible to re-claim the starting signup reward once under Generation {resetPreview.nextGeneration}.
-                  </p>
-                </div>
-
-                <div className="space-y-1.5 pt-2">
-                  <label className="block text-xs font-bold text-slate-700">
-                    Type <code className="text-red-600 font-mono select-all bg-red-50 px-1.5 py-0.5 rounded border border-red-200">RESET ALL BALANCES</code> to confirm:
+                {/* Reset Target Selection Checkboxes */}
+                <div className="space-y-2.5">
+                  <label
+                    className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer transition ${
+                      resetBalancesOption
+                        ? 'bg-red-50/70 border-red-300'
+                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={resetBalancesOption}
+                      onChange={(e) => {
+                        setResetBalancesOption(e.target.checked);
+                        setResetPhrase('');
+                      }}
+                      className="mt-0.5 rounded border-slate-300 text-red-600 focus:ring-red-500/20"
+                    />
+                    <div className="text-xs">
+                      <span className="font-bold text-slate-900 block">
+                        Reset User Balances (₹{resetPreview.totalBalance.toFixed(2)} across {resetPreview.totalUsers} users)
+                      </span>
+                      <span className="text-[11px] text-slate-600">
+                        Sets positive balances to ₹0.00 and advances Balance Generation (Gen {resetPreview.currentGeneration} → Gen {resetPreview.nextGeneration}).
+                      </span>
+                    </div>
                   </label>
-                  <input
-                    type="text"
-                    value={resetPhrase}
-                    onChange={(e) => setResetPhrase(e.target.value)}
-                    placeholder="RESET ALL BALANCES"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 font-mono text-xs font-bold focus:bg-white focus:border-red-500"
-                  />
+
+                  <label
+                    className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer transition ${
+                      resetReferralsOption
+                        ? 'bg-amber-50/80 border-amber-300'
+                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={resetReferralsOption}
+                      onChange={(e) => {
+                        setResetReferralsOption(e.target.checked);
+                        setResetPhrase('');
+                      }}
+                      className="mt-0.5 rounded border-slate-300 text-amber-600 focus:ring-amber-500/20"
+                    />
+                    <div className="text-xs">
+                      <span className="font-bold text-slate-900 block">
+                        Reset Current Referral Progress (Campaign #{resetPreview.currentReferralCampaignId ?? 1} → #{resetPreview.nextReferralCampaignId ?? 2})
+                      </span>
+                      <span className="text-[11px] text-slate-600">
+                        Resets current campaign referral count to 0 ({resetPreview.activeCampaignValidReferrals ?? 0} active valid referrals across {resetPreview.usersWithActiveCampaignReferrals ?? 0} users) and restarts campaign withdrawal milestones ({resetPreview.activeCampaignCompletedWithdrawals ?? 0} completed in active campaign).
+                      </span>
+                    </div>
+                  </label>
                 </div>
+
+                {/* Clear Summary of What WILL Be Reset vs Permanently Preserved */}
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs space-y-2">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-red-700 block mb-1">
+                      What Will Be Reset:
+                    </span>
+                    {!resetBalancesOption && !resetReferralsOption ? (
+                      <p className="text-[11px] text-slate-500 italic">Select at least one option above.</p>
+                    ) : (
+                      <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-700">
+                        {resetBalancesOption && (
+                          <li>
+                            Available balances for <strong>{resetPreview.totalUsers}</strong> user(s) totaling{' '}
+                            <strong className="text-red-600">₹{resetPreview.totalBalance.toFixed(2)}</strong> → <strong>₹0.00</strong> (Gen {resetPreview.nextGeneration}).
+                          </li>
+                        )}
+                        {resetReferralsOption && (
+                          <li>
+                            Current campaign valid referral counters → <strong>0</strong> and active withdrawal referral milestones → <strong>0</strong> under new <strong>Campaign #{resetPreview.nextReferralCampaignId ?? 2}</strong>.
+                          </li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-200">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 block mb-1">
+                      Permanently Preserved (Never Deleted):
+                    </span>
+                    <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-600">
+                      {!resetBalancesOption && (
+                        <li>
+                          <strong>All user wallet balances</strong> remain 100% untouched.
+                        </li>
+                      )}
+                      <li>
+                        All <strong>{resetPreview.lifetimeReferralsCount ?? 0}</strong> historical referral records, timestamps, valid/invalid statuses, and referral reward transactions remain visible in Referral History & Admin Audit.
+                      </li>
+                      <li>
+                        Old referrals cannot be counted again in the new campaign; all{' '}
+                        <strong>{resetPreview.lifetimeCompletedWithdrawals ?? 0}</strong> completed withdrawals, GV codes, tasks, and Daily Check-in streaks remain intact.
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                {(resetBalancesOption || resetReferralsOption) && (
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Type{' '}
+                      <code className="text-red-600 font-mono select-all bg-red-50 px-1.5 py-0.5 rounded border border-red-200">
+                        {expectedResetPhrase}
+                      </code>{' '}
+                      to confirm:
+                    </label>
+                    <input
+                      type="text"
+                      value={resetPhrase}
+                      onChange={(e) => setResetPhrase(e.target.value)}
+                      placeholder={expectedResetPhrase}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 font-mono text-xs font-bold focus:bg-white focus:border-red-500"
+                    />
+                  </div>
+                )}
 
                 <div className="flex gap-2 pt-2">
                   <button
@@ -3124,11 +3378,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   </button>
                   <button
                     type="button"
-                    disabled={resetting || resetPhrase.trim() !== 'RESET ALL BALANCES'}
+                    disabled={
+                      resetting ||
+                      (!resetBalancesOption && !resetReferralsOption) ||
+                      !expectedResetPhrase ||
+                      resetPhrase.trim() !== expectedResetPhrase
+                    }
                     onClick={handleConfirmReset}
                     className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-xl shadow-xs transition"
                   >
-                    {resetting ? 'Resetting Balances...' : 'Confirm Bulk Reset'}
+                    {resetting ? 'Executing Reset...' : 'Confirm Reset'}
                   </button>
                 </div>
               </div>
@@ -3498,18 +3757,21 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   </div>
                 </div>
 
-                {/* Withdrawal Referral Requirement Section */}
+                {/* Cumulative Withdrawal Referral Requirement Section */}
                 <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-4">
-                  <div className="flex items-start justify-between">
+                  <div className="flex items-start justify-between gap-2">
                     <div>
                       <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
                         <Users className="w-3.5 h-3.5 text-blue-500" />
-                        Withdrawal Referral Requirement
+                        Withdrawal Referral Requirement (Cumulative)
                       </h4>
                       <p className="text-[11px] text-slate-500">
-                        Require users to have valid referrals before subsequent withdrawals
+                        Cumulative threshold per successful withdrawal in the active campaign: Required = (W + 1) × R
                       </p>
                     </div>
+                    <span className="px-2 py-0.5 rounded-full bg-sky-50 border border-sky-200 text-[#0088cc] text-[10px] font-bold shrink-0">
+                      Campaign #{settings.referralCampaignId ?? 1}
+                    </span>
                   </div>
 
                   <div className="pt-2 border-t border-slate-200/80 space-y-3">
@@ -3522,55 +3784,51 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         }
                         className="rounded bg-slate-800 border-slate-200 text-blue-500 focus:ring-blue-500/20"
                       />
-                      <span>Enable Withdrawal Referral Requirement</span>
+                      <span>Enable Cumulative Withdrawal Referral Requirement</span>
                     </label>
 
-                    {settings.withdrawalReferralRequirementEnabled !== false && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-5 border-l-2 border-blue-500/30 animate-in fade-in duration-200">
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-700 mb-1">
-                            Apply From Withdrawal Number
-                          </label>
-                          <input
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={settings.withdrawalReferralApplyFromCount ?? 2}
-                            onChange={(e) =>
-                              setSettings({
-                                ...settings,
-                                withdrawalReferralApplyFromCount: Number(e.target.value),
-                              })
-                            }
-                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-semibold"
-                          />
-                          <p className="text-[10px] text-slate-500 mt-1">
-                            Default: 2 (1st withdrawal unrestricted; 2nd onward requires referrals)
-                          </p>
+                    {settings.withdrawalReferralRequirementEnabled !== false && (() => {
+                      const reqPerWithdrawal = Math.max(1, Math.floor(Number(settings.withdrawalMinReferralsRequired) || 1));
+                      return (
+                        <div className="space-y-3 pl-5 border-l-2 border-blue-500/30 animate-in fade-in duration-200">
+                          <div className="max-w-xs">
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">
+                              Valid Referrals Required Per Withdrawal (R)
+                            </label>
+                            <input
+                              type="number"
+                              min="1"
+                              step="1"
+                              value={settings.withdrawalMinReferralsRequired ?? 1}
+                              onChange={(e) =>
+                                setSettings({
+                                  ...settings,
+                                  withdrawalMinReferralsRequired: Number(e.target.value),
+                                })
+                              }
+                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-semibold"
+                            />
+                            <p className="text-[10px] text-slate-500 mt-1">
+                              Supports any positive whole number (e.g. 2, 3, 4, 5). Counts only genuine, credited, non-duplicate referrals in the current campaign.
+                            </p>
+                          </div>
+
+                          <div className="p-3 bg-sky-50/60 border border-sky-200/80 rounded-xl text-[11px] text-slate-700 space-y-1">
+                            <span className="font-bold text-sky-900 block">
+                              Active Cumulative Milestone Schedule (R = {reqPerWithdrawal}):
+                            </span>
+                            <p>
+                              • <strong>1st Withdrawal:</strong> {reqPerWithdrawal} valid referral{reqPerWithdrawal === 1 ? '' : 's'} •{' '}
+                              <strong>2nd Withdrawal:</strong> {reqPerWithdrawal * 2} valid referrals •{' '}
+                              <strong>3rd Withdrawal:</strong> {reqPerWithdrawal * 3} valid referrals
+                            </p>
+                            <p className="text-[10px] text-slate-500">
+                              Only completed withdrawals advance milestones. Rejected, failed, pending, or reversed withdrawals never consume referrals.
+                            </p>
+                          </div>
                         </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-700 mb-1">
-                            Minimum Valid Referrals Required
-                          </label>
-                          <input
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={settings.withdrawalMinReferralsRequired ?? 1}
-                            onChange={(e) =>
-                              setSettings({
-                                ...settings,
-                                withdrawalMinReferralsRequired: Number(e.target.value),
-                              })
-                            }
-                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-semibold"
-                          />
-                          <p className="text-[10px] text-slate-500 mt-1">
-                            Number of credited, non-duplicate referrals required
-                          </p>
-                        </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
                 </div>
 

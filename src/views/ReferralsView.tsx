@@ -229,14 +229,26 @@ export const ReferralsView: React.FC<ReferralsViewProps> = ({
         </div>
       )}
 
-      {/* Stats Cards: Current Campaign vs Lifetime History vs Total Earned */}
+      {/* Stats Cards: Available vs Consumed vs Lifetime vs Total Earned */}
       {(() => {
         const activeCampaignId = stats?.referralCampaignId ?? settings.referralCampaignId ?? 1;
-        const currentCampaignValid =
-          stats?.currentCampaignValidReferrals ?? stats?.totalReferrals ?? 0;
-        const lifetimeValid = stats?.lifetimeValidReferrals ?? stats?.totalReferrals ?? 0;
-        const totalRecorded = stats?.totalReferrals ?? 0;
         const eligibility: WithdrawalReferralEligibility | undefined = stats?.withdrawalEligibility;
+        const withdrawalCycle = eligibility?.withdrawalCycle ?? stats?.withdrawalCycle ?? user.withdrawalCycle ?? 1;
+        const availableValid =
+          eligibility?.availableReferrals ??
+          stats?.availableValidReferrals ??
+          stats?.currentCampaignValidReferrals ??
+          0;
+        const consumedValid =
+          eligibility?.consumedReferrals ??
+          stats?.consumedValidReferrals ??
+          0;
+        const lifetimeValid =
+          eligibility?.lifetimeValidReferrals ??
+          stats?.lifetimeValidReferrals ??
+          stats?.totalReferrals ??
+          0;
+        const totalRecorded = stats?.totalReferrals ?? 0;
         const historyList: any[] = Array.isArray(stats?.history) ? stats.history : [];
         const hasHistoricalCampaigns =
           activeCampaignId > 1 ||
@@ -250,24 +262,39 @@ export const ReferralsView: React.FC<ReferralsViewProps> = ({
         });
 
         const nextNum = eligibility ? eligibility.nextWithdrawalNumber ?? eligibility.completedWithdrawals + 1 : 1;
-        const ordLabel = getOrdinalWithdrawalLabel(nextNum);
-        const progressPct =
-          eligibility && eligibility.requiredReferrals > 0
-            ? Math.min(100, Math.round((eligibility.currentReferrals / eligibility.requiredReferrals) * 100))
-            : 100;
+        const ordLabel = eligibility?.stageLabel || getOrdinalWithdrawalLabel(nextNum);
+        const stageMode = eligibility?.stageMode ?? 'custom';
+        const isFreeStage = stageMode === 'free';
+        const isUnconfiguredStage = stageMode === 'unconfigured' || eligibility?.stageConfigured === false;
+        const progressPct = isFreeStage
+          ? 100
+          : eligibility && eligibility.requiredReferrals > 0
+          ? Math.min(100, Math.round((availableValid / eligibility.requiredReferrals) * 100))
+          : 0;
 
         return (
           <>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               <div className="p-3.5 bg-white border border-sky-200/80 rounded-2xl shadow-xs">
                 <div className="flex items-center justify-between gap-1 text-slate-500 text-[11px] mb-1">
-                  <span className="font-semibold text-slate-700 truncate">Current</span>
+                  <span className="font-semibold text-slate-700 truncate">Available</span>
                   <span className="px-1.5 py-0.5 rounded bg-sky-50 text-[#0088cc] font-bold text-[9px]">
-                    #{activeCampaignId}
+                    Cycle #{withdrawalCycle}
                   </span>
                 </div>
-                <p className="text-2xl font-black text-[#0088cc]">{currentCampaignValid}</p>
-                <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">Active campaign valid</p>
+                <p className="text-2xl font-black text-[#0088cc]">{availableValid}</p>
+                <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">Ready for withdrawal</p>
+              </div>
+
+              <div className="p-3.5 bg-white border border-amber-200/80 rounded-2xl shadow-xs">
+                <div className="flex items-center justify-between gap-1 text-slate-500 text-[11px] mb-1">
+                  <span className="font-semibold text-slate-700 truncate">Consumed</span>
+                  <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-bold text-[9px]">
+                    Used
+                  </span>
+                </div>
+                <p className="text-2xl font-black text-amber-700">{consumedValid}</p>
+                <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">Used on withdrawals</p>
               </div>
 
               <div className="p-3.5 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
@@ -293,8 +320,8 @@ export const ReferralsView: React.FC<ReferralsViewProps> = ({
               </div>
             </div>
 
-            {/* Cumulative Withdrawal Referral Milestone Card */}
-            {eligibility && eligibility.applies && (
+            {/* Stage-Wise Withdrawal Referral Requirement & Consumption Card */}
+            {eligibility && (
               <div
                 className={`p-4 rounded-2xl border shadow-xs space-y-2.5 ${
                   eligibility.eligible
@@ -319,42 +346,53 @@ export const ReferralsView: React.FC<ReferralsViewProps> = ({
                     </div>
                     <div className="min-w-0">
                       <h4 className="text-xs font-bold text-slate-900 truncate">
-                        {ordLabel}: {eligibility.currentReferrals}/{eligibility.requiredReferrals} valid referrals
+                        {isFreeStage
+                          ? `${ordLabel}: FREE (0 Referrals Required)`
+                          : isUnconfiguredStage
+                          ? `${ordLabel}: Not Configured`
+                          : `${ordLabel}: ${availableValid}/${eligibility.requiredReferrals} available referrals`}
                       </h4>
                       <p className="text-[10px] text-slate-500">
-                        Rule: {eligibility.perWithdrawalRequirement ?? settings.withdrawalMinReferralsRequired ?? 1} valid referral(s) per withdrawal • Completed: {eligibility.completedWithdrawals}
+                        Cycle #{withdrawalCycle} • Next Withdrawal #{nextNum} • Lifetime: {lifetimeValid} • Consumed: {consumedValid}
                       </p>
                     </div>
                   </div>
                   <span
                     className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wide shrink-0 ${
-                      eligibility.eligible
+                      isFreeStage
+                        ? 'bg-emerald-600 text-white'
+                        : eligibility.eligible
                         ? 'bg-emerald-600 text-white'
                         : 'bg-amber-100 text-amber-800 border border-amber-200'
                     }`}
                   >
-                    {eligibility.eligible ? 'Available' : 'Locked'}
+                    {isFreeStage ? 'FREE' : isUnconfiguredStage ? 'Not Configured' : eligibility.eligible ? 'Available' : 'Locked'}
                   </span>
                 </div>
 
-                <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200/60">
-                  <div
-                    className={`h-full transition-all duration-500 rounded-full ${
-                      eligibility.eligible ? 'bg-emerald-500' : 'bg-[#0088cc]'
-                    }`}
-                    style={{ width: `${progressPct}%` }}
-                  />
-                </div>
+                {!isFreeStage && !isUnconfiguredStage && (
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200/60">
+                    <div
+                      className={`h-full transition-all duration-500 rounded-full ${
+                        eligibility.eligible ? 'bg-emerald-500' : 'bg-[#0088cc]'
+                      }`}
+                      style={{ width: `${progressPct}%` }}
+                    />
+                  </div>
+                )}
 
-                <p className="text-[11px] text-slate-600 leading-relaxed">
-                  {eligibility.eligible
-                    ? `${ordLabel} referral milestone reached (${eligibility.currentReferrals}/${eligibility.requiredReferrals}). Next withdrawal after this will require ${
-                        (nextNum + 1) * (eligibility.perWithdrawalRequirement ?? 1)
-                      } valid referrals.`
-                    : `Invite ${Math.max(
-                        0,
-                        eligibility.requiredReferrals - eligibility.currentReferrals
-                      )} more valid friend(s) in Campaign #${activeCampaignId} to unlock your ${ordLabel.toLowerCase()}.`}
+                <p className="text-[11px] text-slate-700 font-medium leading-relaxed">
+                  {eligibility.message ||
+                    (isFreeStage
+                      ? nextNum === 1
+                        ? 'Your first withdrawal is FREE!'
+                        : `Your ${ordLabel.toLowerCase()} is FREE!`
+                      : eligibility.eligible
+                      ? `Available referrals: ${availableValid}/${eligibility.requiredReferrals} — You can withdraw.`
+                      : `You need ${Math.max(
+                          0,
+                          eligibility.requiredReferrals - availableValid
+                        )} more valid referral(s) for your next withdrawal.`)}
                 </p>
               </div>
             )}
@@ -453,9 +491,21 @@ export const ReferralsView: React.FC<ReferralsViewProps> = ({
                             >
                               {isCredited ? 'Valid' : 'Invalid'}
                             </span>
+                            {isCredited && (
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                  r.isConsumed || r.consumedByWithdrawalId
+                                    ? 'bg-amber-50 text-amber-700 border border-amber-200/70'
+                                    : 'bg-sky-50 text-[#0088cc] border border-sky-200/70'
+                                }`}
+                              >
+                                {r.isConsumed || r.consumedByWithdrawalId ? 'Consumed' : 'Available'}
+                              </span>
+                            )}
                           </div>
                           <p className="text-[10px] text-slate-400 mt-0.5">
                             {new Date(r.createdAt).toLocaleDateString()} • ID: {r.id.slice(0, 14)}
+                            {r.consumedByWithdrawalId ? ` • Used in ${String(r.consumedByWithdrawalId).slice(0, 14)}` : ''}
                           </p>
                         </div>
                         <span

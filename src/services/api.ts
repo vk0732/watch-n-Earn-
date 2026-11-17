@@ -18,6 +18,8 @@ import type {
   GiftCardInventoryStats,
   BulkBalanceResetPreview,
   BulkBalanceResetResult,
+  UserBalanceResetResult,
+  ReferralConsumptionRecord,
   BroadcastPreview,
   BroadcastTask,
   WithdrawalReferralEligibility,
@@ -207,12 +209,18 @@ export const api = {
       referralLink: string;
       referralReward: number;
       referralCampaignId?: number;
+      withdrawalCycle?: number;
+      availableValidReferrals?: number;
       currentCampaignValidReferrals?: number;
+      consumedValidReferrals?: number;
+      lifetimeConsumedReferrals?: number;
+      currentCampaignEarnedValidReferrals?: number;
       lifetimeValidReferrals?: number;
       currentCampaignTotalReferrals?: number;
       totalReferrals: number;
       totalEarned: number;
       withdrawalEligibility?: WithdrawalReferralEligibility;
+      consumedHistory?: ReferralConsumptionRecord[];
       history: any[];
     }>('/referrals/stats'),
 
@@ -475,6 +483,12 @@ export const api = {
       }
     ),
 
+  resetUserBalance: (userId: string, options?: { resetReferrals?: boolean; reason?: string }) =>
+    request<UserBalanceResetResult>(`/admin/users/${userId}/reset-balance`, {
+      method: 'POST',
+      body: JSON.stringify(options || {}),
+    }),
+
   // Feature 1: Admin Bulk Balance & Campaign Referral Reset
   getBulkBalanceResetPreview: () =>
     request<BulkBalanceResetPreview>('/admin/bulk-balance-reset/preview'),
@@ -502,11 +516,14 @@ export const api = {
       userCounts?: {
         referralCampaignId: number;
         currentCampaignValidReferrals: number;
+        availableValidReferrals?: number;
+        consumedValidReferrals?: number;
         lifetimeValidReferrals: number;
         currentCampaignTotalReferrals: number;
         lifetimeTotalReferrals: number;
       };
       eligibility?: WithdrawalReferralEligibility;
+      consumptions?: ReferralConsumptionRecord[];
       referrals: any[];
     }>(`/admin/referrals${qs}`);
   },

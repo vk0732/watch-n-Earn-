@@ -1859,14 +1859,15 @@ async function runTests() {
     assert(u1After?.balance === 90, 'Case 1: Balance deducted from 100 to 90');
 
     // ----------------------------------------------------------------
-    // Case 2: Second withdrawal is blocked at 1/2 referrals (requires (1+1)*1 = 2)
+    // Case 2: Second withdrawal is blocked at 0/1 available referrals (1 consumed on 1st withdrawal)
     // ----------------------------------------------------------------
     const elig2Blocked = await checkWithdrawalReferralEligibility(user1Id);
     assert(elig2Blocked.applies === true, 'Case 2: Referral requirement applies to second withdrawal');
-    assert(elig2Blocked.eligible === false, 'Case 2: User is NOT eligible at 1/2 referrals');
+    assert(elig2Blocked.eligible === false, 'Case 2: User is NOT eligible at 0/1 available referrals');
     assert(elig2Blocked.completedWithdrawals === 1, 'Case 2: Completed withdrawals count is 1');
-    assert(elig2Blocked.currentReferrals === 1, 'Case 2: Current valid referrals is 1');
-    assert(elig2Blocked.requiredReferrals === 2, 'Case 2: Cumulative required referrals is (1+1)*1 = 2');
+    assert(elig2Blocked.availableReferrals === 0, 'Case 2: Available valid referrals is 0 after 1st withdrawal consumed 1');
+    assert(elig2Blocked.consumedReferrals === 1, 'Case 2: Consumed referrals is 1');
+    assert(elig2Blocked.requiredReferrals === 1, 'Case 2: Stage 2 required referrals is 1');
     assert(Boolean(elig2Blocked.message), 'Case 2: Instructive rejection message is provided');
 
     let threwReferralError = false;
@@ -1877,12 +1878,12 @@ async function runTests() {
       assert(err.referralRequirementFailed === true, 'Case 2: Error includes referralRequirementFailed flag');
       assert(err.message.includes('referral'), 'Case 2: Error message explains referral requirement');
     }
-    assert(threwReferralError, 'Case 2: Second withdrawal was blocked by cumulative referral rule');
+    assert(threwReferralError, 'Case 2: Second withdrawal was blocked by referral rule');
     const u1BlockedCheck = await getUser(user1Id);
     assert(u1BlockedCheck?.balance === 90, 'Case 2: Balance strictly untouched at 90 when blocked');
 
     // ----------------------------------------------------------------
-    // Case 3: Second withdrawal succeeds when cumulative count reaches 2/2
+    // Case 3: Second withdrawal succeeds when user earns 1 new available referral (1/1 available, 2 lifetime)
     // ----------------------------------------------------------------
     const referee1bId = `referee_1b_${Date.now()}`;
     await recordReferral({
@@ -1897,8 +1898,9 @@ async function runTests() {
 
     const elig2Success = await checkWithdrawalReferralEligibility(user1Id);
     assert(elig2Success.applies === true, 'Case 3: Rule applies on withdrawal #2');
-    assert(elig2Success.currentReferrals === 2, 'Case 3: Valid referral count is now 2');
-    assert(elig2Success.eligible === true, 'Case 3: User is eligible at 2/2 cumulative referrals');
+    assert(elig2Success.availableReferrals === 1, 'Case 3: Available valid referral count is now 1');
+    assert(elig2Success.lifetimeValidReferrals === 2, 'Case 3: Lifetime valid referrals is 2');
+    assert(elig2Success.eligible === true, 'Case 3: User is eligible at 1/1 available referrals');
 
     const res2 = await redeemGiftCardWithdrawal(user1Id, 10);
     assert(res2.withdrawal.status === 'success', 'Case 3: Second withdrawal succeeds once 2/2 referrals met');
@@ -1984,10 +1986,11 @@ async function runTests() {
     }
     await redeemGiftCardWithdrawal(user5Id, 10);
 
-    // 2nd withdrawal now requires (1+1)*2 = 4 referrals (currently at 2/4)
+    // 2nd withdrawal now requires 2 available referrals (currently 0/2 available after 2 consumed on 1st)
     const elig5W2Blocked = await checkWithdrawalReferralEligibility(user5Id);
-    assert(elig5W2Blocked.eligible === false, 'Case 5: 2nd withdrawal blocked at 2/4 referrals');
-    assert(elig5W2Blocked.requiredReferrals === 4, 'Case 5: 2nd withdrawal requires 4 cumulative referrals');
+    assert(elig5W2Blocked.eligible === false, 'Case 5: 2nd withdrawal blocked at 0/2 available referrals');
+    assert(elig5W2Blocked.requiredReferrals === 2, 'Case 5: 2nd withdrawal requires 2 available referrals');
+    assert(elig5W2Blocked.consumedReferrals === 2, 'Case 5: 2 referrals consumed by 1st withdrawal');
 
     await recordReferral({
       id: `ref_rec_5_w2_3_${Date.now()}`,

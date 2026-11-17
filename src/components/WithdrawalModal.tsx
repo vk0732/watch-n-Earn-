@@ -237,27 +237,30 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               </div>
             )}
 
-            {/* Cumulative Withdrawal Referral Milestone Banner */}
-            {referralEligibility && referralEligibility.applies && (() => {
+            {/* Per-Stage Withdrawal Referral Requirement & Consumption Banner */}
+            {referralEligibility && (() => {
               const nextNum =
                 referralEligibility.nextWithdrawalNumber ?? referralEligibility.completedWithdrawals + 1;
               const ordLabel =
-                nextNum === 1
+                referralEligibility.stageLabel ||
+                (nextNum === 1
                   ? 'First withdrawal'
                   : nextNum === 2
                   ? 'Second withdrawal'
                   : nextNum === 3
                   ? 'Third withdrawal'
-                  : `Withdrawal #${nextNum}`;
-              const pct =
-                referralEligibility.requiredReferrals > 0
-                  ? Math.min(
-                      100,
-                      Math.round(
-                        (referralEligibility.currentReferrals / referralEligibility.requiredReferrals) * 100
-                      )
-                    )
-                  : 100;
+                  : `Withdrawal #${nextNum}`);
+              const isFreeStage = referralEligibility.stageMode === 'free' || !referralEligibility.applies;
+              const isUnconfiguredStage =
+                referralEligibility.stageMode === 'unconfigured' || referralEligibility.stageConfigured === false;
+              const availRefs =
+                referralEligibility.availableReferrals ?? referralEligibility.currentReferrals ?? 0;
+              const reqRefs = referralEligibility.requiredReferrals ?? 0;
+              const pct = isFreeStage
+                ? 100
+                : reqRefs > 0
+                ? Math.min(100, Math.round((availRefs / reqRefs) * 100))
+                : 0;
               return (
                 <div
                   className={`p-3.5 rounded-2xl border ${
@@ -274,39 +277,50 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                         }`}
                       />
                       <span>
-                        {ordLabel}: {referralEligibility.currentReferrals}/{referralEligibility.requiredReferrals} valid referrals
+                        {isFreeStage
+                          ? `${ordLabel}: FREE`
+                          : isUnconfiguredStage
+                          ? `${ordLabel}: Not Configured`
+                          : `${ordLabel}: ${availRefs}/${reqRefs} available referrals`}
                       </span>
                     </span>
                     <span
                       className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full shrink-0 ${
-                        referralEligibility.eligible
+                        isFreeStage || referralEligibility.eligible
                           ? 'bg-emerald-600 text-white'
                           : 'bg-amber-200/80 text-amber-900'
                       }`}
                     >
-                      {referralEligibility.eligible ? 'Available' : 'Locked'}
+                      {isFreeStage ? 'FREE' : isUnconfiguredStage ? 'Not Configured' : referralEligibility.eligible ? 'Available' : 'Locked'}
                     </span>
                   </div>
 
-                  <div className="w-full h-1.5 bg-white/80 rounded-full overflow-hidden border border-black/5">
-                    <div
-                      className={`h-full rounded-full transition-all duration-500 ${
-                        referralEligibility.eligible ? 'bg-emerald-500' : 'bg-amber-500'
-                      }`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
+                  {!isFreeStage && !isUnconfiguredStage && (
+                    <div className="w-full h-1.5 bg-white/80 rounded-full overflow-hidden border border-black/5">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          referralEligibility.eligible ? 'bg-emerald-500' : 'bg-amber-500'
+                        }`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  )}
 
-                  <p className="text-[11px] leading-relaxed text-slate-600">
-                    {referralEligibility.eligible
-                      ? `${ordLabel} unlocked! (${referralEligibility.perWithdrawalRequirement ?? 1} valid referral(s) per withdrawal • Next milestone after this: ${
-                          (nextNum + 1) * (referralEligibility.perWithdrawalRequirement ?? 1)
-                        } valid referrals)`
-                      : referralEligibility.message ||
-                        `Invite ${Math.max(
-                          0,
-                          referralEligibility.requiredReferrals - referralEligibility.currentReferrals
-                        )} more valid referral(s) to unlock ${ordLabel.toLowerCase()}.`}
+                  <p className="text-[11px] leading-relaxed text-slate-700 font-medium">
+                    {referralEligibility.message ||
+                      (isFreeStage
+                        ? nextNum === 1
+                          ? 'Your first withdrawal is FREE!'
+                          : `Your ${ordLabel.toLowerCase()} is FREE!`
+                        : referralEligibility.eligible
+                        ? `Available referrals: ${availRefs}/${reqRefs} — You can withdraw.`
+                        : `You need ${Math.max(
+                            0,
+                            reqRefs - availRefs
+                          )} more valid referral(s) for your next withdrawal.`)}
+                  </p>
+                  <p className="text-[10px] text-slate-500">
+                    Cycle #{referralEligibility.withdrawalCycle ?? 1} • Lifetime Valid: {referralEligibility.lifetimeValidReferrals ?? 0} • Available: {availRefs} • Consumed: {referralEligibility.consumedReferrals ?? 0}
                   </p>
                 </div>
               );

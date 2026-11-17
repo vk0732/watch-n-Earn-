@@ -36,6 +36,7 @@ export interface UserProfile {
   pendingSignupBonus?: number; // Persisted pending scratch bonus amount waiting to be claimed
   signupBonusMessage?: string;
   lastBalanceResetAt?: string;
+  withdrawalCycle?: number; // Per-user withdrawal reset cycle (starts at 1; increments on Full Balance Reset)
   createdAt: string;
   updatedAt: string;
 }
@@ -112,6 +113,9 @@ export interface ReferralRecord {
   status: 'credited' | 'pending' | 'rejected_duplicate' | 'rejected' | 'flagged_abuse';
   rejectionReason?: string;
   referralCampaignId?: number;
+  consumedByWithdrawalId?: string | null;
+  consumedAt?: string | null;
+  consumedInCycle?: number | null;
   createdAt: string;
 }
 
@@ -137,7 +141,49 @@ export interface Transaction {
   createdAt: string;
 }
 
-export type WithdrawalStatus = 'pending' | 'processing' | 'success' | 'rejected' | 'failed' | 'reversed';
+export type WithdrawalStatus =
+  | 'pending'
+  | 'processing'
+  | 'success'
+  | 'rejected'
+  | 'failed'
+  | 'cancelled'
+  | 'reversed';
+
+export type WithdrawalStageMode = 'free' | 'custom' | 'unconfigured';
+
+export interface WithdrawalStageRule {
+  stage: number; // 1 = First, 2 = Second, 3 = Third, 4 = Fourth, 5 = Fifth, 6 = Sixth, etc.
+  mode: WithdrawalStageMode;
+  referralsRequired: number; // 0 when mode is 'free' or 'unconfigured'; integer >= 1 when 'custom'
+}
+
+export interface WithdrawalStagesConfig {
+  stages: Record<string, WithdrawalStageRule>;
+  furtherWithdrawals: {
+    mode: WithdrawalStageMode;
+    referralsRequired: number;
+  };
+  updatedAt?: string;
+}
+
+export interface ReferralConsumptionRecord {
+  id: string; // e.g. rcons_<withdrawalId>
+  userId: string;
+  withdrawalId: string;
+  withdrawalStage: number;
+  withdrawalCycle: number;
+  referralCampaignId: number;
+  stageMode: 'free' | 'custom';
+  requiredCount: number;
+  consumedCount: number;
+  consumedReferralIds: string[];
+  consumedRefereeIds: string[];
+  status: 'active' | 'released';
+  consumedAt: string;
+  releasedAt?: string | null;
+  releaseReason?: string | null;
+}
 
 export interface Withdrawal {
   id: string;
@@ -158,6 +204,12 @@ export interface Withdrawal {
   giftCardRedeemedAt?: string;
   idempotencyKey?: string;
   referralCampaignId?: number;
+  withdrawalCycle?: number;
+  withdrawalStage?: number;
+  referralStageMode?: 'free' | 'custom';
+  referralsRequiredAtWithdrawal?: number;
+  referralsConsumedCount?: number;
+  consumedReferralIds?: string[];
   createdAt: string;
   processedAt?: string | null;
 }
@@ -250,19 +302,27 @@ export interface AppSettings {
   withdrawalReferralRequirementEnabled?: boolean;
   withdrawalReferralApplyFromCount?: number;
   withdrawalMinReferralsRequired?: number;
+  withdrawalStageRules?: WithdrawalStagesConfig;
 }
 
 export interface WithdrawalReferralEligibility {
   eligible: boolean;
   applies: boolean;
+  withdrawalCycle: number;
   completedWithdrawals: number;
-  currentReferrals: number;
+  currentReferrals: number; // Currently available (unconsumed) valid referrals
+  availableReferrals: number; // Currently available (unconsumed) valid referrals
+  consumedReferrals: number; // Total valid referrals consumed by successful withdrawals
   requiredReferrals: number;
+  missingReferrals: number;
   perWithdrawalRequirement: number;
   nextWithdrawalNumber: number;
+  stageLabel: string;
+  stageMode: WithdrawalStageMode;
+  stageConfigured: boolean;
   referralCampaignId: number;
-  lifetimeValidReferrals?: number;
-  lifetimeCompletedWithdrawals?: number;
+  lifetimeValidReferrals: number;
+  lifetimeCompletedWithdrawals: number;
   applyFromCount: number;
   message?: string;
 }
@@ -442,6 +502,26 @@ export interface BulkBalanceResetPreview {
 export interface BulkBalanceResetOptions {
   resetBalances?: boolean;
   resetReferrals?: boolean;
+  userId?: string;
+}
+
+export interface UserBalanceResetResult {
+  success: boolean;
+  userId: string;
+  previousBalance: number;
+  newBalance: number;
+  previousWithdrawalCycle: number;
+  newWithdrawalCycle: number;
+  completedWithdrawalsInNewCycle: number;
+  lifetimeCompletedWithdrawalsPreserved: number;
+  availableValidReferralsPreserved: number;
+  consumedReferralsCount: number;
+  lifetimeValidReferralsPreserved: number;
+  referralsReset: boolean;
+  transaction?: Transaction;
+  user: UserProfile;
+  nextWithdrawalEligibility: WithdrawalReferralEligibility;
+  resetAt: string;
 }
 
 export interface BulkBalanceResetResult {

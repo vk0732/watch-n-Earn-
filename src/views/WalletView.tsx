@@ -170,21 +170,27 @@ export const WalletView: React.FC<WalletViewProps> = ({
         </button>
       </div>
 
-      {/* Cumulative Withdrawal Referral Milestone Card */}
-      {eligibility && eligibility.applies && (() => {
+      {/* Stage-Wise Withdrawal Referral Requirement & Consumption Card */}
+      {eligibility && (() => {
         const nextNum = eligibility.nextWithdrawalNumber ?? eligibility.completedWithdrawals + 1;
         const ordLabel =
-          nextNum === 1
+          eligibility.stageLabel ||
+          (nextNum === 1
             ? 'First withdrawal'
             : nextNum === 2
             ? 'Second withdrawal'
             : nextNum === 3
             ? 'Third withdrawal'
-            : `Withdrawal #${nextNum}`;
-        const pct =
-          eligibility.requiredReferrals > 0
-            ? Math.min(100, Math.round((eligibility.currentReferrals / eligibility.requiredReferrals) * 100))
-            : 100;
+            : `Withdrawal #${nextNum}`);
+        const isFreeStage = eligibility.stageMode === 'free' || !eligibility.applies;
+        const isUnconfiguredStage = eligibility.stageMode === 'unconfigured' || eligibility.stageConfigured === false;
+        const availRefs = eligibility.availableReferrals ?? eligibility.currentReferrals ?? 0;
+        const reqRefs = eligibility.requiredReferrals ?? 0;
+        const pct = isFreeStage
+          ? 100
+          : reqRefs > 0
+          ? Math.min(100, Math.round((availRefs / reqRefs) * 100))
+          : 0;
         return (
           <div
             className={`p-4 rounded-2xl border shadow-xs space-y-2 ${
@@ -204,32 +210,49 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 </div>
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-slate-900 truncate">
-                    {ordLabel}: {eligibility.currentReferrals}/{eligibility.requiredReferrals} valid referrals
+                    {isFreeStage
+                      ? `${ordLabel}: FREE`
+                      : isUnconfiguredStage
+                      ? `${ordLabel}: Not Configured`
+                      : `${ordLabel}: ${availRefs}/${reqRefs} available referrals`}
                   </p>
                   <p className="text-[10px] text-slate-500">
-                    Next withdrawal requires {eligibility.requiredReferrals} valid referral(s) in Campaign #{eligibility.referralCampaignId ?? 1}
+                    Cycle #{eligibility.withdrawalCycle ?? 1} • Lifetime: {eligibility.lifetimeValidReferrals ?? 0} • Available: {availRefs} • Consumed: {eligibility.consumedReferrals ?? 0}
                   </p>
                 </div>
               </div>
               <span
                 className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase shrink-0 ${
-                  eligibility.eligible
+                  isFreeStage || eligibility.eligible
                     ? 'bg-emerald-600 text-white'
                     : 'bg-amber-100 text-amber-800 border border-amber-200'
                 }`}
               >
-                {eligibility.eligible ? 'Available' : 'Locked'}
+                {isFreeStage ? 'FREE' : isUnconfiguredStage ? 'Not Configured' : eligibility.eligible ? 'Available' : 'Locked'}
               </span>
             </div>
 
-            <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${
-                  eligibility.eligible ? 'bg-emerald-500' : 'bg-[#0088cc]'
-                }`}
-                style={{ width: `${pct}%` }}
-              />
-            </div>
+            {!isFreeStage && !isUnconfiguredStage && (
+              <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    eligibility.eligible ? 'bg-emerald-500' : 'bg-[#0088cc]'
+                  }`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            )}
+
+            <p className="text-[11px] font-medium text-slate-700">
+              {eligibility.message ||
+                (isFreeStage
+                  ? nextNum === 1
+                    ? 'Your first withdrawal is FREE!'
+                    : `Your ${ordLabel.toLowerCase()} is FREE!`
+                  : eligibility.eligible
+                  ? `Available referrals: ${availRefs}/${reqRefs} — You can withdraw.`
+                  : `You need ${Math.max(0, reqRefs - availRefs)} more valid referral(s) for your next withdrawal.`)}
+            </p>
           </div>
         );
       })()}

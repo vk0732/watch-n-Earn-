@@ -49,6 +49,7 @@ import {
   acquireLock,
   getBulkBalanceResetPreview,
   atomicResetAllUserBalances,
+  atomicResetUserBalance,
   getMandatoryWithdrawalChannels,
   verifyMandatoryWithdrawalMembership,
   getMandatoryCheckinChannels,
@@ -61,6 +62,10 @@ import {
   getRecordCampaignId,
   getCurrentReferralCampaignId,
   getAllReferrals,
+  getReferralConsumptionsByUser,
+  getAllReferralConsumptions,
+  validateWithdrawalStagesConfigInput,
+  resolveWithdrawalStagesConfig,
   getOrRegisterDeviceOwner,
   isDeviceRestrictedForUser,
   DB_PREFIX,
@@ -1114,9 +1119,10 @@ apiRouter.get('/referrals/stats', extractTelegramUser, async (req, res) => {
     let user = (req as any).user as UserProfile;
     const settings = await getAppSettings();
     const referrals = await getReferralsByReferrer(user.id);
-    const [counts, withdrawalEligibility] = await Promise.all([
+    const [counts, withdrawalEligibility, consumedHistory] = await Promise.all([
       getCampaignReferralCounts(user.id),
       checkWithdrawalReferralEligibility(user.id),
+      getReferralConsumptionsByUser(user.id),
     ]);
 
     // Ensure user has a valid referral code
@@ -1128,12 +1134,17 @@ apiRouter.get('/referrals/stats', extractTelegramUser, async (req, res) => {
     const botUsername = formatBotUsername(process.env.TELEGRAM_BOT_USERNAME || settings.botUsername || 'WatchVEarnBot');
     const referralLink = `https://t.me/${botUsername}?start=${user.referralCode}`;
 
+    const consumedSet = new Set(counts.consumedValidReferralRecords.map((r) => r.id));
     const enrichedHistory = referrals.map((r) => {
       const cId = getRecordCampaignId(r);
+      const isConsumed = consumedSet.has(r.id) || Boolean(r.consumedByWithdrawalId);
       return {
         ...r,
         referralCampaignId: cId,
         isCurrentCampaign: cId === counts.referralCampaignId,
+        isConsumed,
+        consumedByWithdrawalId: r.consumedByWithdrawalId || null,
+        consumedAt: r.consumedAt || null,
       };
     });
 
@@ -1142,12 +1153,18 @@ apiRouter.get('/referrals/stats', extractTelegramUser, async (req, res) => {
       referralLink,
       referralReward: settings.referralReward,
       referralCampaignId: counts.referralCampaignId,
-      currentCampaignValidReferrals: counts.currentCampaignValidReferrals,
+      withdrawalCycle: withdrawalEligibility.withdrawalCycle,
+      availableValidReferrals: counts.availableValidReferrals,
+      currentCampaignValidReferrals: counts.availableValidReferrals,
+      consumedValidReferrals: counts.consumedValidReferrals,
+      lifetimeConsumedReferrals: counts.lifetimeConsumedReferrals,
+      currentCampaignEarnedValidReferrals: counts.currentCampaignEarnedValidReferrals,
       lifetimeValidReferrals: counts.lifetimeValidReferrals,
       currentCampaignTotalReferrals: counts.currentCampaignTotalReferrals,
       totalReferrals: referrals.length,
       totalEarned: user.referralEarnings,
       withdrawalEligibility,
+      consumedHistory,
       history: enrichedHistory,
     });
   } catch (err: any) {
@@ -1738,9 +1755,19 @@ apiRouter.post('/admin/settings', extractTelegramUser, requireAdmin, async (req,
     delete incoming.referralCampaignId;
     delete incoming.lastReferralResetAt;
 
-    // Validate Withdrawal Referral Requirement settings (single cumulative threshold R)
+    // Validate Withdrawal Referral Requirement settings (independent per-stage FREE / custom rules)
     if (incoming.withdrawalReferralRequirementEnabled !== undefined) {
       incoming.withdrawalReferralRequirementEnabled = Boolean(incoming.withdrawalReferralRequirementEnabled);
+    }
+
+    if (incoming.withdrawalStageRules !== undefined && incoming.withdrawalStageRules !== null) {
+      const stageCheck = validateWithdrawalStagesConfigInput(incoming.withdrawalStageRules);
+      if (!stageCheck.valid || !stageCheck.normalized) {
+        return res.status(400).json({
+          error: stageCheck.error || 'Invalid withdrawal stage referral configuration.',
+        });
+      }
+      incoming.withdrawalStageRules = stageCheck.normalized;
     }
 
     if (
@@ -1755,9 +1782,9 @@ apiRouter.post('/admin/settings', extractTelegramUser, requireAdmin, async (req,
         });
       }
       incoming.withdrawalMinReferralsRequired = minRefs;
-      incoming.withdrawalReferralApplyFromCount = 1;
-    } else if (incoming.withdrawalReferralApplyFromCount !== undefined) {
-      incoming.withdrawalReferralApplyFromCount = 1;
+      if (incoming.withdrawalReferralApplyFromCount === undefined) {
+        incoming.withdrawalReferralApplyFromCount = 1;
+      }
     }
 
     const updated = await updateAppSettings(incoming);
@@ -1806,15 +1833,20 @@ apiRouter.post('/admin/withdrawals/:orderId/action', extractTelegramUser, requir
       return res.json({ success: true, withdrawal: updated });
     }
 
-    if (action === 'reject') {
-      const updated = await updateWithdrawalStatus(orderId, 'rejected', {
-        failureReason: reason || 'Rejected by Administrator. Funds refunded.',
+    if (action === 'reject' || action === 'cancel') {
+      const targetStatus = action === 'cancel' ? 'cancelled' : 'rejected';
+      const updated = await updateWithdrawalStatus(orderId, targetStatus, {
+        failureReason:
+          reason ||
+          (action === 'cancel'
+            ? 'Cancelled by Administrator. Funds refunded.'
+            : 'Rejected by Administrator. Funds refunded.'),
         adminId: admin.id,
       });
       await recordAdminAudit(
         admin.id,
-        'REJECT_WITHDRAWAL',
-        `Rejected payout order ${orderId} for ₹${updated.amount}. Refunded to user ${updated.userId}. Reason: ${reason}`
+        action === 'cancel' ? 'CANCEL_WITHDRAWAL' : 'REJECT_WITHDRAWAL',
+        `${action === 'cancel' ? 'Cancelled' : 'Rejected'} payout order ${orderId} for ₹${updated.amount}. Refunded to user ${updated.userId}. Reason: ${reason}`
       );
       await notifyUserWithdrawalResult(updated, false).catch(() => {});
       releaseLock();
@@ -2341,7 +2373,26 @@ apiRouter.post('/admin/users/:id/adjust-balance', extractTelegramUser, requireAd
   }
 });
 
-// Feature 1: Admin Bulk Balance & Campaign Referral Reset
+// Feature 1: Per-User Full Balance Reset (resets selected user's balance & withdrawal count in new cycle)
+apiRouter.post('/admin/users/:id/reset-balance', extractTelegramUser, requireAdmin, async (req, res) => {
+  try {
+    const admin = (req as any).user as UserProfile;
+    const targetUserId = req.params.id;
+    const { resetReferrals, reason } = req.body || {};
+
+    const result = await atomicResetUserBalance(targetUserId, admin.id, {
+      resetReferrals: Boolean(resetReferrals),
+      reason: typeof reason === 'string' ? reason.trim() : undefined,
+    });
+
+    res.json(result);
+  } catch (err: any) {
+    const status = err.message === 'User not found' ? 404 : 400;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// Feature 1b: Admin Bulk Balance & Campaign Referral Reset
 apiRouter.get('/admin/bulk-balance-reset/preview', extractTelegramUser, requireAdmin, async (req, res) => {
   try {
     const preview = await getBulkBalanceResetPreview();
@@ -2411,14 +2462,18 @@ apiRouter.get('/admin/referrals', extractTelegramUser, requireAdmin, async (req,
       };
     });
 
-    const userCounts = userId ? await getCampaignReferralCounts(userId, activeCampaignId) : undefined;
-    const eligibility = userId ? await checkWithdrawalReferralEligibility(userId) : undefined;
+    const [userCounts, eligibility, consumptions] = await Promise.all([
+      userId ? getCampaignReferralCounts(userId, activeCampaignId) : Promise.resolve(undefined),
+      userId ? checkWithdrawalReferralEligibility(userId) : Promise.resolve(undefined),
+      userId ? getReferralConsumptionsByUser(userId) : getAllReferralConsumptions(),
+    ]);
 
     res.json({
       activeCampaignId,
       totalRecords: records.length,
       userCounts,
       eligibility,
+      consumptions,
       referrals: records,
     });
   } catch (err: any) {

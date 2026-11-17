@@ -57,6 +57,9 @@ import type {
   BulkBalanceResetPreview,
   BroadcastPreview,
   BroadcastTask,
+  WithdrawalStageMode,
+  WithdrawalStageRule,
+  WithdrawalStagesConfig,
 } from '../types/index.ts';
 
 interface AdminViewProps {
@@ -139,8 +142,15 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     activeCampaignId: number;
     userCounts?: any;
     eligibility?: any;
+    consumptions?: any[];
     referrals: any[];
   } | null>(null);
+
+  // Selected User Full Balance Reset Modal State
+  const [resettingSingleUser, setResettingSingleUser] = useState<UserProfile | null>(null);
+  const [singleUserResetReason, setSingleUserResetReason] = useState('');
+  const [singleUserResetRefs, setSingleUserResetRefs] = useState(false);
+  const [singleUserResetLoading, setSingleUserResetLoading] = useState(false);
 
   // Daily Check-In Quick Generator State
   const [quickBase, setQuickBase] = useState('0.25');
@@ -730,14 +740,26 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     }
 
     if (settings.withdrawalReferralRequirementEnabled !== false) {
-      if (
-        settings.withdrawalMinReferralsRequired !== undefined &&
-        (isNaN(settings.withdrawalMinReferralsRequired) ||
-          !Number.isInteger(Number(settings.withdrawalMinReferralsRequired)) ||
-          settings.withdrawalMinReferralsRequired < 1)
-      ) {
-        showNotify('Valid referrals required per withdrawal must be a whole number of at least 1', 'error');
-        return;
+      if (settings.withdrawalStageRules) {
+        const stMap = settings.withdrawalStageRules.stages || {};
+        for (let s = 1; s <= 6; s++) {
+          const rule = stMap[String(s)];
+          if (rule && rule.mode === 'custom') {
+            const n = Number(rule.referralsRequired);
+            if (isNaN(n) || !Number.isInteger(n) || n < 1) {
+              showNotify(`Withdrawal #${s} custom referral requirement must be a whole number of at least 1`, 'error');
+              return;
+            }
+          }
+        }
+        const fw = settings.withdrawalStageRules.furtherWithdrawals;
+        if (fw && fw.mode === 'custom') {
+          const n = Number(fw.referralsRequired);
+          if (isNaN(n) || !Number.isInteger(n) || n < 1) {
+            showNotify('Further Withdrawals custom referral requirement must be a whole number of at least 1', 'error');
+            return;
+          }
+        }
       }
     }
 
@@ -880,11 +902,35 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
         activeCampaignId: res.activeCampaignId,
         userCounts: res.userCounts,
         eligibility: res.eligibility,
+        consumptions: res.consumptions || [],
         referrals: res.referrals || [],
       });
     } catch (err: any) {
       setAuditingUserReferrals(null);
       showNotify(err.message || 'Failed to load user referral history', 'error');
+    }
+  };
+
+  const handleConfirmSingleUserReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resettingSingleUser) return;
+    setSingleUserResetLoading(true);
+    try {
+      const res = await api.resetUserBalance(resettingSingleUser.id, {
+        resetReferrals: singleUserResetRefs,
+        reason: singleUserResetReason.trim() || undefined,
+      });
+      showNotify(
+        `Full Balance Reset complete for ${resettingSingleUser.firstName}! Balance: ₹0.00 • Cycle #${res.newWithdrawalCycle} (0 withdrawals in new cycle, ${res.availableValidReferralsPreserved} available referrals preserved).`
+      );
+      setResettingSingleUser(null);
+      setSingleUserResetReason('');
+      setSingleUserResetRefs(false);
+      loadTabContent();
+    } catch (err: any) {
+      showNotify(err.message || 'User balance reset failed', 'error');
+    } finally {
+      setSingleUserResetLoading(false);
     }
   };
 
@@ -3043,7 +3089,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
                   <button
                     type="button"
                     onClick={() => handleOpenUserReferralAudit(u)}
@@ -3056,6 +3102,18 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                     className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold"
                   >
                     Adjust ₹
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResettingSingleUser(u);
+                      setSingleUserResetReason('');
+                      setSingleUserResetRefs(false);
+                    }}
+                    className="p-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-bold"
+                    title="Full Balance Reset (resets user balance & starts new withdrawal cycle)"
+                  >
+                    Full Reset
                   </button>
                   <button
                     onClick={() => handleToggleBan(u.id)}
@@ -3129,6 +3187,101 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             </div>
           )}
 
+          {/* Selected User Full Balance Reset Modal (Feature 1) */}
+          {resettingSingleUser && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+              <form
+                onSubmit={handleConfirmSingleUserReset}
+                className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-6 space-y-4 shadow-2xl"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0">
+                    <RefreshCw className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900">
+                      Full Balance Reset — {resettingSingleUser.firstName} (@{resettingSingleUser.username || 'none'})
+                    </h4>
+                    <p className="text-[11px] text-slate-500 font-mono">
+                      User ID: {resettingSingleUser.id} • Current Cycle #{resettingSingleUser.withdrawalCycle ?? 1}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs space-y-1.5 text-slate-700">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Current Balance:</span>
+                    <strong className="text-red-600 font-mono">₹{resettingSingleUser.balance.toFixed(2)} → ₹0.00</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Withdrawal Cycle:</span>
+                    <strong className="text-[#0088cc] font-mono">
+                      Cycle #{resettingSingleUser.withdrawalCycle ?? 1} → Cycle #{(resettingSingleUser.withdrawalCycle ?? 1) + 1}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Next Withdrawal Stage:</span>
+                    <strong className="text-emerald-700">1st Withdrawal (New Cycle)</strong>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-600 space-y-1 bg-emerald-50/60 border border-emerald-200/80 p-3 rounded-xl">
+                  <p>
+                    • Resets <strong>only this user&apos;s</strong> balance to ₹0.00 and resets their current cycle withdrawal count to <strong>0</strong>.
+                  </p>
+                  <p>
+                    • Preserves all previous withdrawal history, referral history, and unconsumed available referrals (unless checked below).
+                  </p>
+                  <p>• Other users&apos; balances and withdrawal counts remain 100% untouched.</p>
+                </div>
+
+                <label className="flex items-start gap-2.5 p-2.5 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer text-xs">
+                  <input
+                    type="checkbox"
+                    checked={singleUserResetRefs}
+                    onChange={(e) => setSingleUserResetRefs(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-300 text-amber-600"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-800 block">Also reset this user&apos;s available valid referrals to 0</span>
+                    <span className="text-[10px] text-slate-500">
+                      Leave unchecked to preserve the user&apos;s unconsumed available referrals for the new withdrawal cycle.
+                    </span>
+                  </div>
+                </label>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Audit Note (Optional)</label>
+                  <input
+                    type="text"
+                    value={singleUserResetReason}
+                    onChange={(e) => setSingleUserResetReason(e.target.value)}
+                    placeholder="e.g. New withdrawal cycle requested"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs"
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={singleUserResetLoading}
+                    onClick={() => setResettingSingleUser(null)}
+                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={singleUserResetLoading}
+                    className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-xs"
+                  >
+                    {singleUserResetLoading ? 'Resetting...' : 'Confirm Full Reset'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
           {/* Admin User Referral History & Campaign Audit Modal */}
           {auditingUserReferrals && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
@@ -3136,10 +3289,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h4 className="text-sm font-bold text-slate-900">
-                      Referral History Audit — {auditingUserReferrals.user.firstName} (@{auditingUserReferrals.user.username || 'none'})
+                      Referral & Consumption Audit — {auditingUserReferrals.user.firstName} (@{auditingUserReferrals.user.username || 'none'})
                     </h4>
                     <p className="text-[11px] text-slate-500 font-mono">
-                      User ID: {auditingUserReferrals.user.id} • Active Campaign #{auditingUserReferrals.activeCampaignId}
+                      User ID: {auditingUserReferrals.user.id} • Cycle #{auditingUserReferrals.eligibility?.withdrawalCycle ?? 1} • Campaign #{auditingUserReferrals.activeCampaignId}
                     </p>
                   </div>
                   <button
@@ -3155,28 +3308,64 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   <div className="py-8 text-center text-xs text-slate-500">Loading campaign & historical referrals...</div>
                 ) : (
                   <>
-                    <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="grid grid-cols-4 gap-2 text-center">
                       <div className="p-2.5 bg-sky-50 border border-sky-200 rounded-xl">
-                        <span className="text-[10px] font-bold text-sky-800 uppercase">Current Campaign</span>
+                        <span className="text-[10px] font-bold text-sky-800 uppercase">Available</span>
                         <p className="text-lg font-black text-[#0088cc]">
-                          {auditingUserReferrals.userCounts?.currentCampaignValidReferrals ?? 0}
+                          {auditingUserReferrals.userCounts?.availableValidReferrals ??
+                            auditingUserReferrals.userCounts?.currentCampaignValidReferrals ??
+                            0}
+                        </p>
+                      </div>
+                      <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+                        <span className="text-[10px] font-bold text-amber-800 uppercase">Consumed</span>
+                        <p className="text-lg font-black text-amber-800">
+                          {auditingUserReferrals.userCounts?.consumedValidReferrals ?? 0}
                         </p>
                       </div>
                       <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
-                        <span className="text-[10px] font-bold text-slate-600 uppercase">Lifetime Valid</span>
+                        <span className="text-[10px] font-bold text-slate-600 uppercase">Lifetime</span>
                         <p className="text-lg font-black text-slate-900">
                           {auditingUserReferrals.userCounts?.lifetimeValidReferrals ?? 0}
                         </p>
                       </div>
-                      <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
-                        <span className="text-[10px] font-bold text-amber-800 uppercase">Next Withdrawal</span>
-                        <p className="text-sm font-black text-amber-900 mt-0.5">
+                      <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                        <span className="text-[10px] font-bold text-emerald-800 uppercase">Next Stage</span>
+                        <p className="text-xs font-black text-emerald-900 mt-1">
                           {auditingUserReferrals.eligibility
-                            ? `${auditingUserReferrals.eligibility.currentReferrals}/${auditingUserReferrals.eligibility.requiredReferrals}`
+                            ? auditingUserReferrals.eligibility.stageMode === 'free'
+                              ? `#${auditingUserReferrals.eligibility.nextWithdrawalNumber} FREE`
+                              : auditingUserReferrals.eligibility.stageMode === 'unconfigured'
+                              ? `#${auditingUserReferrals.eligibility.nextWithdrawalNumber} Unset`
+                              : `${auditingUserReferrals.eligibility.availableReferrals}/${auditingUserReferrals.eligibility.requiredReferrals}`
                             : 'N/A'}
                         </p>
                       </div>
                     </div>
+
+                    {Array.isArray(auditingUserReferrals.consumptions) &&
+                      auditingUserReferrals.consumptions.length > 0 && (
+                        <div className="p-3 bg-amber-50/60 border border-amber-200/80 rounded-2xl space-y-1.5">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900 block">
+                            Consumed Referral History ({auditingUserReferrals.consumptions.length} withdrawal event(s))
+                          </span>
+                          <div className="max-h-28 overflow-y-auto space-y-1 text-[11px]">
+                            {auditingUserReferrals.consumptions.map((c: any) => (
+                              <div
+                                key={c.id}
+                                className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-amber-200/70"
+                              >
+                                <span className="font-mono text-slate-700 truncate">
+                                  Cycle #{c.withdrawalCycle} • Stage #{c.withdrawalStage} • {c.withdrawalId}
+                                </span>
+                                <span className="font-bold text-amber-800 shrink-0 ml-2">
+                                  {c.consumedCount} consumed ({c.status})
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                     <div className="overflow-y-auto space-y-2 pr-1 flex-1">
                       {auditingUserReferrals.referrals.length === 0 ? (
@@ -3757,16 +3946,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   </div>
                 </div>
 
-                {/* Cumulative Withdrawal Referral Requirement Section */}
+                {/* Independent Stage-Wise Withdrawal Referral Configuration (Features 2, 3, 4, 6) */}
                 <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-4">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
                         <Users className="w-3.5 h-3.5 text-blue-500" />
-                        Withdrawal Referral Requirement (Cumulative)
+                        Stage-Wise Withdrawal Referral Requirements & Consumption
                       </h4>
                       <p className="text-[11px] text-slate-500">
-                        Cumulative threshold per successful withdrawal in the active campaign: Required = (W + 1) × R
+                        Configure First, Second, Third, Fourth, Fifth, Sixth, and Further Withdrawals independently as FREE or Custom Valid Referrals. Referrals are consumed only upon confirmed successful withdrawal.
                       </p>
                     </div>
                     <span className="px-2 py-0.5 rounded-full bg-sky-50 border border-sky-200 text-[#0088cc] text-[10px] font-bold shrink-0">
@@ -3784,47 +3973,239 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         }
                         className="rounded bg-slate-800 border-slate-200 text-blue-500 focus:ring-blue-500/20"
                       />
-                      <span>Enable Cumulative Withdrawal Referral Requirement</span>
+                      <span>Enable Stage-Wise Withdrawal Referral Requirements</span>
                     </label>
 
                     {settings.withdrawalReferralRequirementEnabled !== false && (() => {
-                      const reqPerWithdrawal = Math.max(1, Math.floor(Number(settings.withdrawalMinReferralsRequired) || 1));
-                      return (
-                        <div className="space-y-3 pl-5 border-l-2 border-blue-500/30 animate-in fade-in duration-200">
-                          <div className="max-w-xs">
-                            <label className="block text-xs font-semibold text-slate-700 mb-1">
-                              Valid Referrals Required Per Withdrawal (R)
-                            </label>
-                            <input
-                              type="number"
-                              min="1"
-                              step="1"
-                              value={settings.withdrawalMinReferralsRequired ?? 1}
-                              onChange={(e) =>
-                                setSettings({
-                                  ...settings,
-                                  withdrawalMinReferralsRequired: Number(e.target.value),
-                                })
-                              }
-                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:border-[#0088cc] text-xs font-semibold"
-                            />
-                            <p className="text-[10px] text-slate-500 mt-1">
-                              Supports any positive whole number (e.g. 2, 3, 4, 5). Counts only genuine, credited, non-duplicate referrals in the current campaign.
-                            </p>
-                          </div>
+                      const fallbackMin = Math.max(
+                        1,
+                        Math.floor(Number(settings.withdrawalMinReferralsRequired) || 1)
+                      );
+                      const fallbackApplyFrom = Math.max(
+                        1,
+                        Math.floor(Number(settings.withdrawalReferralApplyFromCount) || 1)
+                      );
 
-                          <div className="p-3 bg-sky-50/60 border border-sky-200/80 rounded-xl text-[11px] text-slate-700 space-y-1">
-                            <span className="font-bold text-sky-900 block">
-                              Active Cumulative Milestone Schedule (R = {reqPerWithdrawal}):
-                            </span>
-                            <p>
-                              • <strong>1st Withdrawal:</strong> {reqPerWithdrawal} valid referral{reqPerWithdrawal === 1 ? '' : 's'} •{' '}
-                              <strong>2nd Withdrawal:</strong> {reqPerWithdrawal * 2} valid referrals •{' '}
-                              <strong>3rd Withdrawal:</strong> {reqPerWithdrawal * 3} valid referrals
-                            </p>
-                            <p className="text-[10px] text-slate-500">
-                              Only completed withdrawals advance milestones. Rejected, failed, pending, or reversed withdrawals never consume referrals.
-                            </p>
+                      const ensureStageConfig = (): WithdrawalStagesConfig => {
+                        if (settings.withdrawalStageRules && settings.withdrawalStageRules.stages) {
+                          return settings.withdrawalStageRules;
+                        }
+                        const stages: Record<string, WithdrawalStageRule> = {};
+                        for (let s = 1; s <= 6; s++) {
+                          stages[String(s)] =
+                            s < fallbackApplyFrom
+                              ? { stage: s, mode: 'free', referralsRequired: 0 }
+                              : { stage: s, mode: 'custom', referralsRequired: fallbackMin };
+                        }
+                        return {
+                          stages,
+                          furtherWithdrawals: { mode: 'custom', referralsRequired: fallbackMin },
+                        };
+                      };
+
+                      const currentStageConfig = ensureStageConfig();
+                      const stageDefinitions = [
+                        { num: 1, title: 'First Withdrawal' },
+                        { num: 2, title: 'Second Withdrawal' },
+                        { num: 3, title: 'Third Withdrawal' },
+                        { num: 4, title: 'Fourth Withdrawal' },
+                        { num: 5, title: 'Fifth Withdrawal' },
+                        { num: 6, title: 'Sixth Withdrawal' },
+                      ];
+
+                      const updateStageRule = (
+                        stageNum: number,
+                        mode: WithdrawalStageMode,
+                        referralsRequired: number
+                      ) => {
+                        const base = ensureStageConfig();
+                        const nextStages = {
+                          ...base.stages,
+                          [String(stageNum)]: {
+                            stage: stageNum,
+                            mode,
+                            referralsRequired: mode === 'custom' ? Math.max(1, Math.floor(referralsRequired || 1)) : 0,
+                          },
+                        };
+                        setSettings({
+                          ...settings,
+                          withdrawalStageRules: {
+                            ...base,
+                            stages: nextStages,
+                            updatedAt: new Date().toISOString(),
+                          },
+                        });
+                      };
+
+                      const updateFurtherRule = (mode: WithdrawalStageMode, referralsRequired: number) => {
+                        const base = ensureStageConfig();
+                        setSettings({
+                          ...settings,
+                          withdrawalStageRules: {
+                            ...base,
+                            furtherWithdrawals: {
+                              mode,
+                              referralsRequired: mode === 'custom' ? Math.max(1, Math.floor(referralsRequired || 1)) : 0,
+                            },
+                            updatedAt: new Date().toISOString(),
+                          },
+                        });
+                      };
+
+                      const fwRule = currentStageConfig.furtherWithdrawals || {
+                        mode: 'unconfigured' as WithdrawalStageMode,
+                        referralsRequired: 0,
+                      };
+
+                      return (
+                        <div className="space-y-2.5 pl-3 sm:pl-5 border-l-2 border-blue-500/30 animate-in fade-in duration-200">
+                          {stageDefinitions.map(({ num, title }) => {
+                            const rule = currentStageConfig.stages[String(num)] || {
+                              stage: num,
+                              mode: 'unconfigured' as WithdrawalStageMode,
+                              referralsRequired: 0,
+                            };
+                            const isConfigured = rule.mode === 'free' || rule.mode === 'custom';
+                            return (
+                              <div
+                                key={num}
+                                className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span className="w-6 h-6 rounded-lg bg-white border border-slate-200 text-slate-800 font-black text-xs flex items-center justify-center shrink-0">
+                                    #{num}
+                                  </span>
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs font-bold text-slate-900">{title}</span>
+                                      <span
+                                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                          rule.mode === 'free'
+                                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                            : rule.mode === 'custom'
+                                            ? 'bg-sky-100 text-[#0088cc] border border-sky-200'
+                                            : 'bg-amber-100 text-amber-800 border border-amber-200'
+                                        }`}
+                                      >
+                                        {rule.mode === 'free'
+                                          ? 'Configured • FREE'
+                                          : rule.mode === 'custom'
+                                          ? `Configured • ${rule.referralsRequired} Referral(s)`
+                                          : 'Not Configured'}
+                                      </span>
+                                    </div>
+                                    <p className="text-[10px] text-slate-500">
+                                      {isConfigured
+                                        ? rule.mode === 'free'
+                                          ? 'Requires 0 referrals and consumes 0 referrals'
+                                          : `Requires & consumes ${rule.referralsRequired} available valid referral(s) on success`
+                                        : 'Blocked until admin configures FREE or a custom referral number'}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                                  <select
+                                    value={rule.mode}
+                                    onChange={(e) => {
+                                      const nextMode = e.target.value as WithdrawalStageMode;
+                                      updateStageRule(
+                                        num,
+                                        nextMode,
+                                        nextMode === 'custom' ? rule.referralsRequired || 1 : 0
+                                      );
+                                    }}
+                                    className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:border-[#0088cc]"
+                                  >
+                                    <option value="free">FREE (0 Referrals)</option>
+                                    <option value="custom">Custom Referrals</option>
+                                    <option value="unconfigured">Not Configured</option>
+                                  </select>
+
+                                  {rule.mode === 'custom' && (
+                                    <div className="flex items-center gap-1.5">
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        step="1"
+                                        value={rule.referralsRequired || 1}
+                                        onChange={(e) =>
+                                          updateStageRule(num, 'custom', Number(e.target.value))
+                                        }
+                                        className="w-20 px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:border-[#0088cc]"
+                                      />
+                                      <span className="text-[11px] font-semibold text-slate-600">referrals</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {/* Further Withdrawals (7th & Subsequent) */}
+                          <div className="p-3 bg-indigo-50/40 border border-indigo-200/80 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                            <div className="flex items-center gap-2">
+                              <span className="px-1.5 h-6 rounded-lg bg-white border border-indigo-200 text-indigo-800 font-black text-[11px] flex items-center justify-center shrink-0">
+                                7+
+                              </span>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-bold text-slate-900">Further Withdrawals (7th & Beyond)</span>
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                      fwRule.mode === 'free'
+                                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                        : fwRule.mode === 'custom'
+                                        ? 'bg-sky-100 text-[#0088cc] border border-sky-200'
+                                        : 'bg-amber-100 text-amber-800 border border-amber-200'
+                                    }`}
+                                  >
+                                    {fwRule.mode === 'free'
+                                      ? 'Configured • FREE'
+                                      : fwRule.mode === 'custom'
+                                      ? `Configured • ${fwRule.referralsRequired} Referral(s)`
+                                      : 'Not Configured'}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-500">
+                                  Applies to 7th and subsequent withdrawals in the user&apos;s active withdrawal cycle
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                              <select
+                                value={fwRule.mode}
+                                onChange={(e) => {
+                                  const nextMode = e.target.value as WithdrawalStageMode;
+                                  updateFurtherRule(
+                                    nextMode,
+                                    nextMode === 'custom' ? fwRule.referralsRequired || 1 : 0
+                                  );
+                                }}
+                                className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:border-[#0088cc]"
+                              >
+                                <option value="free">FREE (0 Referrals)</option>
+                                <option value="custom">Custom Referrals</option>
+                                <option value="unconfigured">Not Configured</option>
+                              </select>
+
+                              {fwRule.mode === 'custom' && (
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    value={fwRule.referralsRequired || 1}
+                                    onChange={(e) =>
+                                      updateFurtherRule('custom', Number(e.target.value))
+                                    }
+                                    className="w-20 px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:border-[#0088cc]"
+                                  />
+                                  <span className="text-[11px] font-semibold text-slate-600">referrals</span>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
                       );

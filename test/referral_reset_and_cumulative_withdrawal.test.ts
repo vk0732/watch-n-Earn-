@@ -207,54 +207,60 @@ async function runMandatorySuite() {
     // V = 3 -> First withdrawal ALLOWED (Scenario 5)
     const c1ThirdRefIds = await addValidReferrals(u3, 1, 'c1_step_3');
     const eligAt3 = await checkWithdrawalReferralEligibility(u3.id);
-    assert.strictEqual(eligAt3.currentReferrals, 3);
+    assert.strictEqual(eligAt3.availableReferrals, 3);
     assert.strictEqual(eligAt3.requiredReferrals, 3);
     assert.strictEqual(eligAt3.eligible, true);
-    assert.ok(eligAt3.message?.includes('First withdrawal: 3/3 valid referrals'));
+    assert.ok(eligAt3.message?.includes('Available referrals: 3/3 — You can withdraw.'));
 
     const w1Res = await apiRequest(baseUrl, 'POST', '/withdrawals/create', u3InitData, { amount: DENOM });
     assert.strictEqual(w1Res.status, 200, 'First withdrawal succeeds at 3/3 referrals');
     assert.strictEqual(w1Res.data.withdrawal.status, 'success');
     pass('Scenario 5 — R=3: First withdrawal allowed at exactly 3/3 valid referrals');
 
-    // After 1st withdrawal (W=1): V = 3, 4, 5 -> Second withdrawal BLOCKED (Scenario 6)
+    // After 1st withdrawal (W=1, 3 consumed): lifetime = 3, 4, 5 (available = 0, 1, 2) -> Second withdrawal BLOCKED (Scenario 6)
     for (const vExpected of [3, 4, 5]) {
       if (vExpected > 3) {
         await addValidReferrals(u3, 1, `c1_step_${vExpected}`);
       }
+      const availExpected = vExpected - 3;
       const elig = await checkWithdrawalReferralEligibility(u3.id);
       assert.strictEqual(elig.completedWithdrawals, 1);
-      assert.strictEqual(elig.currentReferrals, vExpected);
-      assert.strictEqual(elig.requiredReferrals, 6, 'Second withdrawal must require (1+1)*3 = 6');
-      assert.strictEqual(elig.eligible, false, `Second withdrawal must be locked at ${vExpected}/6`);
-      assert.ok(elig.message?.includes(`Second withdrawal: ${vExpected}/6 valid referrals`));
+      assert.strictEqual(elig.lifetimeValidReferrals, vExpected);
+      assert.strictEqual(elig.consumedReferrals, 3);
+      assert.strictEqual(elig.availableReferrals, availExpected);
+      assert.strictEqual(elig.requiredReferrals, 3, 'Second withdrawal requires 3 available referrals');
+      assert.strictEqual(elig.eligible, false, `Second withdrawal must be locked at ${availExpected}/3 available (${vExpected} lifetime)`);
 
       const blockedRes = await apiRequest(baseUrl, 'POST', '/withdrawals/create', u3InitData, { amount: DENOM });
-      assert.strictEqual(blockedRes.status, 403, `Second withdrawal blocked at ${vExpected}/6`);
+      assert.strictEqual(blockedRes.status, 403, `Second withdrawal blocked at ${availExpected}/3 available`);
     }
-    pass('Scenario 6 — R=3: Second withdrawal blocked at 3/6, 4/6, and 5/6 valid referrals');
+    pass('Scenario 6 — R=3: Second withdrawal blocked at 0/3, 1/3, and 2/3 available referrals (3, 4, 5 lifetime)');
 
-    // V = 6 -> Second withdrawal ALLOWED (Scenario 7)
+    // Lifetime = 6 (available = 3/3) -> Second withdrawal ALLOWED (Scenario 7)
     await addValidReferrals(u3, 1, 'c1_step_6');
     const eligAt6 = await checkWithdrawalReferralEligibility(u3.id);
-    assert.strictEqual(eligAt6.currentReferrals, 6);
-    assert.strictEqual(eligAt6.requiredReferrals, 6);
+    assert.strictEqual(eligAt6.lifetimeValidReferrals, 6);
+    assert.strictEqual(eligAt6.availableReferrals, 3);
+    assert.strictEqual(eligAt6.requiredReferrals, 3);
     assert.strictEqual(eligAt6.eligible, true);
 
     const w2Res = await apiRequest(baseUrl, 'POST', '/withdrawals/create', u3InitData, { amount: DENOM });
-    assert.strictEqual(w2Res.status, 200, 'Second withdrawal succeeds at 6/6 referrals');
-    pass('Scenario 7 — R=3: Second withdrawal allowed at 6/6 valid referrals');
+    assert.strictEqual(w2Res.status, 200, 'Second withdrawal succeeds at 3/3 available (6 lifetime) referrals');
+    pass('Scenario 7 — R=3: Second withdrawal allowed at 3/3 available (6 lifetime) valid referrals');
 
-    // V = 7, 8 -> Third withdrawal BLOCKED; V = 9 -> Third withdrawal ALLOWED (Scenario 8)
+    // Lifetime = 6, 7, 8 (available = 0, 1, 2) -> Third withdrawal BLOCKED; Lifetime = 9 (available = 3) -> Third withdrawal ALLOWED (Scenario 8)
     for (const vExpected of [6, 7, 8]) {
       if (vExpected > 6) {
         await addValidReferrals(u3, 1, `c1_step_${vExpected}`);
       }
+      const availExpected = vExpected - 6;
       const elig = await checkWithdrawalReferralEligibility(u3.id);
       assert.strictEqual(elig.completedWithdrawals, 2);
-      assert.strictEqual(elig.currentReferrals, vExpected);
-      assert.strictEqual(elig.requiredReferrals, 9, 'Third withdrawal must require (2+1)*3 = 9');
-      assert.strictEqual(elig.eligible, false, `Third withdrawal blocked at ${vExpected}/9`);
+      assert.strictEqual(elig.lifetimeValidReferrals, vExpected);
+      assert.strictEqual(elig.consumedReferrals, 6);
+      assert.strictEqual(elig.availableReferrals, availExpected);
+      assert.strictEqual(elig.requiredReferrals, 3, 'Third withdrawal requires 3 available referrals');
+      assert.strictEqual(elig.eligible, false, `Third withdrawal blocked at ${availExpected}/3 available`);
 
       const blockedRes = await apiRequest(baseUrl, 'POST', '/withdrawals/create', u3InitData, { amount: DENOM });
       assert.strictEqual(blockedRes.status, 403);
@@ -262,18 +268,19 @@ async function runMandatorySuite() {
 
     await addValidReferrals(u3, 1, 'c1_step_9');
     const eligAt9 = await checkWithdrawalReferralEligibility(u3.id);
-    assert.strictEqual(eligAt9.currentReferrals, 9);
-    assert.strictEqual(eligAt9.requiredReferrals, 9);
+    assert.strictEqual(eligAt9.lifetimeValidReferrals, 9);
+    assert.strictEqual(eligAt9.availableReferrals, 3);
+    assert.strictEqual(eligAt9.requiredReferrals, 3);
     assert.strictEqual(eligAt9.eligible, true);
 
     const w3Res = await apiRequest(baseUrl, 'POST', '/withdrawals/create', u3InitData, { amount: DENOM });
-    assert.strictEqual(w3Res.status, 200, 'Third withdrawal succeeds at 9/9 referrals');
-    pass('Scenario 8 — R=3: Third withdrawal blocked at 7/9 & 8/9 and allowed at 9/9 valid referrals');
+    assert.strictEqual(w3Res.status, 200, 'Third withdrawal succeeds at 3/3 available (9 lifetime) referrals');
+    pass('Scenario 8 — R=3: Third withdrawal blocked at 1/3 & 2/3 available (7, 8 lifetime) and allowed at 3/3 available (9 lifetime)');
 
     // =========================================================================
-    // 2-REFERRAL EXAMPLE VERIFICATION (R = 2 -> 2, 4, 6)
+    // 2-REFERRAL EXAMPLE VERIFICATION (R = 2 -> 2 per stage, 2, 4, 6 lifetime)
     // =========================================================================
-    console.log('\n--- Additional Verification: Full 2-Referral Cumulative Example (R = 2 -> 2, 4, 6) ---');
+    console.log('\n--- Additional Verification: Full 2-Referral Example (R = 2 -> 2, 4, 6 lifetime) ---');
     const saveR2 = await apiRequest(baseUrl, 'POST', '/admin/settings', adminInitData, {
       withdrawalReferralRequirementEnabled: true,
       withdrawalMinReferralsRequired: 2,
@@ -291,22 +298,22 @@ async function runMandatorySuite() {
     assert.strictEqual((await checkWithdrawalReferralEligibility(u2.id)).requiredReferrals, 2);
     assert.strictEqual((await apiRequest(baseUrl, 'POST', '/withdrawals/create', u2InitData, { amount: DENOM })).status, 200);
 
-    // 2nd requires 4 (blocked at 3, allowed at 4)
+    // 2nd requires 2 available (4 lifetime: blocked at 1/2 available, allowed at 2/2 available)
     await addValidReferrals(u2, 1, 'r2_3');
     assert.strictEqual((await checkWithdrawalReferralEligibility(u2.id)).eligible, false);
-    assert.strictEqual((await checkWithdrawalReferralEligibility(u2.id)).requiredReferrals, 4);
+    assert.strictEqual((await checkWithdrawalReferralEligibility(u2.id)).requiredReferrals, 2);
     await addValidReferrals(u2, 1, 'r2_4');
     assert.strictEqual((await checkWithdrawalReferralEligibility(u2.id)).eligible, true);
     assert.strictEqual((await apiRequest(baseUrl, 'POST', '/withdrawals/create', u2InitData, { amount: DENOM })).status, 200);
 
-    // 3rd requires 6 (blocked at 5, allowed at 6)
+    // 3rd requires 2 available (6 lifetime: blocked at 1/2 available, allowed at 2/2 available)
     await addValidReferrals(u2, 1, 'r2_5');
     assert.strictEqual((await checkWithdrawalReferralEligibility(u2.id)).eligible, false);
-    assert.strictEqual((await checkWithdrawalReferralEligibility(u2.id)).requiredReferrals, 6);
+    assert.strictEqual((await checkWithdrawalReferralEligibility(u2.id)).requiredReferrals, 2);
     await addValidReferrals(u2, 1, 'r2_6');
     assert.strictEqual((await checkWithdrawalReferralEligibility(u2.id)).eligible, true);
     assert.strictEqual((await apiRequest(baseUrl, 'POST', '/withdrawals/create', u2InitData, { amount: DENOM })).status, 200);
-    pass('R=2 Example Verified: 1st at 2/2, 2nd at 4/4 (blocked at 3/4), 3rd at 6/6 (blocked at 5/6)');
+    pass('R=2 Example Verified: 1st at 2/2, 2nd at 2/2 available (4 lifetime), 3rd at 2/2 available (6 lifetime)');
 
     // Restore R = 3
     await apiRequest(baseUrl, 'POST', '/admin/settings', adminInitData, {
@@ -447,8 +454,9 @@ async function runMandatorySuite() {
     assert.strictEqual(wC2Res.status, 200, 'Campaign #2 first withdrawal succeeds at 3/3 new referrals');
     const eligInC2AfterW1 = await checkWithdrawalReferralEligibility(u3.id);
     assert.strictEqual(eligInC2AfterW1.completedWithdrawals, 1);
-    assert.strictEqual(eligInC2AfterW1.requiredReferrals, 6, 'Campaign #2 second withdrawal now requires 6');
-    pass('Scenario 4 — New valid referrals advance Campaign #2 independently (3/3 -> 1st withdrawal, next requires 6)');
+    assert.strictEqual(eligInC2AfterW1.availableReferrals, 0, '3 referrals consumed by Campaign #2 1st withdrawal');
+    assert.strictEqual(eligInC2AfterW1.requiredReferrals, 3, 'Campaign #2 second withdrawal requires 3 available referrals');
+    pass('Scenario 4 — New valid referrals advance Campaign #2 independently (3/3 -> 1st withdrawal, consumes 3)');
 
     // =========================================================================
     // SCENARIO 9: Failed, Rejected, Pending, Processing & Reversed Withdrawals
@@ -620,31 +628,31 @@ async function runMandatorySuite() {
     // SCENARIO 12: Dynamic Admin Referral Requirement Updates + Reset Modes
     // =========================================================================
     console.log('\n--- Scenario 12: Dynamic Admin Threshold Changes (2, 4, 5) & Combined/Balance-Only Reset Modes ---');
-    // User u11 currently has W=1 completed withdrawal and V=3 valid referrals in Campaign #2.
-    // Change R -> 5: required becomes (1 + 1) * 5 = 10
+    // User u11 currently has W=1 completed withdrawal and 0 available (3 consumed) referrals in Campaign #2.
+    // Change R -> 5: Stage 2 required becomes 5
     const setR5 = await apiRequest(baseUrl, 'POST', '/admin/settings', adminInitData, {
       withdrawalMinReferralsRequired: 5,
     });
     assert.strictEqual(setR5.status, 200);
     const eligR5 = await checkWithdrawalReferralEligibility(u11.id);
     assert.strictEqual(eligR5.perWithdrawalRequirement, 5);
-    assert.strictEqual(eligR5.requiredReferrals, 10, 'With W=1 and R=5, required cumulative referrals is 10');
+    assert.strictEqual(eligR5.requiredReferrals, 5, 'With R=5, Stage 2 required referrals is 5');
     assert.strictEqual(eligR5.eligible, false);
 
-    // Change R -> 4: required becomes (1 + 1) * 4 = 8
+    // Change R -> 4: Stage 2 required becomes 4
     await apiRequest(baseUrl, 'POST', '/admin/settings', adminInitData, {
       withdrawalMinReferralsRequired: 4,
     });
     const eligR4 = await checkWithdrawalReferralEligibility(u11.id);
-    assert.strictEqual(eligR4.requiredReferrals, 8, 'With W=1 and R=4, required cumulative referrals is 8');
+    assert.strictEqual(eligR4.requiredReferrals, 4, 'With R=4, Stage 2 required referrals is 4');
 
     // Restore R -> 3
     await apiRequest(baseUrl, 'POST', '/admin/settings', adminInitData, {
       withdrawalMinReferralsRequired: 3,
     });
     const eligR3 = await checkWithdrawalReferralEligibility(u11.id);
-    assert.strictEqual(eligR3.requiredReferrals, 6, 'With W=1 and R=3, required cumulative referrals is 6');
-    pass('Scenario 12a — Admin changes to R (3, 4, 5) immediately update cumulative thresholds consistently');
+    assert.strictEqual(eligR3.requiredReferrals, 3, 'With R=3, Stage 2 required referrals is 3');
+    pass('Scenario 12a — Admin changes to R (3, 4, 5) immediately update stage thresholds consistently');
 
     // =========================================================================
     // SCENARIO 13: Unrelated Data Safety (Balances, Tasks, Check-In, GV Stock, Tx History)

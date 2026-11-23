@@ -543,6 +543,8 @@ export interface BulkBalanceResetResult {
 
 export interface BroadcastPreview {
   recipientCount: number;
+  totalRegisteredUsers?: number;
+  excludedCount?: number;
 }
 
 export interface BroadcastTask {
@@ -550,10 +552,18 @@ export interface BroadcastTask {
   adminId: string;
   message: string;
   parseMode: 'HTML' | 'Markdown' | 'None';
+  totalRegisteredUsers?: number;
   totalRecipients: number;
   sentCount: number;
   failedCount: number;
   blockedCount: number;
+  remainingCount?: number;
+  totalBatches?: number;
+  completedBatches?: number;
+  batchSize?: number;
+  retryCount?: number;
+  rateLimitHits?: number;
+  durationMs?: number;
   status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
   startedAt: string;
   completedAt?: string;

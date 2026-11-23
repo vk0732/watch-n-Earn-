@@ -3602,7 +3602,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             </div>
 
             {/* Recipient Counter & Rate Limit Info */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl">
+                <span className="text-[10px] text-slate-500 uppercase font-semibold">Total Registered Users</span>
+                <p className="text-xl font-black text-slate-900">
+                  {broadcastPreview?.totalRegisteredUsers ?? broadcastPreview?.recipientCount ?? '...'}
+                </p>
+              </div>
               <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl">
                 <span className="text-[10px] text-slate-500 uppercase font-semibold">Valid Telegram Recipients</span>
                 <p className="text-xl font-black text-[#0088cc]">{broadcastPreview?.recipientCount ?? '...'}</p>
@@ -3680,93 +3686,165 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             </div>
           </div>
 
-          {/* Active / Recent Broadcast Task Progress */}
-          {activeBroadcastTask && (
-            <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <h4 className="text-sm font-bold text-slate-900">Broadcast Task Status</h4>
-                  <span
-                    className={`px-2 py-0.5 text-[10px] font-bold rounded-full uppercase ${
-                      activeBroadcastTask.status === 'in_progress' || activeBroadcastTask.status === 'pending'
-                        ? 'bg-amber-100 text-amber-800 animate-pulse'
-                        : activeBroadcastTask.status === 'completed'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : activeBroadcastTask.status === 'cancelled'
-                        ? 'bg-slate-100 text-slate-700'
-                        : 'bg-red-100 text-red-800'
-                    }`}
-                  >
-                    {activeBroadcastTask.status}
-                  </span>
+          {/* Active / Recent Broadcast Task Progress & Final Completion Report */}
+          {activeBroadcastTask && (() => {
+            const processedCount =
+              activeBroadcastTask.sentCount +
+              activeBroadcastTask.failedCount +
+              activeBroadcastTask.blockedCount;
+            const remainingCount =
+              typeof activeBroadcastTask.remainingCount === 'number'
+                ? activeBroadcastTask.remainingCount
+                : Math.max(0, activeBroadcastTask.totalRecipients - processedCount);
+            const totalRegUsers =
+              activeBroadcastTask.totalRegisteredUsers ??
+              broadcastPreview?.totalRegisteredUsers ??
+              activeBroadcastTask.totalRecipients;
+            const progressPct =
+              activeBroadcastTask.totalRecipients > 0
+                ? Math.min(100, Math.round((processedCount / activeBroadcastTask.totalRecipients) * 100))
+                : 0;
+            const deliveryRatePct =
+              activeBroadcastTask.totalRecipients > 0
+                ? ((activeBroadcastTask.sentCount / activeBroadcastTask.totalRecipients) * 100).toFixed(1)
+                : '0.0';
+            const isFinished =
+              activeBroadcastTask.status === 'completed' ||
+              activeBroadcastTask.status === 'cancelled' ||
+              activeBroadcastTask.status === 'failed';
+
+            return (
+              <div className="p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-bold text-slate-900">
+                      {activeBroadcastTask.status === 'completed'
+                        ? 'Final Broadcast Completion Report'
+                        : 'Live Broadcast Progress'}
+                    </h4>
+                    <span
+                      className={`px-2 py-0.5 text-[10px] font-bold rounded-full uppercase ${
+                        activeBroadcastTask.status === 'in_progress' || activeBroadcastTask.status === 'pending'
+                          ? 'bg-amber-100 text-amber-800 animate-pulse'
+                          : activeBroadcastTask.status === 'completed'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : activeBroadcastTask.status === 'cancelled'
+                          ? 'bg-slate-100 text-slate-700'
+                          : 'bg-red-100 text-red-800'
+                      }`}
+                    >
+                      {activeBroadcastTask.status}
+                    </span>
+                  </div>
+
+                  {(activeBroadcastTask.status === 'in_progress' || activeBroadcastTask.status === 'pending') && (
+                    <button
+                      type="button"
+                      onClick={() => handleCancelBroadcast(activeBroadcastTask.id)}
+                      className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg text-xs font-bold transition"
+                    >
+                      Abort Broadcast
+                    </button>
+                  )}
                 </div>
 
-                {(activeBroadcastTask.status === 'in_progress' || activeBroadcastTask.status === 'pending') && (
-                  <button
-                    type="button"
-                    onClick={() => handleCancelBroadcast(activeBroadcastTask.id)}
-                    className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg text-xs font-bold transition"
-                  >
-                    Abort Broadcast
-                  </button>
+                {/* Progress Bar */}
+                {activeBroadcastTask.totalRecipients > 0 && (
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-xs text-slate-500 font-semibold">
+                      <span>
+                        Processed: {processedCount} / {activeBroadcastTask.totalRecipients}
+                        {activeBroadcastTask.totalBatches
+                          ? ` • Batch ${activeBroadcastTask.completedBatches ?? 0}/${activeBroadcastTask.totalBatches}`
+                          : ''}
+                      </span>
+                      <span>{progressPct}%</span>
+                    </div>
+                    <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-500 transition-all duration-300"
+                        style={{ width: `${progressPct}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* 5 Required Live Statistics */}
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1 text-center">
+                  <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-100">
+                    <span className="text-[10px] text-slate-500 font-semibold block">Total Registered Users</span>
+                    <p className="text-sm font-black text-slate-900">{totalRegUsers}</p>
+                  </div>
+                  <div className="p-2.5 bg-emerald-50 rounded-xl border border-emerald-100">
+                    <span className="text-[10px] text-emerald-700 font-semibold block">Total Messages Sent</span>
+                    <p className="text-sm font-black text-emerald-700">{activeBroadcastTask.sentCount}</p>
+                  </div>
+                  <div className="p-2.5 bg-red-50 rounded-xl border border-red-100">
+                    <span className="text-[10px] text-red-600 font-semibold block">Failed Messages</span>
+                    <p className="text-sm font-black text-red-700">{activeBroadcastTask.failedCount}</p>
+                  </div>
+                  <div className="p-2.5 bg-amber-50 rounded-xl border border-amber-100">
+                    <span className="text-[10px] text-amber-700 font-semibold block">Blocked Users</span>
+                    <p className="text-sm font-black text-amber-700">{activeBroadcastTask.blockedCount}</p>
+                  </div>
+                  <div className="p-2.5 bg-sky-50 rounded-xl border border-sky-100 col-span-2 sm:col-span-1">
+                    <span className="text-[10px] text-sky-700 font-semibold block">Remaining Recipients</span>
+                    <p className="text-sm font-black text-sky-700">{remainingCount}</p>
+                  </div>
+                </div>
+
+                {/* Final Broadcast Completion Report */}
+                {isFinished && (
+                  <div className="p-3.5 bg-emerald-50/60 border border-emerald-200/80 rounded-xl space-y-2 text-xs">
+                    <div className="flex items-center justify-between border-b border-emerald-200/60 pb-2">
+                      <span className="font-bold text-emerald-950">
+                        ✅ Broadcast Completion Summary ({activeBroadcastTask.id})
+                      </span>
+                      <span className="font-bold text-emerald-700">
+                        Delivery Rate: {deliveryRatePct}%
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-slate-700">
+                      <div>
+                        <span className="text-slate-500 block">Format</span>
+                        <span className="font-bold text-slate-900">
+                          {activeBroadcastTask.parseMode === 'None' ? 'Plain Text' : activeBroadcastTask.parseMode}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block">Targeted / Registered</span>
+                        <span className="font-bold text-slate-900">
+                          {activeBroadcastTask.totalRecipients} / {totalRegUsers}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block">Batches & Retries</span>
+                        <span className="font-bold text-slate-900">
+                          {activeBroadcastTask.completedBatches ?? activeBroadcastTask.totalBatches ?? 1} batches •{' '}
+                          {activeBroadcastTask.retryCount ?? 0} retries (429s: {activeBroadcastTask.rateLimitHits ?? 0})
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block">Duration</span>
+                        <span className="font-bold text-slate-900">
+                          {typeof activeBroadcastTask.durationMs === 'number'
+                            ? `${(activeBroadcastTask.durationMs / 1000).toFixed(1)}s`
+                            : activeBroadcastTask.completedAt
+                            ? `${Math.max(
+                                0,
+                                (new Date(activeBroadcastTask.completedAt).getTime() -
+                                  new Date(activeBroadcastTask.startedAt).getTime()) /
+                                  1000
+                              ).toFixed(1)}s`
+                            : 'Complete'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 )}
               </div>
-
-              {/* Progress Bar */}
-              {activeBroadcastTask.totalRecipients > 0 && (
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs text-slate-500 font-semibold">
-                    <span>
-                      Progress: {activeBroadcastTask.sentCount + activeBroadcastTask.failedCount + activeBroadcastTask.blockedCount} / {activeBroadcastTask.totalRecipients}
-                    </span>
-                    <span>
-                      {Math.round(
-                        ((activeBroadcastTask.sentCount + activeBroadcastTask.failedCount + activeBroadcastTask.blockedCount) /
-                          activeBroadcastTask.totalRecipients) *
-                          100
-                      )}
-                      %
-                    </span>
-                  </div>
-                  <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-emerald-500 transition-all duration-300"
-                      style={{
-                        width: `${Math.min(
-                          100,
-                          Math.round(
-                            ((activeBroadcastTask.sentCount + activeBroadcastTask.failedCount + activeBroadcastTask.blockedCount) /
-                              activeBroadcastTask.totalRecipients) *
-                              100
-                          )
-                        )}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Metric stats */}
-              <div className="grid grid-cols-4 gap-2 pt-1 text-center">
-                <div className="p-2 bg-slate-50 rounded-lg border border-slate-100">
-                  <span className="text-[10px] text-slate-400 font-semibold">Total</span>
-                  <p className="text-sm font-bold text-slate-900">{activeBroadcastTask.totalRecipients}</p>
-                </div>
-                <div className="p-2 bg-emerald-50 rounded-lg border border-emerald-100">
-                  <span className="text-[10px] text-emerald-600 font-semibold">Sent</span>
-                  <p className="text-sm font-bold text-emerald-700">{activeBroadcastTask.sentCount}</p>
-                </div>
-                <div className="p-2 bg-amber-50 rounded-lg border border-amber-100">
-                  <span className="text-[10px] text-amber-600 font-semibold">Blocked</span>
-                  <p className="text-sm font-bold text-amber-700">{activeBroadcastTask.blockedCount}</p>
-                </div>
-                <div className="p-2 bg-red-50 rounded-lg border border-red-100">
-                  <span className="text-[10px] text-red-600 font-semibold">Failed</span>
-                  <p className="text-sm font-bold text-red-700">{activeBroadcastTask.failedCount}</p>
-                </div>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Broadcast Confirmation Modal */}
           {showBroadcastConfirmModal && (

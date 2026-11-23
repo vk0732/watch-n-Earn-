@@ -236,7 +236,9 @@ export interface GiftCardInventoryStats {
   redeemedCodes: number;
   invalidatedCodes: number;
   availableByDenomination: Record<number, number>;
+  redeemedByDenomination?: Record<number, number>;
   totalAvailableValue: number;
+  totalRedeemedValue?: number;
 }
 
 export interface ForceJoinChannel {
@@ -428,6 +430,8 @@ export interface DashboardStats {
   successfulPayoutsCount: number;
   successfulPayoutsAmount: number;
   failedPayoutsCount: number;
+  lifetimeGvCodesDistributed?: number;
+  lifetimeGvAmountDistributed?: number;
   duplicateDevicesBlocked: number;
   totalTaskBots: number;
 }

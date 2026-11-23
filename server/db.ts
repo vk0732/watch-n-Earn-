@@ -2176,12 +2176,46 @@ let consumptionsPersistDebounceTimer: NodeJS.Timeout | null = null;
 
 function isTestArtifactId(id?: string | null): boolean {
   if (!id) return false;
+  const s = String(id).trim();
   return (
-    id.startsWith('mock_') ||
-    id.startsWith('reset_user_') ||
-    id.startsWith('persist_user_') ||
-    id.startsWith('test_') ||
-    id.startsWith('usr_ref_test_')
+    s.startsWith('mock_') ||
+    s.startsWith('reset_user_') ||
+    s.startsWith('persist_user_') ||
+    s.startsWith('test_') ||
+    s.startsWith('usr_ref_test_') ||
+    s.startsWith('wth_user_') ||
+    s.startsWith('conc_user_') ||
+    s.startsWith('mand_user_') ||
+    s.startsWith('user_10_17926139') ||
+    s.startsWith('bcast_test_') ||
+    s.startsWith('stats_test_')
+  );
+}
+
+function isSyntheticTestCode(code?: string | null): boolean {
+  if (!code) return false;
+  const norm = String(code).trim().toUpperCase();
+  return (
+    norm.startsWith('AMZN-TEST-') ||
+    norm.startsWith('TEST-AMZ') ||
+    norm.startsWith('AMZN-MAND-') ||
+    norm.startsWith('TEST-CODE-') ||
+    norm.startsWith('TEST-CONC-') ||
+    norm.startsWith('TEST-IDEM-') ||
+    norm.startsWith('TEST-STALE-') ||
+    norm.startsWith('STATS-TEST-')
+  );
+}
+
+function isSyntheticTestRecord(params: {
+  userId?: string | null;
+  code?: string | null;
+  id?: string | null;
+}): boolean {
+  return (
+    isTestArtifactId(params.userId) ||
+    isTestArtifactId(params.id) ||
+    isSyntheticTestCode(params.code)
   );
 }
 
@@ -2254,7 +2288,7 @@ export function persistWithdrawalsRegistry(immediate = false): void {
         fs.mkdirSync(dataDir, { recursive: true });
       }
       const list = Array.from(memStore.withdrawals.values()).filter(
-        (w) => !isTestArtifactId(w.userId) && !isTestArtifactId(w.id)
+        (w) => !isSyntheticTestRecord({ userId: w.userId, code: w.giftCardCode, id: w.id })
       );
       fs.writeFileSync(WITHDRAWALS_AUTHORITATIVE_PATH, JSON.stringify(list, null, 2), { mode: 0o600 });
     } catch (err) {
@@ -2275,15 +2309,96 @@ export function persistWithdrawalsRegistry(immediate = false): void {
 }
 
 export function reconcileWithdrawalsRegistry(): number {
+  const isProdMode = process.env.NODE_ENV !== 'test';
   try {
+    // 1. Load from authoritative_withdrawals.json
     if (fs.existsSync(WITHDRAWALS_AUTHORITATIVE_PATH)) {
       const raw = fs.readFileSync(WITHDRAWALS_AUTHORITATIVE_PATH, 'utf-8');
       const list = JSON.parse(raw);
       if (Array.isArray(list)) {
         for (const w of list) {
-          if (w && w.id && !memStore.withdrawals.has(w.id)) {
+          if (!w || !w.id) continue;
+          if (isProdMode && isSyntheticTestRecord({ userId: w.userId, code: w.giftCardCode, id: w.id })) {
+            continue;
+          }
+          if (!memStore.withdrawals.has(w.id)) {
             memStore.withdrawals.set(w.id, w);
           }
+        }
+      }
+    }
+
+    // 2. Reconcile legacy withdrawals from authoritative_store.json without duplicating any orderId
+    if (fs.existsSync(GV_AUTHORITATIVE_STORE_PATH)) {
+      const rawStore = fs.readFileSync(GV_AUTHORITATIVE_STORE_PATH, 'utf-8');
+      const store = JSON.parse(rawStore);
+      if (store && Array.isArray(store.withdrawals)) {
+        for (const w of store.withdrawals) {
+          if (!w || !w.id) continue;
+          if (isProdMode && isSyntheticTestRecord({ userId: w.userId, code: w.giftCardCode, id: w.id })) {
+            continue;
+          }
+          if (!memStore.withdrawals.has(w.id)) {
+            memStore.withdrawals.set(w.id, w);
+          }
+        }
+      }
+    }
+
+    // 3. Reconcile historical completed redemptions from gv_authoritative_registry.json (e.g. Oct 23-28 quota-fallback orders)
+    if (fs.existsSync(GV_LOCAL_REGISTRY_PATH)) {
+      const rawReg = fs.readFileSync(GV_LOCAL_REGISTRY_PATH, 'utf-8');
+      const reg = JSON.parse(rawReg);
+      if (reg && Array.isArray(reg.assignments)) {
+        const codeDenomMap = new Map<string, { id: string; denomination: number }>();
+        for (const gc of memStore.giftCardCodes.values()) {
+          const norm = (gc.code || '').trim().toUpperCase();
+          if (norm) {
+            codeDenomMap.set(norm, { id: gc.id, denomination: Number(gc.denomination) > 0 ? Number(gc.denomination) : 10 });
+          }
+        }
+
+        for (const asgn of reg.assignments) {
+          if (!asgn || !asgn.orderId || !asgn.code) continue;
+          if (isProdMode && isSyntheticTestRecord({ userId: asgn.userId, code: asgn.code, id: asgn.orderId })) {
+            continue;
+          }
+          if (!memStore.withdrawals.has(asgn.orderId)) {
+            const normCode = String(asgn.code).trim().toUpperCase();
+            const matchedGc = codeDenomMap.get(normCode);
+            const denom = matchedGc?.denomination || 10;
+            const userIdStr = String(asgn.userId || '');
+            const uProf = memStore.users.get(userIdStr);
+            const numTgId = Number(uProf?.telegramId || userIdStr.replace(/^user_/, '')) || 0;
+            const assignedAt = asgn.assignedAt || new Date().toISOString();
+
+            memStore.withdrawals.set(asgn.orderId, {
+              id: asgn.orderId,
+              userId: userIdStr,
+              userTelegramId: numTgId,
+              username: uProf?.username || '',
+              amount: denom,
+              status: 'success',
+              payoutMode: 'gift_card',
+              giftCardCode: normCode,
+              giftCardDenomination: denom,
+              giftCardId: matchedGc?.id,
+              giftCardRedeemedAt: assignedAt,
+              referralCampaignId: 1,
+              withdrawalCycle: 1,
+              createdAt: assignedAt,
+              processedAt: assignedAt,
+            });
+          }
+        }
+      }
+    }
+
+    // 4. In production mode, ensure no synthetic test-runner records remain in memStore.withdrawals
+    if (isProdMode) {
+      for (const [wid, w] of memStore.withdrawals.entries()) {
+        if (isSyntheticTestRecord({ userId: w.userId, code: w.giftCardCode, id: wid })) {
+          memStore.withdrawals.delete(wid);
         }
       }
     }
@@ -3411,29 +3526,52 @@ export function persistGVRegistry(): void {
  * Enforces ONE CODE = ONE USER, PERMANENTLY.
  */
 export function reconcileGVRegistry(): void {
-  // 1. Seed from authoritative local store file if memStore is empty (e.g. on server reboot / Firestore quota limit)
+  const isProdMode = process.env.NODE_ENV !== 'test';
+
+  // 1. Seed from authoritative local store file (merge missing codes, withdrawals, users without overwriting newer in-memory items)
   try {
     const dataDir = path.join(process.cwd(), 'data');
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    if (memStore.giftCardCodes.size === 0 && fs.existsSync(GV_AUTHORITATIVE_STORE_PATH)) {
+    if (fs.existsSync(GV_AUTHORITATIVE_STORE_PATH)) {
       const raw = fs.readFileSync(GV_AUTHORITATIVE_STORE_PATH, 'utf-8');
       const store = JSON.parse(raw);
       if (Array.isArray(store.giftCardCodes)) {
         for (const gc of store.giftCardCodes) {
-          memStore.giftCardCodes.set(gc.id, gc);
+          if (!gc || !gc.id) continue;
+          if (
+            isProdMode &&
+            isSyntheticTestRecord({
+              userId: gc.assignedUserId,
+              code: gc.code,
+              id: gc.assignedWithdrawalId,
+            })
+          ) {
+            continue;
+          }
+          if (!memStore.giftCardCodes.has(gc.id)) {
+            memStore.giftCardCodes.set(gc.id, gc);
+          }
         }
       }
       if (Array.isArray(store.withdrawals)) {
         for (const w of store.withdrawals) {
-          memStore.withdrawals.set(w.id, w);
+          if (!w || !w.id) continue;
+          if (isProdMode && isSyntheticTestRecord({ userId: w.userId, code: w.giftCardCode, id: w.id })) {
+            continue;
+          }
+          if (!memStore.withdrawals.has(w.id)) {
+            memStore.withdrawals.set(w.id, w);
+          }
         }
       }
-      if (Array.isArray(store.users)) {
+      if (memStore.users.size === 0 && Array.isArray(store.users)) {
         for (const u of store.users) {
-          memStore.users.set(u.id, u);
+          if (u && u.id && !memStore.users.has(u.id)) {
+            memStore.users.set(u.id, u);
+          }
         }
       }
     }
@@ -3449,7 +3587,9 @@ export function reconcileGVRegistry(): void {
       if (Array.isArray(reg.assignedCodes)) {
         for (const c of reg.assignedCodes) {
           if (c && typeof c === 'string') {
-            memStore.assignedGVCodes.add(c.trim().toUpperCase());
+            const norm = c.trim().toUpperCase();
+            if (isProdMode && isSyntheticTestCode(norm)) continue;
+            memStore.assignedGVCodes.add(norm);
           }
         }
       }
@@ -3457,6 +3597,9 @@ export function reconcileGVRegistry(): void {
         for (const asgn of reg.assignments) {
           if (asgn && asgn.code) {
             const norm = asgn.code.trim().toUpperCase();
+            if (isProdMode && isSyntheticTestRecord({ userId: asgn.userId, code: norm, id: asgn.orderId })) {
+              continue;
+            }
             memStore.assignedGVCodes.add(norm);
             memStore.gvAssignmentRecords.set(norm, asgn);
           }
@@ -3467,8 +3610,16 @@ export function reconcileGVRegistry(): void {
     console.warn('[DB] reconcileGVRegistry journal load warning:', err);
   }
 
+  // Ensure all historical withdrawals from authoritative_withdrawals.json and gv_authoritative_registry.json are reconciled
+  if (isProdMode) {
+    reconcileWithdrawalsRegistry();
+  }
+
   // 3. Scan all successful withdrawals and register assigned codes
   for (const w of memStore.withdrawals.values()) {
+    if (isProdMode && isSyntheticTestRecord({ userId: w.userId, code: w.giftCardCode, id: w.id })) {
+      continue;
+    }
     if (w.status === 'success' && w.giftCardCode) {
       const norm = w.giftCardCode.trim().toUpperCase();
       memStore.assignedGVCodes.add(norm);
@@ -3480,6 +3631,74 @@ export function reconcileGVRegistry(): void {
           assignedAt: w.createdAt,
         });
       }
+    }
+  }
+
+  // 3b. In production mode, purge any synthetic test codes/assignments from memory maps
+  if (isProdMode) {
+    for (const [gcId, gc] of memStore.giftCardCodes.entries()) {
+      if (isSyntheticTestRecord({ userId: gc.assignedUserId, code: gc.code, id: gc.assignedWithdrawalId })) {
+        memStore.giftCardCodes.delete(gcId);
+      }
+    }
+    for (const [normCode, asgn] of memStore.gvAssignmentRecords.entries()) {
+      if (isSyntheticTestRecord({ userId: asgn.userId, code: normCode, id: asgn.orderId })) {
+        memStore.gvAssignmentRecords.delete(normCode);
+        memStore.assignedGVCodes.delete(normCode);
+      }
+    }
+    for (const normCode of Array.from(memStore.assignedGVCodes)) {
+      if (isSyntheticTestCode(normCode)) {
+        memStore.assignedGVCodes.delete(normCode);
+      }
+    }
+  }
+
+  // 3c. Reconstruct GiftCardCode records for any historical redeemed codes present in gvAssignmentRecords or successful withdrawals
+  // that were not in the Oct 23 authoritative_store.json snapshot so lifetime GV statistics are 100% complete.
+  const existingCodeByNorm = new Map<string, GiftCardCode>();
+  for (const gc of memStore.giftCardCodes.values()) {
+    const norm = (gc.code || '').trim().toUpperCase();
+    if (norm && gc.status !== 'invalidated') {
+      existingCodeByNorm.set(norm, gc);
+    }
+  }
+
+  for (const [normCode, asgn] of memStore.gvAssignmentRecords.entries()) {
+    if (!normCode) continue;
+    if (isProdMode && isSyntheticTestRecord({ userId: asgn.userId, code: normCode, id: asgn.orderId })) {
+      continue;
+    }
+    if (!existingCodeByNorm.has(normCode)) {
+      const linkedW = asgn.orderId ? memStore.withdrawals.get(asgn.orderId) : undefined;
+      // Only count as a redeemed voucher if linked withdrawal is confirmed 'success' (or came from a confirmed assignment record)
+      if (linkedW && linkedW.status !== 'success') {
+        continue;
+      }
+      const denom =
+        Number(linkedW?.giftCardDenomination) > 0
+          ? Number(linkedW!.giftCardDenomination)
+          : Number(linkedW?.amount) > 0
+          ? Number(linkedW!.amount)
+          : 10;
+      const syntheticId = linkedW?.giftCardId || `gc_hist_${normCode}`;
+      const assignedAt = asgn.assignedAt || linkedW?.giftCardRedeemedAt || linkedW?.createdAt || new Date().toISOString();
+      const userIdStr = String(asgn.userId || linkedW?.userId || '');
+      const numTgId = linkedW?.userTelegramId || Number(userIdStr.replace(/^user_/, '')) || null;
+      const reconstructed: GiftCardCode = {
+        id: syntheticId,
+        code: normCode,
+        denomination: denom,
+        status: 'redeemed',
+        assignedUserId: userIdStr || null,
+        assignedTelegramId: numTgId,
+        assignedUsername: linkedW?.username || null,
+        assignedWithdrawalId: asgn.orderId || linkedW?.id || null,
+        redeemedAt: assignedAt,
+        createdAt: assignedAt,
+      };
+      memStore.giftCardCodes.set(reconstructed.id, reconstructed);
+      existingCodeByNorm.set(normCode, reconstructed);
     }
   }
 
@@ -3557,37 +3776,61 @@ export async function getAllGiftCardCodes(filter?: {
   status?: 'available' | 'redeemed' | 'invalidated';
   denomination?: number;
 }): Promise<GiftCardCode[]> {
-  try {
-    const snap = await getDocs(collection(db, getColName('gift_card_codes')));
-    if (!snap.empty) {
-      snap.forEach((d) => {
-        const item = d.data() as GiftCardCode;
-        const id = item.id || d.id;
-        const normCode = (item.code || '').trim().toUpperCase();
+  const isProdMode = process.env.NODE_ENV !== 'test';
+  if (isFirestoreAvailable()) {
+    try {
+      const snap = await getDocs(collection(db, getColName('gift_card_codes')));
+      if (!snap.empty) {
+        snap.forEach((d) => {
+          const item = d.data() as GiftCardCode;
+          const id = item.id || d.id;
+          const normCode = (item.code || '').trim().toUpperCase();
 
-        // Stale overwrite guard: If code was already assigned in this deployment or historical withdrawals, NEVER revert to 'available'!
-        if (normCode && memStore.assignedGVCodes.has(normCode)) {
-          item.status = 'redeemed';
-        }
-        const existing = memStore.giftCardCodes.get(id);
-        if (existing && existing.status === 'redeemed' && item.status === 'available') {
-          item.status = 'redeemed';
-          item.assignedUserId = existing.assignedUserId;
-          item.assignedWithdrawalId = existing.assignedWithdrawalId;
-          item.redeemedAt = existing.redeemedAt;
-        }
+          if (
+            isProdMode &&
+            isSyntheticTestRecord({
+              userId: item.assignedUserId,
+              code: normCode,
+              id: item.assignedWithdrawalId,
+            })
+          ) {
+            return;
+          }
 
-        memStore.giftCardCodes.set(id, { ...item, id });
-      });
+          // Stale overwrite guard: If code was already assigned in this deployment or historical withdrawals, NEVER revert to 'available'!
+          if (normCode && memStore.assignedGVCodes.has(normCode)) {
+            item.status = 'redeemed';
+          }
+          const existing = memStore.giftCardCodes.get(id);
+          if (existing && existing.status === 'redeemed' && item.status === 'available') {
+            item.status = 'redeemed';
+            item.assignedUserId = existing.assignedUserId;
+            item.assignedWithdrawalId = existing.assignedWithdrawalId;
+            item.redeemedAt = existing.redeemedAt;
+          }
+
+          memStore.giftCardCodes.set(id, { ...item, id });
+        });
+      }
+    } catch (err) {
+      reportFirestoreError(err);
     }
-  } catch (err) {
-    // Keep memStore
   }
 
   // Cross-reconcile with historical redemptions
   reconcileGVRegistry();
 
   let list = Array.from(memStore.giftCardCodes.values());
+  if (isProdMode) {
+    list = list.filter(
+      (c) =>
+        !isSyntheticTestRecord({
+          userId: c.assignedUserId,
+          code: c.code,
+          id: c.assignedWithdrawalId,
+        })
+    );
+  }
   if (filter?.status) {
     list = list.filter((c) => c.status === filter.status);
   }
@@ -3598,39 +3841,96 @@ export async function getAllGiftCardCodes(filter?: {
 }
 
 /**
- * Calculate inventory stats for Admin Panel
+ * Calculate inventory and lifetime GV distribution stats for Admin Panel.
+ * - Counts only successfully delivered/redeemed gift vouchers (deduplicated by code).
+ * - Excludes unused ('available') inventory, 'invalidated' codes, and pending/failed/cancelled transactions.
+ * - Uses integer-paisa decimal math for rupee totals.
  */
 export async function getGiftCardInventoryStats(): Promise<GiftCardInventoryStats> {
+  const isProdMode = process.env.NODE_ENV !== 'test';
   const allCodes = await getAllGiftCardCodes();
-  // Filter available ensuring truly unused
-  const available = allCodes.filter((c) => {
-    if (c.status !== 'available') return false;
+
+  const invalidated: GiftCardCode[] = [];
+  const redeemedByNormCode = new Map<string, GiftCardCode>();
+  const availableByNormCode = new Map<string, GiftCardCode>();
+
+  for (const c of allCodes) {
+    if (!c) continue;
+    if (
+      isProdMode &&
+      isSyntheticTestRecord({
+        userId: c.assignedUserId,
+        code: c.code,
+        id: c.assignedWithdrawalId,
+      })
+    ) {
+      continue;
+    }
+
+    if (c.status === 'invalidated') {
+      invalidated.push(c);
+      continue;
+    }
+
     const norm = (c.code || '').trim().toUpperCase();
-    return !memStore.assignedGVCodes.has(norm);
-  });
-  const redeemed = allCodes.filter((c) => {
-    if (c.status === 'redeemed') return true;
-    const norm = (c.code || '').trim().toUpperCase();
-    return memStore.assignedGVCodes.has(norm);
-  });
-  const invalidated = allCodes.filter((c) => c.status === 'invalidated');
+    if (!norm) continue;
+
+    // Verify if this code is genuinely redeemed/delivered (not linked exclusively to a failed/rejected/cancelled/pending withdrawal)
+    const linkedW = c.assignedWithdrawalId ? memStore.withdrawals.get(c.assignedWithdrawalId) : undefined;
+    const isLinkedToNonSuccess =
+      linkedW &&
+      linkedW.status !== 'success' &&
+      !isCodeAssignedInAnyWithdrawal(norm);
+
+    const isRedeemed =
+      !isLinkedToNonSuccess &&
+      (c.status === 'redeemed' ||
+        memStore.gvAssignmentRecords.has(norm) ||
+        isCodeAssignedInAnyWithdrawal(norm));
+
+    if (isRedeemed) {
+      if (!redeemedByNormCode.has(norm)) {
+        redeemedByNormCode.set(norm, c);
+      }
+      // If it was previously placed in availableByNormCode, remove it
+      availableByNormCode.delete(norm);
+    } else if (c.status === 'available' && !memStore.assignedGVCodes.has(norm) && !redeemedByNormCode.has(norm)) {
+      if (!availableByNormCode.has(norm)) {
+        availableByNormCode.set(norm, c);
+      }
+    }
+  }
+
+  const available = Array.from(availableByNormCode.values());
+  const redeemed = Array.from(redeemedByNormCode.values());
 
   const availableByDenomination: Record<number, number> = {};
-  let totalAvailableValue = 0;
+  let totalAvailablePaisa = 0;
 
   for (const c of available) {
-    const denom = c.denomination || 10;
+    const denom = Number(c.denomination) > 0 ? Number(c.denomination) : 10;
     availableByDenomination[denom] = (availableByDenomination[denom] || 0) + 1;
-    totalAvailableValue += denom;
+    totalAvailablePaisa += Math.round(denom * 100);
+  }
+
+  const redeemedByDenomination: Record<number, number> = {};
+  let totalRedeemedPaisa = 0;
+
+  for (const c of redeemed) {
+    const denom = Number(c.denomination) > 0 ? Number(c.denomination) : 10;
+    redeemedByDenomination[denom] = (redeemedByDenomination[denom] || 0) + 1;
+    totalRedeemedPaisa += Math.round(denom * 100);
   }
 
   return {
-    totalCodes: allCodes.length,
+    totalCodes: available.length + redeemed.length + invalidated.length,
     availableCodes: available.length,
     redeemedCodes: redeemed.length,
     invalidatedCodes: invalidated.length,
     availableByDenomination,
-    totalAvailableValue,
+    redeemedByDenomination,
+    totalAvailableValue: Math.round(totalAvailablePaisa) / 100,
+    totalRedeemedValue: Math.round(totalRedeemedPaisa) / 100,
   };
 }
 
@@ -4469,11 +4769,16 @@ export async function getAdminAuditLogs(limit = 50): Promise<AdminAuditLog[]> {
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
-  // Ensure authoritative registries are loaded
+  const isProdMode = process.env.NODE_ENV !== 'test';
+
+  // Ensure complete authoritative registries are loaded and reconciled across all historical stores
   if (memStore.users.size === 0) {
     reconcileUsersRegistry();
   }
-  if (memStore.giftCardCodes.size === 0) {
+  if (isProdMode) {
+    reconcileWithdrawalsRegistry();
+    reconcileGVRegistry();
+  } else if (memStore.giftCardCodes.size === 0) {
     reconcileGVRegistry();
   }
 
@@ -4482,7 +4787,11 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       const snap = await getDocs(collection(db, getColName('withdrawals')));
       snap.forEach((d) => {
         const w = d.data() as Withdrawal;
-        memStore.withdrawals.set(w.id || d.id, { ...w, id: w.id || d.id });
+        const wid = w.id || d.id;
+        if (isProdMode && isSyntheticTestRecord({ userId: w.userId, code: w.giftCardCode, id: wid })) {
+          return;
+        }
+        memStore.withdrawals.set(wid, { ...w, id: wid });
       });
     }
     if (isFirestoreAvailable() && memStore.transactions.size < 50) {
@@ -4502,25 +4811,56 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const today = new Date().toISOString().split('T')[0];
   const activeToday = users.filter((u) => u.lastDailyCheckIn === today || (u.updatedAt && u.updatedAt.startsWith(today))).length;
 
-  const totalRewards = Array.from(memStore.transactions.values())
+  const totalRewardsPaisa = Array.from(memStore.transactions.values())
     .filter((t) => t.amount > 0)
-    .reduce((sum, t) => sum + t.amount, 0);
+    .reduce((sum, t) => sum + Math.round((Number(t.amount) || 0) * 100), 0);
 
-  const withdrawals = Array.from(memStore.withdrawals.values());
-  const pending = withdrawals.filter((w) => w.status === 'pending');
+  // Deduplicate historical withdrawals strictly by unique transaction ID (w.id)
+  const uniqueWithdrawalsById = new Map<string, Withdrawal>();
+  for (const w of memStore.withdrawals.values()) {
+    if (!w || !w.id) continue;
+    if (isProdMode && isSyntheticTestRecord({ userId: w.userId, code: w.giftCardCode, id: w.id })) {
+      continue;
+    }
+    if (!uniqueWithdrawalsById.has(w.id)) {
+      uniqueWithdrawalsById.set(w.id, w);
+    }
+  }
+
+  const withdrawals = Array.from(uniqueWithdrawalsById.values());
+  const pending = withdrawals.filter((w) => w.status === 'pending' || w.status === 'processing');
   const success = withdrawals.filter((w) => w.status === 'success');
-  const failed = withdrawals.filter((w) => w.status === 'failed' || w.status === 'rejected');
+  const failed = withdrawals.filter(
+    (w) =>
+      w.status === 'failed' ||
+      w.status === 'rejected' ||
+      w.status === 'cancelled' ||
+      w.status === 'reversed'
+  );
+
+  const pendingPaisa = pending.reduce(
+    (sum, w) => sum + Math.round((Number(w.amount) > 0 ? Number(w.amount) : 0) * 100),
+    0
+  );
+  const successPaisa = success.reduce(
+    (sum, w) => sum + Math.round((Number(w.amount) > 0 ? Number(w.amount) : 0) * 100),
+    0
+  );
+
+  const gcStats = await getGiftCardInventoryStats();
 
   return {
     totalUsers,
     activeUsersToday: Math.max(activeToday, totalUsers > 0 ? 1 : 0),
     totalTaskCompletions: memStore.taskCompletions.size,
-    totalRewardsCredited: Math.round(totalRewards * 100) / 100,
+    totalRewardsCredited: Math.round(totalRewardsPaisa) / 100,
     pendingWithdrawalsCount: pending.length,
-    pendingWithdrawalsAmount: pending.reduce((sum, w) => sum + w.amount, 0),
+    pendingWithdrawalsAmount: Math.round(pendingPaisa) / 100,
     successfulPayoutsCount: success.length,
-    successfulPayoutsAmount: success.reduce((sum, w) => sum + w.amount, 0),
+    successfulPayoutsAmount: Math.round(successPaisa) / 100,
     failedPayoutsCount: failed.length,
+    lifetimeGvCodesDistributed: gcStats.redeemedCodes,
+    lifetimeGvAmountDistributed: gcStats.totalRedeemedValue ?? 0,
     duplicateDevicesBlocked: users.filter((u) => u.isDuplicateAccount).length,
     totalTaskBots: memStore.taskBots.size,
   };

@@ -1135,11 +1135,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             </div>
             <p className="text-xs text-slate-600 leading-relaxed">
               All user withdrawals are fulfilled via instant Amazon Gift Card Code redemption.
-              {gcStats && ` Currently ₹${gcStats.totalAvailableValue} total inventory value available across denominations.`}
+              {gcStats && ` Currently ₹${gcStats.totalAvailableValue.toFixed(2)} total inventory value available across denominations.`}
             </p>
             <div className="mt-3 pt-3 border-t border-slate-200/80 flex items-center justify-between">
               <span className="text-[11px] text-slate-500">
-                Available: <strong className="text-slate-900">{gcStats?.availableCodes || 0}</strong> • Redeemed: <strong className="text-slate-900">{gcStats?.redeemedCodes || 0}</strong>
+                Available: <strong className="text-slate-900">{gcStats?.availableCodes ?? 0}</strong> • Redeemed:{' '}
+                <strong className="text-slate-900">
+                  {gcStats?.redeemedCodes ?? stats.lifetimeGvCodesDistributed ?? 0} Codes
+                </strong>{' '}
+                (Lifetime GV Distributed:{' '}
+                <strong className="text-emerald-700">
+                  ₹{(gcStats?.totalRedeemedValue ?? stats.lifetimeGvAmountDistributed ?? 0).toFixed(2)}
+                </strong>
+                )
               </span>
               <button
                 onClick={() => setActiveTab('giftcards')}
@@ -1212,7 +1220,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 </span>
                 <span className="text-xs font-semibold text-slate-400">delivered</span>
               </div>
-              <p className="text-[10px] text-slate-400 mt-1">Claimed by users</p>
+              <p className="text-[10px] text-emerald-700 font-semibold mt-1">
+                Lifetime Total: ₹{(gcStats?.totalRedeemedValue ?? 0).toFixed(2)}
+              </p>
             </div>
 
             <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-xs">

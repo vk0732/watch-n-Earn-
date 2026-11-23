@@ -3580,6 +3580,7 @@ export function reconcileGVRegistry(): void {
   }
 
   // 2. Load assigned codes from durable disk registry if present
+  const testConsumedCodes = new Set<string>();
   try {
     if (fs.existsSync(GV_LOCAL_REGISTRY_PATH)) {
       const raw = fs.readFileSync(GV_LOCAL_REGISTRY_PATH, 'utf-8');
@@ -3588,7 +3589,10 @@ export function reconcileGVRegistry(): void {
         for (const c of reg.assignedCodes) {
           if (c && typeof c === 'string') {
             const norm = c.trim().toUpperCase();
-            if (isProdMode && isSyntheticTestCode(norm)) continue;
+            if (isProdMode && isSyntheticTestCode(norm)) {
+              testConsumedCodes.add(norm);
+              continue;
+            }
             memStore.assignedGVCodes.add(norm);
           }
         }
@@ -3598,6 +3602,9 @@ export function reconcileGVRegistry(): void {
           if (asgn && asgn.code) {
             const norm = asgn.code.trim().toUpperCase();
             if (isProdMode && isSyntheticTestRecord({ userId: asgn.userId, code: norm, id: asgn.orderId })) {
+              testConsumedCodes.add(norm);
+              // Keep in assignedGVCodes so it can never be reassigned, but exclude from real user stats
+              memStore.assignedGVCodes.add(norm);
               continue;
             }
             memStore.assignedGVCodes.add(norm);
@@ -3637,14 +3644,20 @@ export function reconcileGVRegistry(): void {
   // 3b. In production mode, purge any synthetic test codes/assignments from memory maps
   if (isProdMode) {
     for (const [gcId, gc] of memStore.giftCardCodes.entries()) {
-      if (isSyntheticTestRecord({ userId: gc.assignedUserId, code: gc.code, id: gc.assignedWithdrawalId })) {
+      const norm = (gc.code || '').trim().toUpperCase();
+      if (
+        testConsumedCodes.has(norm) ||
+        isSyntheticTestRecord({ userId: gc.assignedUserId, code: gc.code, id: gc.assignedWithdrawalId })
+      ) {
         memStore.giftCardCodes.delete(gcId);
       }
     }
     for (const [normCode, asgn] of memStore.gvAssignmentRecords.entries()) {
-      if (isSyntheticTestRecord({ userId: asgn.userId, code: normCode, id: asgn.orderId })) {
+      if (
+        testConsumedCodes.has(normCode) ||
+        isSyntheticTestRecord({ userId: asgn.userId, code: normCode, id: asgn.orderId })
+      ) {
         memStore.gvAssignmentRecords.delete(normCode);
-        memStore.assignedGVCodes.delete(normCode);
       }
     }
     for (const normCode of Array.from(memStore.assignedGVCodes)) {

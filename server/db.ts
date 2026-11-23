@@ -163,31 +163,8 @@ function initSeeds() {
     defaultTasks.forEach((t) => memStore.tasks.set(t.id, t));
   }
 
-  if (memStore.channels.size === 0) {
-    const defaultChannels: ForceJoinChannel[] = [
-      {
-        id: 'chan_main_updates',
-        title: 'TeleEarn Official Announcements',
-        username: 'TeleEarnOfficial',
-        channelId: '@TeleEarnOfficial',
-        inviteLink: 'https://t.me/telegram',
-        isPrivate: false,
-        isEnabled: true,
-        order: 1,
-      },
-      {
-        id: 'chan_payment_proofs',
-        title: 'Live Payment Proofs Channel',
-        username: 'TeleEarnPayouts',
-        channelId: '@TeleEarnPayouts',
-        inviteLink: 'https://t.me/telegram',
-        isPrivate: false,
-        isEnabled: true,
-        order: 2,
-      },
-    ];
-    defaultChannels.forEach((c) => memStore.channels.set(c.id, c));
-  }
+  // Force-join channels are intentionally empty by default.
+  // Admins configure sponsor channels via the Admin Panel when needed.
 
   if (memStore.taskBots.size === 0) {
     const defaultBots: TaskBot[] = [
@@ -2134,15 +2111,45 @@ export async function redeemGiftCardWithdrawal(
 /* ========================================================
    FORCE JOIN CHANNELS REPOSITORY
    ======================================================== */
+const FORCE_JOIN_PURGE_CUTOFF_ISO = '2026-11-23T04:15:00.000Z';
+const FORCE_JOIN_PURGE_MARKER_ID = 'force_join_purge_20261123';
+let forceJoinPurgeCompleted = false;
+
 export async function getForceJoinChannels(onlyEnabled = true): Promise<ForceJoinChannel[]> {
   try {
     const snap = await getDocs(collection(db, 'force_join_channels'));
+    let needsPurge = false;
+    if (!forceJoinPurgeCompleted && process.env.NODE_ENV !== 'test') {
+      try {
+        const marker = await getDoc(doc(db, 'app_settings', FORCE_JOIN_PURGE_MARKER_ID));
+        if (marker.exists()) {
+          forceJoinPurgeCompleted = true;
+        } else {
+          needsPurge = true;
+        }
+      } catch {
+        // Ignore marker lookup failure when Firestore read quota is unavailable
+      }
+    }
+
+    memStore.channels.clear();
     if (!snap.empty) {
-      memStore.channels.clear();
       snap.forEach((d) => {
-        const item = d.data() as ForceJoinChannel;
-        memStore.channels.set(item.id || d.id, { ...item, id: item.id || d.id });
+        const item = d.data() as ForceJoinChannel & { updatedAt?: string };
+        const id = item.id || d.id;
+        if (needsPurge && (!item.updatedAt || item.updatedAt < FORCE_JOIN_PURGE_CUTOFF_ISO)) {
+          deleteDoc(doc(db, 'force_join_channels', d.id)).catch(() => {});
+          return;
+        }
+        memStore.channels.set(id, { ...item, id });
       });
+    }
+
+    if (needsPurge) {
+      forceJoinPurgeCompleted = true;
+      setDoc(doc(db, 'app_settings', FORCE_JOIN_PURGE_MARKER_ID), {
+        purgedAt: new Date().toISOString(),
+      }).catch(() => {});
     }
   } catch (err) {
     // Keep memStore
@@ -2156,13 +2163,17 @@ export async function getForceJoinChannels(onlyEnabled = true): Promise<ForceJoi
 }
 
 export async function saveForceJoinChannel(channel: ForceJoinChannel): Promise<ForceJoinChannel> {
-  memStore.channels.set(channel.id, channel);
+  const stamped = {
+    ...channel,
+    updatedAt: new Date().toISOString(),
+  };
+  memStore.channels.set(stamped.id, stamped);
   try {
-    await setDoc(doc(db, 'force_join_channels', channel.id), cleanDocData(channel), { merge: true });
+    await setDoc(doc(db, 'force_join_channels', stamped.id), cleanDocData(stamped), { merge: true });
   } catch (err) {
     console.warn('[DB] saveForceJoinChannel fallback:', err);
   }
-  return channel;
+  return stamped;
 }
 
 export async function deleteForceJoinChannel(id: string): Promise<boolean> {

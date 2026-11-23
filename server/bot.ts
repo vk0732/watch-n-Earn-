@@ -273,6 +273,16 @@ export async function startBotPolling(appUrl: string): Promise<{ success: boolea
 }
 
 /**
+ * Ensures Mini App URLs use HTTPS as required by Telegram Bot API web_app buttons.
+ */
+function normalizeWebAppUrl(appUrl: string): string {
+  const trimmed = (appUrl || '').trim();
+  if (trimmed.startsWith('https://')) return trimmed;
+  if (trimmed.startsWith('http://')) return trimmed.replace(/^http:\/\//i, 'https://');
+  return `https://${trimmed}`;
+}
+
+/**
  * Handle /start command with referral support & Force Join check
  */
 async function handleStartCommand(
@@ -342,7 +352,7 @@ async function handleStartCommand(
   if (!isAlreadyClaimed) {
     const scratchInfo = await getOrAssignSignupScratchBonus(userId);
     const maxBonus = settings.maxScratchSignupBonus || 10;
-    const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+    const webAppUrl = normalizeWebAppUrl(appUrl);
 
     // Clean up previous message if user repeated /start
     const prevSession = activeVerificationSessions.get(chatId);
@@ -389,9 +399,9 @@ async function handleStartCommand(
     await deleteTelegramMessage(chatId, prevSession.forceJoinMsgId).catch(() => {});
   }
 
-  const welcomeText = `🚀 <b>Welcome to TeleEarn!</b>\n\n💰 <b>Your Available Balance:</b> ₹${user.balance.toFixed(2)}\n🎁 <b>Signup Bonus:</b> Credited!\n\nEarn money by watching videos, visiting partner sites, and inviting friends!\nRedeem instant <b>Amazon Gift Cards</b> directly to your account anytime.`;
+  const welcomeText = `🚀 <b>Welcome to Watch & Earn!</b>\n\n💰 <b>Your Available Balance:</b> ₹${user.balance.toFixed(2)}\n🎁 <b>Signup Bonus:</b> Credited!\n\nEarn money by watching videos, visiting partner sites, and inviting friends!\nRedeem instant <b>Amazon Gift Cards</b> directly to your account anytime.`;
 
-  const webAppUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+  const webAppUrl = normalizeWebAppUrl(appUrl);
 
   const keyboard = {
     inline_keyboard: [
@@ -404,7 +414,7 @@ async function handleStartCommand(
       [
         {
           text: '👥 Invite Friends',
-          url: `https://t.me/share/url?url=${encodeURIComponent(`https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot')}?start=${user.referralCode}`)}&text=${encodeURIComponent('Join TeleEarn and earn instant cash daily!')}`,
+          url: `https://t.me/share/url?url=${encodeURIComponent(`https://t.me/${formatBotUsername(settings.botUsername || process.env.TELEGRAM_BOT_USERNAME || 'WatchXEarnBot')}?start=${user.referralCode}`)}&text=${encodeURIComponent('Join Watch & Earn and earn instant cash daily!')}`,
         },
         {
           text: '💬 Support',
